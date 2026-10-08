@@ -144,6 +144,45 @@ def show_converter_error(e: Exception) -> None:
     st.warning(T("no_converter") if isinstance(e, ConverterNotFound) else f"{T('error')}: {e}")
 
 
+def check_updates(silent: bool = False) -> None:
+    from sketch2cad import updater
+    try:
+        ss.update_info = updater.latest(timeout=4)
+        ss.update_error = False
+    except Exception:  # noqa: BLE001 - offline / GitHub unreachable
+        ss.update_info, ss.update_error = None, not silent
+
+
+def start_update() -> None:
+    from sketch2cad import updater
+    updater.start_update_and_restart(os.getpid())
+    ss.updating = True
+
+
+def update_box() -> None:
+    """Sidebar: installed version, check for updates, update now (stops, updates and restarts the app)."""
+    from sketch2cad import updater
+    if os.name == "nt" and "update_info" not in ss:          # one quiet check per session
+        check_updates(silent=True)
+    cur = updater.installed_version()
+    st.caption(f"{T('version')}: {ltr(cur[:7]) if cur else T('unknown')}", unsafe_allow_html=True)
+    if ss.get("updating"):
+        st.info(T("updating"))
+        return
+    info = ss.get("update_info")
+    if info and updater.update_available(info):
+        st.warning(f"{T('update_available')}  \n{info.date} - {info.message}")
+        if os.name == "nt":
+            st.button(f"⬇️ {T('update_now')}", on_click=start_update, use_container_width=True, type="primary")
+        else:
+            st.caption(T("update_manual"))
+    elif info:
+        st.caption(f"✓ {T('up_to_date')}")
+    if ss.get("update_error"):
+        st.caption(T("update_check_failed"))
+    st.button(f"🔄 {T('check_updates')}", on_click=check_updates, use_container_width=True)
+
+
 # ================================================================== sidebar
 with st.sidebar:
     st.title("Sketch2CAD")
@@ -166,6 +205,8 @@ with st.sidebar:
         st.caption(T("current_project"))
         st.button(f"{cur.code} - {cur.display_name(L)}", on_click=go, args=("project",),
                   use_container_width=True)
+    st.divider()
+    update_box()
 
 
 # ================================================================== pages

@@ -230,3 +230,41 @@ def test_pick_folder_without_desktop(monkeypatch):
     from sketch2cad import native
     monkeypatch.delenv("DISPLAY", raising=False)
     assert native.pick_folder() is None
+
+
+# ---------------------------------------------------------------- self-update
+def _zip_of(files: dict) -> bytes:
+    import io
+    import zipfile
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        for name, text in files.items():
+            z.writestr(f"Sketch2CAD-abc123/{name}", text)
+    return buf.getvalue()
+
+
+def test_updater_latest_and_apply(tmp_path, monkeypatch):
+    from sketch2cad import updater
+    api = {"sha": "abc123", "commit": {"committer": {"date": "2026-10-08T10:00:00Z"},
+                                       "message": "New feature\n\nbody"}}
+    monkeypatch.setattr(updater, "_get", lambda url, timeout: json.dumps(api).encode())
+    rel = updater.latest()
+    assert (rel.sha, rel.date, rel.message) == ("abc123", "2026-10-08", "New feature")
+
+    app = tmp_path / "app"
+    (app / ".venv").mkdir(parents=True)
+    (app / ".venv" / "keep.txt").write_text("venv")
+    (app / "requirements.txt").write_text("ezdxf\n")
+    (app / "old.py").write_text("old")
+    assert updater.installed_version(app) is None and updater.update_available(rel, app)
+    calls = []
+    monkeypatch.setattr(updater.subprocess, "run", lambda cmd, **kw: calls.append(cmd))
+    zip_bytes = _zip_of({"app/app.py": "new app", "requirements.txt": "ezdxf\n", ".venv/keep.txt": "NO"})
+    sha = updater.apply_update(app, "abc123", log=lambda m: None, download=lambda url, t: zip_bytes)
+    assert sha == "abc123" and (app / "app" / "app.py").read_text() == "new app"
+    assert (app / ".venv" / "keep.txt").read_text() == "venv"            # never touched
+    assert calls == []                                                     # requirements unchanged → no pip
+    assert updater.installed_version(app) == "abc123" and not updater.update_available(rel, app)
+    zip_bytes = _zip_of({"requirements.txt": "ezdxf\nnewlib\n"})
+    updater.apply_update(app, "def456", log=lambda m: None, download=lambda url, t: zip_bytes)
+    assert calls and calls[0][1:4] == ["-m", "pip", "install"]

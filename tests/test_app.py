@@ -108,3 +108,15 @@ def test_new_project_validation(tmp_path):
     assert not at.exception
     from sketch2cad.projects import Project
     assert Project.load(tmp_path / "p" / "20117").contract_no == "W912"
+
+
+def test_update_box(monkeypatch):
+    from sketch2cad import updater
+    from sketch2cad.config import Settings
+    from sketch2cad.i18n import t
+    Settings(ui_language="he").save()
+    monkeypatch.setattr(updater, "latest", lambda timeout=5: updater.Release("f" * 40, "2026-10-08", "New"))
+    at = AppTest.from_file(APP, default_timeout=30).run()
+    next(b for b in at.button if b.label.endswith(t("check_updates", "he"))).click().run()
+    assert not at.exception
+    assert any(t("update_available", "he") in w.value for w in at.warning)
