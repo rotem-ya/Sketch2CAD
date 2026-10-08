@@ -44,6 +44,12 @@ one paper-mm = `scale` mm of model space (or `scale/1000` m).
 | `weld` | `at`, `axis`: `"v"\|"h"`, `od` | weld mark across a pipe |
 | `break` | `at`, `axis`, `od` | pipe break mark |
 
+Extra keys supported by the renderer:
+- element type `circle` (`at`, `radius`) for small fittings;
+- any element: `centerline`, `label_at`, `label_align`, `leader`, `leader_to`; block size overrides `D`, `t`, `L`, `H`, `Dt`;
+- `manhole`: `cover_item` (own BOM line), `cover_status`, `di` / `do`, `grate_size`; `connector`: `height`;
+- spec root: `notes_at`, `sheet.origin`, `style` (text sizes in paper mm); dimension: `decimals`.
+
 ### 1.2 Dimensions
 ```json
 {"type": "chain", "points": [[x,y], ...], "axis": "h" | "v", "base": 1120, "texts": ["", "~<>", ...]}
@@ -94,6 +100,8 @@ fields:                                 # text fields (paper mm, inside the fram
   - {key: title, x: 4, y: 14, h: 3.5, en: "{title_en}", he: "{title_he}"}
   - {key: project, x: 4, y: 5, h: 2.5, en: "{project_name_en} | {code} Rev {rev} | SCALE 1:{scale}"}
 ```
+Optional: `drawing_area`, `legend_area` (paper mm rectangles), per field `w` (wrap/shrink width), `he_y`, `align`.
+User templates in `<app_home>/templates/*.yaml` override repo templates with the same id.
 Values available for `{…}`: code, rev, title_en, title_he, project_code, project_name_en,
 project_name_he, client, date, scale, drawn, checked + anything in `sheet.fields`.
 
@@ -118,6 +126,9 @@ project_name_he, client, date, scale, drawn, checked + anything in `sheet.fields
 
 ### Text rules (verified in AutoCAD)
 - DXF/DWG: Hebrew stored in **logical order**; Hebrew table cells as MTEXT `\pxqr;` right-aligned.
-- PDF/PNG (matplotlib): convert Hebrew to visual order with `python-bidi` **after** replacing `%%c` → `Ø`.
+- PDF/PNG preview (ezdxf drawing addon, which draws the glyph outlines itself, no shaping): convert Hebrew to
+  visual order with `python-bidi` **after** replacing `%%c` → `Ø`. Do NOT do this for text drawn with matplotlib's own
+  `ax.text` – matplotlib ≥ 3.11 shapes RTL itself (libraqm) and would reverse it again.
+- PDF built with PyMuPDF HTML (package / print set): logical order; see `sketch2cad/pdfdoc.py` for RLM / LRE rules.
 - Text style `ARIAL` (`arial.ttf`) for everything. Diameter sign: `%%c`.
 - Avoid parentheses around mixed Hebrew/Latin in Hebrew strings (use " - ").

@@ -50,7 +50,9 @@ def _camel(p, cat) -> dict:
         {"id": "elbow1", "type": "bend", "status": "new", "item": p["elbow_item"],
          "center": [xe, by - a], "radius": a, "start_angle": 0, "end_angle": 90, "od": od},
         {"id": "pipe2", "type": "pipe", "status": "new", "item": p["pipe_item"],
-         "points": [[xv, by - a], [xv, yb + a]], "below_grade": False},
+         "points": [[xv, by - a], [xv, 0]]},
+        {"id": "pipe2b", "type": "pipe", "status": "new", "item": p["pipe_item"], "below_grade": True,
+         "points": [[xv, 0], [xv, yb + a]]},
         {"id": "elbow2", "type": "bend", "status": "new", "item": p["elbow_item"], "below_grade": True,
          "center": [xb, yb + a], "radius": a, "start_angle": 180, "end_angle": 270, "od": od},
         {"id": "pipe3", "type": "pipe", "status": "new", "item": p["pipe_item"], "below_grade": True,
@@ -61,7 +63,7 @@ def _camel(p, cat) -> dict:
          "at": [xt + ft + cl / 2, yb], "rotation": 0, "length": cl},
         {"id": "pe", "type": "pipe", "status": "new", "item": p["pe_item"], "below_grade": True,
          "points": [[xt + ft + cl, yb], [xend, yb]], "od": pex_od},
-        {"id": "sand", "type": "rect", "style": "dashed", "hatch": "sand",
+        {"id": "sand", "type": "rect", "style": "dashed",
          "corners": [[xv - od / 2 - 200, yb - od / 2 - 200], [xend, yb + od / 2 + 200]]},
         {"id": "w1", "type": "weld", "at": [xe, by], "axis": "v", "od": od},
         {"id": "w2", "type": "weld", "at": [xb, yb], "axis": "v", "od": od},
@@ -112,17 +114,15 @@ def _trench_mh(p, cat) -> dict:
             "title_en": "TYPICAL - TRENCH DRAIN INTO MANHOLE", "title_he": "פרט טיפוסי - חיבור תעלה לשוחה"}},
         "elements": [
             {"id": "mh", "type": "manhole", "status": "existing", "item": p["manhole_item"], "at": [0, 0],
-             "cover": p["cover"]},
-            {"id": "cover", "type": "text", "at": [-do / 2, -do / 2 - 0.8], "height": 2.5,
-             "text": {"en": "MH COVER", "he": "מכסה שוחה"}, "item": cover_item, "status": "proposed"},
+             "cover": p["cover"], "cover_item": cover_item, "cover_status": "proposed"},
             {"id": "td", "type": "trench_drain", "status": "existing", "item": p["trench_item"],
              "points": [[x_td, run], [x_td, 0.6]], "width": 0.32},
             {"id": "conn", "type": "pipe", "status": "proposed", "item": p["pipe_item"],
              "points": [[x_td, 0.6], [x_td, 0], [do / 2, 0]], "od": 0.2},
             {"id": "flow", "type": "flow_arrow", "at": [x_td + 0.6, run / 2], "angle": 270, "length": 1.5},
-            {"id": "north", "type": "north_arrow", "at": [x_td + 4, run - 1], "size": 1.5},
+            {"id": "north", "type": "north_arrow", "at": [x_td + 4, run - 1]},
         ],
-        "dimensions": [{"type": "chain", "axis": "h", "base": -2.0, "points": [[0, 0], [x_td, 0]],
+        "dimensions": [{"type": "chain", "axis": "h", "base": -do / 2 - 1.5, "points": [[0, 0], [x_td, 0]],
                         "texts": [""]}],
         "legend": [
             {"no": 1, "targets": [[0, do / 2]], "balloons": [[-2.5, 2.0]],
@@ -184,7 +184,7 @@ _COMMON = {"scale": _p(20, "Scale 1:", "קנה מידה 1:"), "language": _p("bo
 
 TYPICALS: dict[str, Typical] = {t.name: t for t in (
     Typical("riser_connection", {"en": "Connection to existing riser (camel)", "he": "התחברות לרייזר קיים - גמל"}, {
-        **_COMMON, "scale": _p(15, "Scale 1:", "קנה מידה 1:"),
+        **_COMMON,
         "branch_height": _p(600, "Branch height above grade (mm)", "גובה ההסתעפות מעל הקרקע - מ\"מ"),
         "cover": _p(1200, "Cover to crown (mm)", "כיסוי לקודקוד - מ\"מ"),
         "cover_min": _p(1200, "Minimum cover (mm)", "כיסוי מינימלי - מ\"מ"),
@@ -199,7 +199,7 @@ TYPICALS: dict[str, Typical] = {t.name: t for t in (
         "bolt_item": _p("bolt_m20_ss316", "Bolt item", "פריט ברגים"),
     }, _camel),
     Typical("trench_to_manhole", {"en": "Trench drain into manhole", "he": "חיבור תעלת ניקוז לשוחה"}, {
-        **_COMMON, "scale": _p(100, "Scale 1:", "קנה מידה 1:"),
+        **_COMMON, "scale": _p(50, "Scale 1:", "קנה מידה 1:"),
         "run_length": _p(10.0, "Trench run length (m)", "אורך התעלה - מ'"),
         "offset": _p(1.5, "Trench offset from manhole (m)", "מרחק התעלה מהשוחה - מ'"),
         "cover": _p("grate", "Manhole cover (grate/closed)", "מכסה שוחה - grate/closed"),
@@ -209,7 +209,8 @@ TYPICALS: dict[str, Typical] = {t.name: t for t in (
         "pipe_item": _p("pipe_pvc_200", "Connection pipe item", "פריט צינור חיבור"),
     }, _trench_mh),
     Typical("valve_in_line", {"en": "Flanged gate valve in line", "he": "מגוף מאוגן בקו"}, {
-        **_COMMON, "pipe_length": _p(600, "Pipe length each side (mm)", "אורך צינור מכל צד - מ\"מ"),
+        **_COMMON, "scale": _p(10, "Scale 1:", "קנה מידה 1:"),
+        "pipe_length": _p(600, "Pipe length each side (mm)", "אורך צינור מכל צד - מ\"מ"),
         "pipe_item": _p("steel_pipe_6in_sch40", "Pipe item", "פריט צינור"),
         "valve_item": _p("avk_0661_dn150", "Valve item", "פריט מגוף"),
         "flange_item": _p("flange_6in_pn16", "Flange item", "פריט אוגן"),

@@ -27,16 +27,17 @@ def _mm(spec) -> float:
     return 0.001 if spec.get("units") == "m" else 1.0
 
 
-def _items_used(spec) -> list[tuple[str, str]]:
+def items_used(spec) -> list[tuple[str, str]]:
     """(element id or legend no, item id) for every catalog reference in the spec."""
     refs = [(e.get("id", e.get("type", "?")), e["item"]) for e in spec.get("elements", []) if e.get("item")]
+    refs += [(e.get("id", "manhole"), e["cover_item"]) for e in spec.get("elements", []) if e.get("cover_item")]
     refs += [(f"#{l.get('no')}", l["item"]) for l in spec.get("legend", []) if l.get("item")]
     return refs
 
 
 def check_catalog(spec, catalog) -> list[Finding]:
     out, seen = [], set()
-    for ref, item_id in _items_used(spec):
+    for ref, item_id in items_used(spec):
         item = catalog.get(item_id) if catalog else None
         if item is None:
             out.append(Finding("error", "unknown_item", f"Item '{item_id}' is not in the catalog",
@@ -67,7 +68,7 @@ def _pipe_od(el, catalog, k) -> float:
 
 
 def check_cover(spec, catalog) -> list[Finding]:
-    """Buried pipes in elevation/section: crown must be at least cover_min below grade_y."""
+    """Buried horizontal pipe runs in elevation/section: crown must be at least cover_min below grade_y."""
     if not any(w in str(spec.get("view", "")).lower() for w in ("elevation", "section", "חתך")):
         return []
     k = _mm(spec)
@@ -78,9 +79,13 @@ def check_cover(spec, catalog) -> list[Finding]:
     for el in spec.get("elements", []):
         if el.get("type") != "pipe" or not el.get("below_grade"):
             continue
-        crown = max(p[1] for p in el["points"]) + _pipe_od(el, catalog, k) / 2
+        runs = [(a, b) for a, b in zip(el["points"], el["points"][1:])
+                if abs(b[0] - a[0]) > abs(b[1] - a[1])]           # risers/drops are not "buried runs"
+        if not runs:
+            continue
+        crown = max(max(a[1], b[1]) for a, b in runs) + _pipe_od(el, catalog, k) / 2
         cover = grade - crown
-        if cover < cover_min - 1e-9:
+        if cover < cover_min - 1 * k:                             # 1 mm drafting tolerance
             c, m = round(cover / k), round(cover_min / k)
             out.append(Finding("error", "cover", f"Cover {c} mm < minimum {m} mm",
                                f"כיסוי {c} מ\"מ קטן מהמינימום {m} מ\"מ", el.get("id", "")))
@@ -156,7 +161,7 @@ def check_flanges(spec, catalog) -> list[Finding]:
     if not catalog:
         return []
     asa, pn = [], []
-    for ref, item_id in _items_used(spec):
+    for ref, item_id in items_used(spec):
         std = _flange_std(catalog.get(item_id))
         if "ASA" in std or "ANSI" in std or "CLASS" in std:
             asa.append(item_id)
@@ -175,7 +180,7 @@ def check_buried_bolts(spec, catalog) -> list[Finding]:
               if e.get("below_grade") and e.get("type") in ("flange", "gate_valve", "connector")]
     if not buried:
         return []
-    bolts = [catalog.get(i) for _, i in _items_used(spec)
+    bolts = [catalog.get(i) for _, i in items_used(spec)
              if catalog and (catalog.get(i) or {}).get("category") == "bolt"]
     if not bolts:
         return [Finding("warning", "bolts_missing", "Buried flanged joint - specify SS316 bolts",

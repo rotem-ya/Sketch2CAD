@@ -1,0 +1,16 @@
+# A3 landscape, one title strip along the bottom (title / project / remarks + drawing number, rev, scale).
+id: a3_simple
+name: {en: "A3 simple", he: "A3 פשוט"}
+paper: {w: 420, h: 297}
+margin: 10
+frame_width: 0.7
+drawing_area: {x: 3, y: 27, w: 394, h: 247}
+blocks:
+  - {x: 0, y: 0, w: 400, h: 24, lines: [{x: 300}, {y: 12, x0: 300}]}
+fields:
+  - {key: title, x: 4, y: 16.5, w: 292, h: 3.5, en: "{title_en}", he: "{title_he}"}
+  - {key: project, x: 4, y: 9.5, w: 292, h: 2.5, en: "{project_name_en} | {client} | {view}", he: "{project_name_he}"}
+  - {key: line3, x: 4, y: 3.5, w: 292, h: 2.0, en: "{line3}", he: "{line3_he}"}
+  - {key: code_label, x: 303, y: 19.5, w: 94, h: 1.8, en: "DWG No.", he: "מס' שרטוט"}
+  - {key: code, x: 303, y: 14, w: 94, h: 3.0, en: "{code}"}
+  - {key: rev_scale, x: 303, y: 4.5, w: 94, h: 2.2, en: "REV {rev} | SCALE 1:{scale} | {date}"}

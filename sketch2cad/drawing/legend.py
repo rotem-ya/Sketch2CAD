@@ -13,7 +13,7 @@ from ezdxf.math import Vec2
 from .context import DrawContext
 from .text import LINE_SPACING, pick, put_text, text_width, wrap
 
-PAD = 1.2                         # cell padding, paper mm
+PAD_X, PAD_Y = 1.5, 1.0            # cell padding, paper mm
 GAP = 1.5                         # title -> table gap, paper mm
 COL_CAP = {"en": 110.0, "he": 95.0}
 HEADERS = {"no": {"en": "No.", "he": "מס'"}, "en": "DESCRIPTION", "he": "תיאור"}
@@ -65,8 +65,8 @@ def legend_table(ctx: DrawContext, legend: list[dict], max_width: float | None =
     no_label = HEADERS["no"]["he" if langs == ["he"] else "en"]
     header = {"no": no_label, "en": HEADERS["en"], "he": HEADERS["he"]}
 
-    no_w = max(text_width(s, th) for s in [no_label] + [r["no"] for r in rows]) + 2 * PAD
-    widths = {lang: min(COL_CAP[lang], max(text_width(r[lang], th) for r in rows + [header]) + 2 * PAD)
+    no_w = max(text_width(s, th) for s in [no_label] + [r["no"] for r in rows]) + 2 * PAD_X
+    widths = {lang: min(COL_CAP[lang], max(text_width(r[lang], th) for r in rows + [header]) + 2 * PAD_X)
               for lang in langs}
     if max_width and no_w + sum(widths.values()) > max_width:
         f = (max_width - no_w) / sum(widths.values())
@@ -76,11 +76,11 @@ def legend_table(ctx: DrawContext, legend: list[dict], max_width: float | None =
         cols.reverse()
 
     def cell_lines(key: str, s: str, w: float) -> list[str]:
-        return [s] if key == "no" else wrap(s, th, w - 2 * PAD) or [""]
+        return [s] if key == "no" else wrap(s, th, w - 2 * PAD_X) or [""]
 
     table = [{key: cell_lines(key, row[key], w) for key, w in cols} for row in [header] + rows]
     line = LINE_SPACING * th
-    heights = [max(len(c) for c in r.values()) * line + 2 * PAD for r in table]
+    heights = [max(len(c) for c in r.values()) * line + 2 * PAD_Y for r in table]
     title_h = ctx.style["legend_title_height"]
     title = " / ".join(pick(TITLES["legend"], ctx.language))
     k = ctx.k
@@ -88,8 +88,9 @@ def legend_table(ctx: DrawContext, legend: list[dict], max_width: float | None =
 
     def draw(top_left: Vec2) -> None:
         x0, y = top_left.x, top_left.y - (title_h + GAP) * k
-        title_at = Vec2(x0, top_left.y - title_h * k) if langs != ["he"] else Vec2(x0 + width * k, top_left.y - title_h * k)
-        put_text(ctx.msp, title, title_at, title_h * k, layer="LEGEND", align="left" if langs != ["he"] else "right")
+        rtl = langs == ["he"]                                            # Hebrew-only: title on the right
+        title_at = Vec2(x0 + width * k if rtl else x0, top_left.y - title_h * k)
+        put_text(ctx.msp, title, title_at, title_h * k, layer="LEGEND", align="right" if rtl else "left")
         xs = [x0]
         for _, w in cols:
             xs.append(xs[-1] + w * k)
@@ -103,9 +104,9 @@ def legend_table(ctx: DrawContext, legend: list[dict], max_width: float | None =
                 if key == "no":
                     put_text(ctx.msp, s, ((xl + xr) / 2, ym), th * k, layer="LEGEND", align="MIDDLE_CENTER")
                 elif key == "he":
-                    put_text(ctx.msp, s, (xr - PAD * k, ym), th * k, layer="LEGEND", align="MIDDLE_RIGHT")
+                    put_text(ctx.msp, s, (xr - PAD_X * k, ym), th * k, layer="LEGEND", align="MIDDLE_RIGHT")
                 else:
-                    put_text(ctx.msp, s, (xl + PAD * k, ym), th * k, layer="LEGEND", align="MIDDLE_LEFT")
+                    put_text(ctx.msp, s, (xl + PAD_X * k, ym), th * k, layer="LEGEND", align="MIDDLE_LEFT")
             y -= h * k
             if i == 0:                                                   # double line under the header
                 ctx.msp.add_line((xs[0], y - 0.5 * k), (xs[-1], y - 0.5 * k), dxfattribs=attribs)

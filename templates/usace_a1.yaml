@@ -1,0 +1,79 @@
+# A1 landscape, USACE / CDM-Smith style: vertical title block along the right edge
+# (revisions, client, drawn/checked, date/scale, contract, project, sheet title, rev/sheet, drawing number).
+id: usace_a1
+name: {en: "A1 USACE style", he: "A1 בסגנון USACE"}
+paper: {w: 841, h: 594}
+margin: 10
+frame_width: 1.0
+drawing_area: {x: 4, y: 4, w: 713, h: 566}
+blocks:
+  - x: 721
+    y: 0
+    w: 100
+    h: 574
+    lines:
+      - {y: 566}
+      - {y: 559}
+      - {y: 551}
+      - {y: 543}
+      - {y: 535}
+      - {y: 527}
+      - {y: 519}
+      - {y: 511}
+      - {y: 503}
+      - {y: 495}
+      - {y: 487}
+      - {y: 479}
+      - {y: 471}
+      - {y: 463}
+      - {y: 455}
+      - {x: 14, y0: 444, y1: 566}
+      - {x: 80, y0: 444, y1: 566}
+      - {y: 444}
+      - {y: 384}
+      - {y: 352}
+      - {y: 320}
+      - {y: 288}
+      - {y: 208}
+      - {y: 98}
+      - {y: 68}
+      - {x: 50, y0: 320, y1: 384}
+      - {x: 50, y0: 68, y1: 98}
+fields:
+  # revisions
+  - {key: rev_title, x: 724, y: 568.5, w: 94, h: 2.5, en: "REVISIONS", he: "מהדורות"}
+  - {key: rev_mark_h, x: 723, y: 561.5, w: 10, h: 1.6, en: "MARK"}
+  - {key: rev_desc_h, x: 737, y: 561.5, w: 62, h: 1.6, en: "DESCRIPTION", he: "תיאור"}
+  - {key: rev_date_h, x: 803, y: 561.5, w: 16, h: 1.6, en: "DATE"}
+  - {key: rev_mark, x: 724, y: 553.5, w: 9, h: 2.0, en: "{rev}"}
+  - {key: rev_note, x: 737, y: 553.5, w: 62, h: 2.0, en: "{rev_note}", he: "{rev_note_he}"}
+  - {key: rev_date, x: 802, y: 553.5, w: 17, h: 1.8, en: "{date}"}
+  # client / firm
+  - {key: client_label, x: 724, y: 439, w: 94, h: 1.8, en: "DESIGNED FOR", he: "מזמין"}
+  - {key: client, x: 724, y: 420, w: 94, h: 4.5, en: "{client}"}
+  - {key: project_code, x: 724, y: 392, w: 94, h: 2.2, en: "PROJECT No. {project_code}"}
+  # drawn / checked, date / scale
+  - {key: drawn_label, x: 724, y: 379.5, w: 44, h: 1.8, en: "DRAWN BY", he: "שרטט"}
+  - {key: drawn, x: 724, y: 359, w: 44, h: 3.0, en: "{drawn}"}
+  - {key: checked_label, x: 774, y: 379.5, w: 44, h: 1.8, en: "CHECKED BY", he: "בדק"}
+  - {key: checked, x: 774, y: 359, w: 44, h: 3.0, en: "{checked}"}
+  - {key: date_label, x: 724, y: 347.5, w: 44, h: 1.8, en: "DATE", he: "תאריך"}
+  - {key: date, x: 724, y: 327, w: 44, h: 3.0, en: "{date}"}
+  - {key: scale_label, x: 774, y: 347.5, w: 44, h: 1.8, en: "SCALE", he: "קנה מידה"}
+  - {key: scale, x: 774, y: 327, w: 44, h: 3.0, en: "1:{scale}"}
+  # contract, project, sheet title
+  - {key: contract_label, x: 724, y: 315.5, w: 94, h: 1.8, en: "CONTRACT No.", he: "מס' חוזה"}
+  - {key: contract, x: 724, y: 296, w: 94, h: 3.0, en: "{contract}"}
+  - {key: project_label, x: 724, y: 283.5, w: 94, h: 1.8, en: "PROJECT", he: "פרויקט"}
+  - {key: project, x: 724, y: 268, he_y: 250, w: 94, h: 3.5, en: "{project_name_en}", he: "{project_name_he}"}
+  - {key: title_label, x: 724, y: 203.5, w: 94, h: 1.8, en: "SHEET TITLE", he: "שם הגיליון"}
+  - {key: title, x: 724, y: 188, he_y: 158, w: 94, h: 4.5, en: "{title_en}", he: "{title_he}"}
+  - {key: line3, x: 724, y: 120, he_y: 108, w: 94, h: 2.2, en: "{line3}", he: "{line3_he}"}
+  # rev / sheet, drawing number
+  - {key: rev_label, x: 724, y: 93.5, w: 44, h: 1.8, en: "REV", he: "מהדורה"}
+  - {key: rev, x: 724, y: 74, w: 44, h: 4.0, en: "{rev}"}
+  - {key: sheet_label, x: 774, y: 93.5, w: 44, h: 1.8, en: "SHEET", he: "גיליון"}
+  - {key: sheet, x: 774, y: 74, w: 44, h: 4.0, en: "{sheet}"}
+  - {key: code_label, x: 724, y: 63.5, w: 94, h: 1.8, en: "DRAWING No.", he: "מס' שרטוט"}
+  - {key: code, x: 724, y: 42, w: 94, h: 6.0, align: center, en: "{code}"}
+  - {key: view, x: 724, y: 14, w: 94, h: 2.5, align: center, en: "{view}"}

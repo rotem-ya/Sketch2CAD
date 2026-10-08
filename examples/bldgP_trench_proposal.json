@@ -1,0 +1,1047 @@
+{
+ "version": 1,
+ "units": "m",
+ "scale": 400,
+ "paper": "A3",
+ "language": "both",
+ "view": "PLAN VIEW",
+ "style": {
+  "notes_width": 125
+ },
+ "sheet": {
+  "template": "a3_simple",
+  "fields": {
+   "title_en": "BUILDING P - TRENCH DRAIN CONNECTION TO EXISTING MANHOLES - PROPOSAL",
+   "title_he": "מבנה P - חיבור תעלות ניקוז לשוחות קיימות - הצעה",
+   "line3": "REF: CG104, CG105, CG501 (A8, C8, E5), TRANSMITTAL 57 00 00-7.2"
+  }
+ },
+ "elements": [
+  {
+   "id": "polyline-01",
+   "type": "polyline",
+   "status": "existing",
+   "style": "berm",
+   "points": [
+    [
+     1.6,
+     6.0
+    ],
+    [
+     73.3,
+     6.0
+    ],
+    [
+     73.3,
+     -45.9
+    ],
+    [
+     1.6,
+     -45.9
+    ]
+   ]
+  },
+  {
+   "id": "polyline-02",
+   "type": "polyline",
+   "status": "existing",
+   "style": "berm",
+   "points": [
+    [
+     -9.9,
+     -45.9
+    ],
+    [
+     -21.0,
+     -45.9
+    ],
+    [
+     -21.0,
+     6.0
+    ],
+    [
+     -9.9,
+     6.0
+    ]
+   ]
+  },
+  {
+   "id": "polyline-03",
+   "type": "polyline",
+   "status": "existing",
+   "points": [
+    [
+     -9.9,
+     6.0
+    ],
+    [
+     -9.9,
+     12.0
+    ]
+   ]
+  },
+  {
+   "id": "polyline-04",
+   "type": "polyline",
+   "status": "existing",
+   "points": [
+    [
+     -9.9,
+     -45.9
+    ],
+    [
+     -9.9,
+     -51.9
+    ]
+   ]
+  },
+  {
+   "id": "polyline-05",
+   "type": "polyline",
+   "status": "existing",
+   "points": [
+    [
+     1.6,
+     6.0
+    ],
+    [
+     1.6,
+     12.0
+    ]
+   ]
+  },
+  {
+   "id": "polyline-06",
+   "type": "polyline",
+   "status": "existing",
+   "points": [
+    [
+     1.6,
+     -45.9
+    ],
+    [
+     1.6,
+     -51.9
+    ]
+   ]
+  },
+  {
+   "id": "text-07",
+   "type": "text",
+   "status": "existing",
+   "at": [
+    -4.15,
+    9.6
+   ],
+   "align": "center",
+   "height": 2.0,
+   "text": {
+    "en": "ACCESS",
+    "he": "גישה"
+   }
+  },
+  {
+   "id": "text-08",
+   "type": "text",
+   "status": "existing",
+   "at": [
+    -4.15,
+    -48.5
+   ],
+   "align": "center",
+   "height": 2.0,
+   "text": {
+    "en": "ACCESS",
+    "he": "גישה"
+   }
+  },
+  {
+   "id": "rect-09",
+   "type": "rect",
+   "status": "existing",
+   "corners": [
+    [
+     10,
+     -8.1
+    ],
+    [
+     55,
+     -31.5
+    ]
+   ]
+  },
+  {
+   "id": "text-10",
+   "type": "text",
+   "status": "existing",
+   "at": [
+    32.5,
+    -16.5
+   ],
+   "align": "center",
+   "height": 4.0,
+   "text": {
+    "en": "BUILDING P",
+    "he": "מבנה P"
+   }
+  },
+  {
+   "id": "text-11",
+   "type": "text",
+   "status": "existing",
+   "at": [
+    32.5,
+    -22.8
+   ],
+   "align": "center",
+   "height": 2.0,
+   "text": {
+    "en": "FFE 227.00",
+    "he": "מפלס רצפה 227.00"
+   }
+  },
+  {
+   "id": "pipe-12",
+   "type": "pipe",
+   "status": "existing",
+   "item": "pipe_bt_400",
+   "points": [
+    [
+     0.775,
+     0.0
+    ],
+    [
+     92.0,
+     0.0
+    ]
+   ],
+   "label": {
+    "en": "%%c400 BT @ 0.4% - EXISTING",
+    "he": "צינור בטון %%c400 בשיפוע 0.4% - קיים"
+   },
+   "label_at": [
+    68,
+    -1.7
+   ]
+  },
+  {
+   "id": "pipe-13",
+   "type": "pipe",
+   "status": "existing",
+   "item": "pipe_bt_400",
+   "points": [
+    [
+     0.775,
+     -40.0
+    ],
+    [
+     63.825,
+     -40.0
+    ]
+   ],
+   "label": {
+    "en": "%%c400 BT @ 0.4% - EXISTING",
+    "he": "צינור בטון %%c400 בשיפוע 0.4% - קיים"
+   },
+   "label_at": [
+    38,
+    -41.7
+   ]
+  },
+  {
+   "id": "pipe-14",
+   "type": "pipe",
+   "status": "existing",
+   "item": "pipe_bt_400",
+   "points": [
+    [
+     64.6,
+     -40.775
+    ],
+    [
+     64.6,
+     -54.0
+    ]
+   ]
+  },
+  {
+   "id": "break-15",
+   "type": "break",
+   "status": "existing",
+   "item": "pipe_bt_400",
+   "at": [
+    64.6,
+    -54.0
+   ],
+   "axis": "v"
+  },
+  {
+   "id": "rect-16",
+   "type": "rect",
+   "status": "existing",
+   "corners": [
+    [
+     92.0,
+     -1.2
+    ],
+    [
+     92.5,
+     1.2
+    ]
+   ],
+   "label": {
+    "en": "HEADWALL - OUTLET TO SWALE, INV 224.84",
+    "he": "ראש קיר - יציאה לתעלה, רום תחתית 224.84"
+   },
+   "label_at": [
+    74.5,
+    2.6
+   ]
+  },
+  {
+   "id": "manhole-17",
+   "type": "manhole",
+   "status": "existing",
+   "item": "manhole_conc_125",
+   "at": [
+    0.0,
+    0.0
+   ],
+   "cover": "grate",
+   "cover_item": "grate_e600",
+   "cover_status": "proposed",
+   "label": {
+    "en": "MH-NW  INV 225.20",
+    "he": "שוחה NW - ר.ת. 225.20"
+   },
+   "label_at": [
+    -1.2,
+    2.6
+   ],
+   "label_align": "right"
+  },
+  {
+   "id": "manhole-18",
+   "type": "manhole",
+   "status": "existing",
+   "item": "manhole_conc_125",
+   "at": [
+    0.0,
+    -40.0
+   ],
+   "cover": "grate",
+   "cover_item": "grate_e600",
+   "cover_status": "proposed",
+   "label": {
+    "en": "MH-SW  INV 225.20",
+    "he": "שוחה SW - ר.ת. 225.20"
+   },
+   "label_at": [
+    -1.2,
+    -41.9
+   ],
+   "label_align": "right"
+  },
+  {
+   "id": "manhole-19",
+   "type": "manhole",
+   "status": "existing",
+   "item": "manhole_conc_125",
+   "at": [
+    64.6,
+    -40.0
+   ],
+   "cover": "grate",
+   "cover_item": "grate_e600",
+   "cover_status": "proposed",
+   "label": {
+    "en": "MH-SE  INV 224.94",
+    "he": "שוחה SE - ר.ת. 224.94"
+   },
+   "label_at": [
+    65.9,
+    -41.9
+   ],
+   "label_align": "left"
+  },
+  {
+   "id": "flow_arrow-20",
+   "type": "flow_arrow",
+   "status": "existing",
+   "at": [
+    40,
+    1.1
+   ],
+   "angle": 0
+  },
+  {
+   "id": "flow_arrow-21",
+   "type": "flow_arrow",
+   "status": "existing",
+   "at": [
+    40,
+    -41.1
+   ],
+   "angle": 0
+  },
+  {
+   "id": "flow_arrow-22",
+   "type": "flow_arrow",
+   "status": "existing",
+   "at": [
+    65.7,
+    -48.0
+   ],
+   "angle": -90
+  },
+  {
+   "id": "trench_drain-23",
+   "type": "trench_drain",
+   "status": "existing",
+   "item": "trench_drain_generic",
+   "points": [
+    [
+     1.5,
+     -10.7
+    ],
+    [
+     1.5,
+     -1.0
+    ],
+    [
+     63.7,
+     -1.0
+    ],
+    [
+     63.7,
+     -11.0
+    ]
+   ]
+  },
+  {
+   "id": "trench_drain-24",
+   "type": "trench_drain",
+   "status": "existing",
+   "item": "trench_drain_generic",
+   "points": [
+    [
+     1.5,
+     -25.1
+    ],
+    [
+     1.5,
+     -39.0
+    ],
+    [
+     63.7,
+     -39.0
+    ],
+    [
+     63.7,
+     -25.1
+    ]
+   ]
+  },
+  {
+   "id": "flow_arrow-25",
+   "type": "flow_arrow",
+   "status": "existing",
+   "at": [
+    14,
+    -2.1
+   ],
+   "angle": 180
+  },
+  {
+   "id": "flow_arrow-26",
+   "type": "flow_arrow",
+   "status": "existing",
+   "at": [
+    30,
+    -2.1
+   ],
+   "angle": 180
+  },
+  {
+   "id": "flow_arrow-27",
+   "type": "flow_arrow",
+   "status": "existing",
+   "at": [
+    46,
+    -2.1
+   ],
+   "angle": 180
+  },
+  {
+   "id": "flow_arrow-28",
+   "type": "flow_arrow",
+   "status": "existing",
+   "at": [
+    2.6,
+    -6.0
+   ],
+   "angle": 90
+  },
+  {
+   "id": "flow_arrow-29",
+   "type": "flow_arrow",
+   "status": "existing",
+   "at": [
+    62.6,
+    -6.0
+   ],
+   "angle": 90
+  },
+  {
+   "id": "flow_arrow-30",
+   "type": "flow_arrow",
+   "status": "existing",
+   "at": [
+    12,
+    -37.9
+   ],
+   "angle": 180
+  },
+  {
+   "id": "flow_arrow-31",
+   "type": "flow_arrow",
+   "status": "existing",
+   "at": [
+    24,
+    -37.9
+   ],
+   "angle": 180
+  },
+  {
+   "id": "flow_arrow-32",
+   "type": "flow_arrow",
+   "status": "existing",
+   "at": [
+    40,
+    -37.9
+   ],
+   "angle": 0
+  },
+  {
+   "id": "flow_arrow-33",
+   "type": "flow_arrow",
+   "status": "existing",
+   "at": [
+    52,
+    -37.9
+   ],
+   "angle": 0
+  },
+  {
+   "id": "flow_arrow-34",
+   "type": "flow_arrow",
+   "status": "existing",
+   "at": [
+    2.6,
+    -32.0
+   ],
+   "angle": -90
+  },
+  {
+   "id": "flow_arrow-35",
+   "type": "flow_arrow",
+   "status": "existing",
+   "at": [
+    62.6,
+    -32.0
+   ],
+   "angle": -90
+  },
+  {
+   "id": "pipe-36",
+   "type": "pipe",
+   "status": "proposed",
+   "item": "pipe_pvc_200",
+   "points": [
+    [
+     1.292,
+     -0.861
+    ],
+    [
+     0.645,
+     -0.43
+    ]
+   ]
+  },
+  {
+   "id": "pipe-37",
+   "type": "pipe",
+   "status": "proposed",
+   "item": "pipe_pvc_200",
+   "points": [
+    [
+     1.292,
+     -39.139
+    ],
+    [
+     0.645,
+     -39.57
+    ]
+   ]
+  },
+  {
+   "id": "pipe-38",
+   "type": "pipe",
+   "status": "proposed",
+   "item": "pipe_pvc_200",
+   "points": [
+    [
+     63.867,
+     -39.186
+    ],
+    [
+     64.082,
+     -39.424
+    ]
+   ]
+  },
+  {
+   "id": "north_arrow-39",
+   "type": "north_arrow",
+   "status": "existing",
+   "at": [
+    125,
+    6
+   ],
+   "size": 14
+  },
+  {
+   "id": "trench_drain-40",
+   "type": "trench_drain",
+   "status": "existing",
+   "points": [
+    [
+     94.0,
+     -26.0
+    ],
+    [
+     107.0,
+     -26.0
+    ]
+   ],
+   "width": 1.6
+  },
+  {
+   "id": "circle-41",
+   "type": "circle",
+   "status": "proposed",
+   "at": [
+    106.4,
+    -26.0
+   ],
+   "radius": 0.5
+  },
+  {
+   "id": "pipe-42",
+   "type": "pipe",
+   "status": "proposed",
+   "points": [
+    [
+     107.0,
+     -26.0
+    ],
+    [
+     115.0,
+     -26.0
+    ]
+   ],
+   "od": 1.1
+  },
+  {
+   "id": "manhole-43",
+   "type": "manhole",
+   "status": "existing",
+   "at": [
+    118.875,
+    -26.0
+   ],
+   "di": 6.25,
+   "do": 7.75,
+   "cover": "grate",
+   "grate_size": 4.2,
+   "cover_status": "proposed"
+  },
+  {
+   "id": "flow_arrow-44",
+   "type": "flow_arrow",
+   "status": "existing",
+   "at": [
+    97.0,
+    -23.9
+   ],
+   "angle": 0,
+   "length": 4
+  },
+  {
+   "id": "text-45",
+   "type": "text",
+   "status": "existing",
+   "at": [
+    93.5,
+    -14.5
+   ],
+   "height": 2.75,
+   "text": {
+    "en": "DETAIL 1 - TYPICAL CONNECTION (PLAN)",
+    "he": "פרט 1 - חיבור טיפוסי, תוכנית"
+   }
+  },
+  {
+   "id": "text-46",
+   "type": "text",
+   "status": "existing",
+   "at": [
+    93.5,
+    -18.8
+   ],
+   "height": 2.0,
+   "text": {
+    "en": "ENLARGED APPROX. 1:80",
+    "he": "מוגדל בקירוב 1:80"
+   }
+  },
+  {
+   "id": "text-47",
+   "type": "text",
+   "status": "existing",
+   "at": [
+    110.5,
+    -19.6
+   ],
+   "leader_to": [
+    120.125,
+    -23.9
+   ],
+   "height": 2.0,
+   "text": {
+    "en": "GRATED COVER E600 (NEW)",
+    "he": "מכסה רשת E600 - חדש"
+   }
+  },
+  {
+   "id": "text-48",
+   "type": "text",
+   "status": "existing",
+   "at": [
+    93.5,
+    -30.5
+   ],
+   "leader_to": [
+    100.5,
+    -26.8
+   ],
+   "height": 2.0,
+   "text": {
+    "en": "TRENCH DRAIN A8/CG501",
+    "he": "תעלת ניקוז - פרט A8/CG501"
+   }
+  },
+  {
+   "id": "text-49",
+   "type": "text",
+   "status": "existing",
+   "at": [
+    114.0,
+    -33.5
+   ],
+   "leader_to": [
+    118.875,
+    -30.805
+   ],
+   "height": 2.0,
+   "text": {
+    "en": "CORE DRILL + RUBBER SEAL",
+    "he": "קידוח ליבה + אטם גומי"
+   }
+  },
+  {
+   "id": "text-50",
+   "type": "text",
+   "status": "existing",
+   "at": [
+    109.0,
+    -37.0
+   ],
+   "leader_to": [
+    111.0,
+    -26.55
+   ],
+   "height": 2.0,
+   "text": {
+    "en": "%%c200 PVC SN8, L~1.5 m, SLOPE >= 1% TO MH",
+    "he": "צינור PVC SN8 %%c200, שיפוע 1% לפחות"
+   }
+  }
+ ],
+ "dimensions": [
+  {
+   "type": "chain",
+   "axis": "h",
+   "base": 3.2,
+   "points": [
+    [
+     1.5,
+     -1.0
+    ],
+    [
+     63.7,
+     -1.0
+    ]
+   ],
+   "texts": [
+    "<> (APPROX.)"
+   ],
+   "decimals": 1
+  },
+  {
+   "type": "chain",
+   "axis": "h",
+   "base": -44.0,
+   "points": [
+    [
+     0,
+     -40.0
+    ],
+    [
+     64.6,
+     -40.0
+    ]
+   ],
+   "texts": [
+    "<> (APPROX.)"
+   ],
+   "decimals": 1
+  },
+  {
+   "type": "chain",
+   "axis": "v",
+   "base": 66.7,
+   "points": [
+    [
+     63.7,
+     -1.0
+    ],
+    [
+     63.7,
+     -11.0
+    ]
+   ],
+   "decimals": 1
+  },
+  {
+   "type": "chain",
+   "axis": "v",
+   "base": 66.7,
+   "points": [
+    [
+     63.7,
+     -39.0
+    ],
+    [
+     63.7,
+     -25.1
+    ]
+   ],
+   "decimals": 1
+  },
+  {
+   "type": "chain",
+   "axis": "v",
+   "base": -6.0,
+   "points": [
+    [
+     -3.5,
+     0.0
+    ],
+    [
+     -3.5,
+     -40.0
+    ]
+   ],
+   "decimals": 1
+  }
+ ],
+ "legend": [
+  {
+   "no": 1,
+   "targets": [
+    [
+     52,
+     -0.24
+    ]
+   ],
+   "balloons": [
+    [
+     52,
+     8.5
+    ]
+   ],
+   "item": "pipe_bt_400",
+   "en": "EXISTING %%c400 BT DRAINAGE PIPE (INSTALLED)",
+   "he": "צינור ניקוז %%c400 בטון קיים - מותקן"
+  },
+  {
+   "no": 2,
+   "targets": [
+    [
+     64.0,
+     -40.5
+    ]
+   ],
+   "balloons": [
+    [
+     60,
+     -50
+    ]
+   ],
+   "item": "manhole_conc_125",
+   "en": "EXISTING CONCRETE DRAINAGE MANHOLE %%c125 (INSTALLED)",
+   "he": "שוחת ניקוז קיימת מבטון %%c125 - מותקנת"
+  },
+  {
+   "no": 3,
+   "targets": [
+    [
+     0.3,
+     -40.3
+    ]
+   ],
+   "balloons": [
+    [
+     -16,
+     -50
+    ]
+   ],
+   "item": "grate_e600",
+   "en": "PROPOSED: GRATED COVER E600 INSTEAD OF CLOSED LID",
+   "he": "מוצע: מכסה רשת E600 בשוחה במקום מכסה אטום"
+  },
+  {
+   "no": 4,
+   "targets": [
+    [
+     30,
+     -39.16
+    ]
+   ],
+   "balloons": [
+    [
+     30,
+     -50
+    ]
+   ],
+   "item": "trench_drain_generic",
+   "en": "TRENCH DRAIN (PRECAST CHANNEL, A8/CG501)",
+   "he": "תעלת ניקוז טרומית - פרט A8/CG501"
+  },
+  {
+   "no": 5,
+   "targets": [
+    [
+     0.968,
+     -0.646
+    ],
+    [
+     0.968,
+     -39.354
+    ],
+    [
+     63.974,
+     -39.305
+    ]
+   ],
+   "balloons": [
+    [
+     -10,
+     -6
+    ],
+    [
+     -10,
+     -36
+    ],
+    [
+     69,
+     -33
+    ]
+   ],
+   "item": "pipe_pvc_200",
+   "en": "PROPOSED: %%c200 FROM TRENCH OUTLET DIRECTLY INTO MANHOLE (INSTEAD OF INTO %%c400, E5/CG501)",
+   "he": "מוצע: חיבור %%c200 מקצה התעלה ישירות לשוחה, במקום לצינור %%c400 לפי פרט E5"
+  },
+  {
+   "no": 6,
+   "targets": [
+    [
+     92.5,
+     -1.2
+    ]
+   ],
+   "balloons": [
+    [
+     97.0,
+     -5
+    ]
+   ],
+   "en": "EXISTING CONCRETE HEADWALL - OUTLET TO SWALE",
+   "he": "ראש קיר בטון קיים - יציאה לתעלה"
+  },
+  {
+   "no": 7,
+   "targets": [
+    [
+     73.3,
+     -20
+    ]
+   ],
+   "balloons": [
+    [
+     80,
+     -20
+    ]
+   ],
+   "en": "TOE OF BERM",
+   "he": "רגל סוללה"
+  },
+  {
+   "no": 8,
+   "targets": [
+    [
+     55,
+     -28.5
+    ]
+   ],
+   "balloons": [
+    [
+     50,
+     -26
+    ]
+   ],
+   "en": "BUILDING P (FFE 227.00)",
+   "he": "מבנה P - מפלס רצפה 227.00"
+  }
+ ],
+ "notes": {
+  "en": [
+   "PROPOSAL: TRENCH DRAINS DISCHARGE DIRECTLY INTO THE EXISTING DRAINAGE MANHOLES (MH-NW, MH-SW, MH-SE). THE %%c200 DISCHARGE INTO THE %%c400 BT PIPE PER E5/CG501 IS CANCELLED.",
+   "MANHOLE COVERS: GRATED COVER CLASS E600 (EN 124) INSTEAD OF CLOSED LID.",
+   "CONNECTION INTO MANHOLE WALL BY CORE DRILLING + RUBBER SEAL. MANHOLE BENCHING PER GOVT REMARK 57 00 00-7.2 (b).",
+   "%%c200 INVERTS AND TRENCH DRAIN SLOPES PER COORDINATED PROFILE (GOVT REMARK c.i) - TO BE ISSUED.",
+   "RED = PROPOSED.  DIMENSIONS IN METERS, SCALED FROM CG104/CG105 - APPROXIMATE."
+  ],
+  "he": [
+   "הצעה: תעלות הניקוז מתנקזות ישירות לשוחות הניקוז הקיימות MH-NW, MH-SW, MH-SE. החיבור בקוטר %%c200 לצינור %%c400 לפי פרט E5/CG501 מבוטל.",
+   "מכסי שוחות: מכסה רשת דרג E600 לפי EN 124 במקום מכסה אטום.",
+   "חיבור לדופן השוחה בקידוח ליבה ואטם גומי. עיבוד תחתית השוחה לפי הערת המזמין 57 00 00-7.2 b.",
+   "רומי תחתית של %%c200 ושיפועי התעלות לפי חתך אורך מתואם - יוגש בהמשך.",
+   "אדום = מוצע. מידות במטרים, נמדדו מ-CG104/CG105 - בקירוב."
+  ]
+ },
+ "params": {
+  "max_discharge_distance": 20
+ }
+}

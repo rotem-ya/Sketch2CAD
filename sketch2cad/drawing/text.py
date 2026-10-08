@@ -1,4 +1,4 @@
-"""Text helpers: Hebrew detection, language selection, width estimate, wrapping and DXF text entities.
+"""Text helpers: Hebrew detection, language selection, measuring, wrapping and DXF text entities.
 
 DXF/DWG keep Hebrew in LOGICAL order (AutoCAD applies bidi itself, verified); Hebrew strings are written
 as MTEXT with a right-aligned paragraph (\\pxqr;). Only the PDF/PNG preview converts to visual order
@@ -7,14 +7,19 @@ as MTEXT with a right-aligned paragraph (\\pxqr;). Only the PDF/PNG preview conv
 from __future__ import annotations
 
 import re
+from functools import lru_cache
 
 from bidi.algorithm import get_display
+from ezdxf.fonts import fonts
 from ezdxf.enums import TextEntityAlignment
 
 STYLE = "ARIAL"
+FONT = "arial.ttf"
+FALLBACK_FONTS = ("LiberationSans-Regular.ttf", "DejaVuSans.ttf")
+WIDTH_MARGIN = 1.05
 RTL_PARA = "\\pxqr;"
 LINE_SPACING = 1.667                      # MTEXT default line pitch, x char height
-HEBREW = re.compile(r"[֐-׿]")
+HEBREW = re.compile(r"[\u0590-\u05FF]")
 SPECIAL = (("%%c", "Ø"), ("%%C", "Ø"), ("%%d", "°"), ("%%D", "°"), ("%%p", "±"), ("%%P", "±"))
 
 # short names accepted in specs/templates -> ezdxf alignment
@@ -53,21 +58,21 @@ def plain(s: str) -> str:
     return s
 
 
+@lru_cache(maxsize=1)
+def font():
+    """Arial metrics at cap height 1 via ezdxf; without Arial (Linux) use metric-compatible Liberation Sans."""
+    fm = fonts.font_manager
+    if not fm.has_font(FONT):
+        for name in FALLBACK_FONTS:
+            if fm.has_font(name):
+                fm.add_synonyms({name: FONT}, reverse=False)
+                break
+    return fonts.make_font(FONT, 1.0)
+
+
 def text_width(s: str, h: float) -> float:
-    """Conservative Arial width estimate of a single line (no wrapping)."""
-    w = 0.0
-    for ch in plain(s):
-        if ch == " ":
-            w += 0.32
-        elif HEBREW.match(ch):
-            w += 0.60
-        elif ch.isupper() or ch in "%@&#MW~":
-            w += 0.72
-        elif ch in ".,:;'!|il()[]/-\"":
-            w += 0.34
-        else:
-            w += 0.58
-    return w * h
+    """Width of a single line at text (cap) height h, with a small safety margin for AutoCAD's metrics."""
+    return font().text_width(plain(s)) * h * WIDTH_MARGIN
 
 
 def wrap(s: str, h: float, width: float) -> list[str]:
@@ -96,7 +101,8 @@ def put_text(msp, s: str, at, h: float, *, layer: str = "TEXT", align: str | Non
     attribs = {"layer": layer, "style": STYLE}
     if has_hebrew(s) or "\\P" in s:
         content = RTL_PARA + s if has_hebrew(s) else s
-        m = msp.add_mtext(content, dxfattribs={**attribs, "char_height": h})
+        width = max(text_width(line, h) for line in s.split("\\P"))      # explicit width: never re-wrapped
+        m = msp.add_mtext(content, dxfattribs={**attribs, "char_height": h, "width": width})
         m.set_location(at, rotation=rotation, attachment_point=ATTACHMENT[al.name])
         return m
     t = msp.add_text(s, height=h, rotation=rotation, dxfattribs=attribs)

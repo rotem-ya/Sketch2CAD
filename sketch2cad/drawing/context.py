@@ -101,7 +101,8 @@ class DrawContext:
             self.warnings.append(f"catalog item '{item_id}' not found - using element values / defaults")
         return entry or {}
 
-    def size(self, el: dict, key: str, path: tuple[str, ...], default_mm: float, item: dict | None = None) -> float:
+    def size(self, el: dict, key: str, path: tuple[str, ...], default_mm: float,
+             item: dict | None = None) -> float:
         """Element value (drawing units) -> catalog value at path (mm) -> default (mm).
 
         `item` overrides the catalog entry to read (default: the element's own `item`)."""

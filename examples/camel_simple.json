@@ -1,0 +1,1220 @@
+{
+ "version": 1,
+ "units": "mm",
+ "scale": 15,
+ "paper": "A3",
+ "language": "both",
+ "view": "DEVELOPED ELEVATION",
+ "sheet": {
+  "template": "a3_simple",
+  "fields": {
+   "title_en": "CONNECTION TO EXISTING CAMEL 6\" - AS MADE",
+   "title_he": "חיבור לגמל קיים 6 צול - עדות",
+   "line3": "DIMENSIONS IN mm, '~' = SITE VALUE TO BE VERIFIED.  SAND 200 mm ALL ROUND, MIN COVER 1.20 m.  BURIED STEEL PROTECTED PER SI 1427."
+  }
+ },
+ "style": {
+  "table_text_height": 1.8
+ },
+ "elements": [
+  {
+   "id": "bend-01",
+   "type": "bend",
+   "status": "existing",
+   "item": "elbow_6in_lr90",
+   "center": [
+    229,
+    621
+   ],
+   "radius": 229,
+   "start_angle": 90,
+   "end_angle": 180
+  },
+  {
+   "id": "pipe-02",
+   "type": "pipe",
+   "status": "existing",
+   "item": "steel_pipe_6in_sch40",
+   "points": [
+    [
+     229,
+     850
+    ],
+    [
+     465.85,
+     850
+    ]
+   ]
+  },
+  {
+   "id": "pipe-03",
+   "type": "pipe",
+   "status": "existing",
+   "item": "steel_pipe_6in_sch40",
+   "points": [
+    [
+     634.15,
+     850
+    ],
+    [
+     734.15,
+     850
+    ]
+   ]
+  },
+  {
+   "id": "flange-04",
+   "type": "flange",
+   "status": "existing",
+   "item": "flange_6in_pn16",
+   "at": [
+    746.15,
+    850
+   ],
+   "rotation": 0
+  },
+  {
+   "id": "gate_valve-05",
+   "type": "gate_valve",
+   "status": "existing",
+   "item": "avk_0661_dn150",
+   "at": [
+    863.15,
+    850
+   ],
+   "rotation": 0,
+   "view": "elevation"
+  },
+  {
+   "id": "flange-06",
+   "type": "flange",
+   "status": "existing",
+   "item": "flange_6in_pn16",
+   "at": [
+    980.15,
+    850
+   ],
+   "rotation": 0
+  },
+  {
+   "id": "pipe-07",
+   "type": "pipe",
+   "status": "existing",
+   "item": "steel_pipe_6in_sch40",
+   "points": [
+    [
+     992.15,
+     850
+    ],
+    [
+     1071,
+     850
+    ]
+   ]
+  },
+  {
+   "id": "bend-08",
+   "type": "bend",
+   "status": "existing",
+   "item": "elbow_6in_lr90",
+   "center": [
+    1071,
+    621
+   ],
+   "radius": 229,
+   "start_angle": 0,
+   "end_angle": 90
+  },
+  {
+   "id": "pipe-09",
+   "type": "pipe",
+   "status": "existing",
+   "item": "steel_pipe_6in_sch40",
+   "points": [
+    [
+     1300,
+     621
+    ],
+    [
+     1300,
+     450
+    ]
+   ]
+  },
+  {
+   "id": "flange-10",
+   "type": "flange",
+   "status": "existing",
+   "item": "flange_6in_pn16",
+   "at": [
+    1300,
+    438.0
+   ],
+   "rotation": 90
+  },
+  {
+   "id": "flange-11",
+   "type": "flange",
+   "status": "existing",
+   "item": "flange_6in_pn16",
+   "at": [
+    1300,
+    414.0
+   ],
+   "rotation": 90
+  },
+  {
+   "id": "pipe-12",
+   "type": "pipe",
+   "status": "existing",
+   "od": 160,
+   "points": [
+    [
+     1300,
+     402
+    ],
+    [
+     1300,
+     0
+    ]
+   ]
+  },
+  {
+   "id": "pipe-13",
+   "type": "pipe",
+   "status": "existing",
+   "od": 160,
+   "below_grade": true,
+   "points": [
+    [
+     1300,
+     0
+    ],
+    [
+     1300,
+     -600
+    ]
+   ]
+  },
+  {
+   "id": "break-14",
+   "type": "break",
+   "status": "existing",
+   "od": 160,
+   "below_grade": true,
+   "at": [
+    1300,
+    -600
+   ],
+   "axis": "v"
+  },
+  {
+   "id": "polyline-15",
+   "type": "polyline",
+   "status": "existing",
+   "points": [
+    [
+     465.85,
+     934.15
+    ],
+    [
+     465.85,
+     680
+    ],
+    [
+     634.15,
+     680
+    ],
+    [
+     634.15,
+     934.15
+    ]
+   ]
+  },
+  {
+   "id": "flange-16",
+   "type": "flange",
+   "status": "existing",
+   "item": "flange_6in_pn16",
+   "at": [
+    550,
+    668.0
+   ],
+   "rotation": 90
+  },
+  {
+   "id": "flange-17",
+   "type": "flange",
+   "status": "existing",
+   "item": "flange_6in_pn16",
+   "at": [
+    550,
+    644.0
+   ],
+   "rotation": 90
+  },
+  {
+   "id": "rect-18",
+   "type": "rect",
+   "status": "existing",
+   "corners": [
+    [
+     440,
+     632
+    ],
+    [
+     660,
+     400
+    ]
+   ]
+  },
+  {
+   "id": "flange-19",
+   "type": "flange",
+   "status": "existing",
+   "item": "flange_6in_pn16",
+   "at": [
+    550,
+    388.0
+   ],
+   "rotation": 90
+  },
+  {
+   "id": "pipe-20",
+   "type": "pipe",
+   "status": "existing",
+   "od": 160,
+   "points": [
+    [
+     550,
+     376
+    ],
+    [
+     550,
+     0
+    ]
+   ]
+  },
+  {
+   "id": "pipe-21",
+   "type": "pipe",
+   "status": "existing",
+   "od": 160,
+   "below_grade": true,
+   "points": [
+    [
+     550,
+     0
+    ],
+    [
+     550,
+     -600
+    ]
+   ]
+  },
+  {
+   "id": "break-22",
+   "type": "break",
+   "status": "existing",
+   "od": 160,
+   "below_grade": true,
+   "at": [
+    550,
+    -600
+   ],
+   "axis": "v"
+  },
+  {
+   "id": "pipe-23",
+   "type": "pipe",
+   "status": "existing",
+   "od": 60,
+   "points": [
+    [
+     550,
+     934.15
+    ],
+    [
+     550,
+     1250
+    ]
+   ]
+  },
+  {
+   "id": "pipe-24",
+   "type": "pipe",
+   "status": "existing",
+   "od": 24,
+   "points": [
+    [
+     520,
+     1150
+    ],
+    [
+     380,
+     1150
+    ]
+   ]
+  },
+  {
+   "id": "circle-25",
+   "type": "circle",
+   "status": "existing",
+   "at": [
+    365,
+    1150
+   ],
+   "radius": 22
+  },
+  {
+   "id": "rect-26",
+   "type": "rect",
+   "status": "existing",
+   "corners": [
+    [
+     505,
+     1250
+    ],
+    [
+     595,
+     1380
+    ]
+   ]
+  },
+  {
+   "id": "rect-27",
+   "type": "rect",
+   "status": "existing",
+   "corners": [
+    [
+     520,
+     1380
+    ],
+    [
+     580,
+     1425
+    ]
+   ]
+  },
+  {
+   "id": "pipe-28",
+   "type": "pipe",
+   "status": "existing",
+   "item": "steel_pipe_6in_sch40",
+   "points": [
+    [
+     0,
+     621
+    ],
+    [
+     0,
+     601
+    ]
+   ]
+  },
+  {
+   "id": "weld-29",
+   "type": "weld",
+   "status": "new",
+   "item": "steel_pipe_6in_sch40",
+   "at": [
+    0,
+    601
+   ],
+   "axis": "v"
+  },
+  {
+   "id": "polyline-30",
+   "type": "polyline",
+   "status": "new",
+   "points": [
+    [
+     84.15,
+     601
+    ],
+    [
+     84.15,
+     284
+    ]
+   ]
+  },
+  {
+   "id": "polyline-31",
+   "type": "polyline",
+   "status": "new",
+   "points": [
+    [
+     -84.15,
+     601
+    ],
+    [
+     -84.15,
+     584.15
+    ]
+   ]
+  },
+  {
+   "id": "polyline-32",
+   "type": "polyline",
+   "status": "new",
+   "points": [
+    [
+     -84.15,
+     415.85
+    ],
+    [
+     -84.15,
+     284
+    ]
+   ]
+  },
+  {
+   "id": "pipe-33",
+   "type": "pipe",
+   "status": "new",
+   "item": "steel_pipe_6in_sch40",
+   "points": [
+    [
+     -84.15,
+     500
+    ],
+    [
+     -230.15,
+     500
+    ]
+   ]
+  },
+  {
+   "id": "flange-34",
+   "type": "flange",
+   "status": "new",
+   "item": "flange_6in_pn16",
+   "at": [
+    -242.15,
+    500
+   ],
+   "rotation": 0
+  },
+  {
+   "id": "flange-35",
+   "type": "flange",
+   "status": "new",
+   "item": "flange_6in_pn16",
+   "at": [
+    0,
+    272.0
+   ],
+   "rotation": 90
+  },
+  {
+   "id": "gate_valve-36",
+   "type": "gate_valve",
+   "status": "new",
+   "item": "avk_0661_dn150",
+   "at": [
+    -359.15,
+    500
+   ],
+   "rotation": 0,
+   "view": "elevation"
+  },
+  {
+   "id": "gate_valve-37",
+   "type": "gate_valve",
+   "status": "new",
+   "item": "avk_0661_dn150",
+   "at": [
+    0,
+    155.0
+   ],
+   "rotation": 90,
+   "view": "elevation"
+  },
+  {
+   "id": "flange-38",
+   "type": "flange",
+   "status": "new",
+   "item": "flange_6in_pn16",
+   "at": [
+    0,
+    38.0
+   ],
+   "rotation": 90
+  },
+  {
+   "id": "pipe-39",
+   "type": "pipe",
+   "status": "existing",
+   "od": 160,
+   "points": [
+    [
+     0,
+     26
+    ],
+    [
+     0,
+     0
+    ]
+   ]
+  },
+  {
+   "id": "pipe-40",
+   "type": "pipe",
+   "status": "existing",
+   "od": 160,
+   "below_grade": true,
+   "points": [
+    [
+     0,
+     0
+    ],
+    [
+     0,
+     -600
+    ]
+   ]
+  },
+  {
+   "id": "break-41",
+   "type": "break",
+   "status": "existing",
+   "od": 160,
+   "below_grade": true,
+   "at": [
+    0,
+    -600
+   ],
+   "axis": "v"
+  },
+  {
+   "id": "flange-42",
+   "type": "flange",
+   "status": "new",
+   "item": "flange_6in_pn16",
+   "at": [
+    -476.15,
+    500
+   ],
+   "rotation": 0
+  },
+  {
+   "id": "pipe-43",
+   "type": "pipe",
+   "status": "new",
+   "item": "steel_pipe_6in_sch40",
+   "points": [
+    [
+     -488.15,
+     500
+    ],
+    [
+     -671,
+     500
+    ]
+   ]
+  },
+  {
+   "id": "weld-44",
+   "type": "weld",
+   "status": "new",
+   "item": "steel_pipe_6in_sch40",
+   "at": [
+    -671,
+    500
+   ],
+   "axis": "h"
+  },
+  {
+   "id": "bend-45",
+   "type": "bend",
+   "status": "new",
+   "item": "elbow_6in_lr90",
+   "center": [
+    -671,
+    271
+   ],
+   "radius": 229,
+   "start_angle": 90,
+   "end_angle": 180
+  },
+  {
+   "id": "weld-46",
+   "type": "weld",
+   "status": "new",
+   "item": "steel_pipe_6in_sch40",
+   "at": [
+    -900,
+    271
+   ],
+   "axis": "v"
+  },
+  {
+   "id": "pipe-47",
+   "type": "pipe",
+   "status": "new",
+   "item": "steel_pipe_6in_sch40",
+   "points": [
+    [
+     -900,
+     271
+    ],
+    [
+     -900,
+     0
+    ]
+   ]
+  },
+  {
+   "id": "pipe-48",
+   "type": "pipe",
+   "status": "new",
+   "item": "steel_pipe_6in_sch40",
+   "below_grade": true,
+   "points": [
+    [
+     -900,
+     0
+    ],
+    [
+     -900,
+     -1055
+    ]
+   ]
+  },
+  {
+   "id": "weld-49",
+   "type": "weld",
+   "status": "new",
+   "item": "steel_pipe_6in_sch40",
+   "below_grade": true,
+   "at": [
+    -900,
+    -1055
+   ],
+   "axis": "v"
+  },
+  {
+   "id": "bend-50",
+   "type": "bend",
+   "status": "new",
+   "item": "elbow_6in_lr90",
+   "below_grade": true,
+   "center": [
+    -1129,
+    -1055
+   ],
+   "radius": 229,
+   "start_angle": 270,
+   "end_angle": 360
+  },
+  {
+   "id": "weld-51",
+   "type": "weld",
+   "status": "new",
+   "item": "steel_pipe_6in_sch40",
+   "below_grade": true,
+   "at": [
+    -1129,
+    -1284
+   ],
+   "axis": "h"
+  },
+  {
+   "id": "pipe-52",
+   "type": "pipe",
+   "status": "new",
+   "item": "steel_pipe_6in_sch40",
+   "below_grade": true,
+   "points": [
+    [
+     -1129,
+     -1284
+    ],
+    [
+     -1426,
+     -1284
+    ]
+   ]
+  },
+  {
+   "id": "flange-53",
+   "type": "flange",
+   "status": "new",
+   "item": "flange_6in_pn16",
+   "below_grade": true,
+   "at": [
+    -1438.0,
+    -1284
+   ],
+   "rotation": 0
+  },
+  {
+   "id": "connector-54",
+   "type": "connector",
+   "status": "new",
+   "item": "golan_pex5081_160",
+   "below_grade": true,
+   "at": [
+    -1450,
+    -1284
+   ],
+   "rotation": 180,
+   "length": 250
+  },
+  {
+   "id": "pipe-55",
+   "type": "pipe",
+   "status": "new",
+   "item": "pexgol_160_c10",
+   "od": 160,
+   "below_grade": true,
+   "points": [
+    [
+     -1724,
+     -1284
+    ],
+    [
+     -1950,
+     -1284
+    ]
+   ]
+  },
+  {
+   "id": "break-56",
+   "type": "break",
+   "status": "new",
+   "od": 160,
+   "below_grade": true,
+   "at": [
+    -1950,
+    -1284
+   ],
+   "axis": "h"
+  },
+  {
+   "id": "rect-57",
+   "type": "rect",
+   "status": "new",
+   "below_grade": true,
+   "corners": [
+    [
+     -1400,
+     -1580
+    ],
+    [
+     -700,
+     -980
+    ]
+   ]
+  },
+  {
+   "id": "polyline-58",
+   "type": "polyline",
+   "status": "existing",
+   "style": "ground",
+   "points": [
+    [
+     -2150,
+     0
+    ],
+    [
+     1500,
+     0
+    ]
+   ]
+  },
+  {
+   "id": "text-59",
+   "type": "text",
+   "status": "existing",
+   "at": [
+    -2130,
+    90
+   ],
+   "text": {
+    "en": "FINISHED GRADE",
+    "he": "פני קרקע סופיים"
+   },
+   "height": 2.2
+  }
+ ],
+ "dimensions": [
+  {
+   "type": "chain",
+   "axis": "h",
+   "base": 1120,
+   "points": [
+    [
+     -900,
+     500
+    ],
+    [
+     -671,
+     500
+    ],
+    [
+     -488.15,
+     500
+    ],
+    [
+     -464.15,
+     500
+    ],
+    [
+     -254.15,
+     500
+    ],
+    [
+     0,
+     500
+    ]
+   ],
+   "texts": [
+    "",
+    "~<>",
+    "",
+    "",
+    "~<>"
+   ]
+  },
+  {
+   "type": "chain",
+   "axis": "v",
+   "base": -1250,
+   "points": [
+    [
+     -1250,
+     0
+    ],
+    [
+     -1250,
+     500
+    ]
+   ],
+   "texts": [
+    "~<>"
+   ]
+  },
+  {
+   "type": "chain",
+   "axis": "v",
+   "base": -1150,
+   "points": [
+    [
+     -1020,
+     271
+    ],
+    [
+     -1020,
+     500
+    ]
+   ]
+  },
+  {
+   "type": "chain",
+   "axis": "v",
+   "base": 1550,
+   "points": [
+    [
+     1550,
+     0
+    ],
+    [
+     1550,
+     850
+    ]
+   ],
+   "texts": [
+    "~<>"
+   ]
+  },
+  {
+   "type": "chain",
+   "axis": "v",
+   "base": 220,
+   "points": [
+    [
+     220,
+     50
+    ],
+    [
+     220,
+     260
+    ]
+   ]
+  },
+  {
+   "type": "chain",
+   "axis": "v",
+   "base": -1850,
+   "points": [
+    [
+     -1850,
+     0
+    ],
+    [
+     -1850,
+     -1200.0
+    ]
+   ],
+   "texts": [
+    "<> MIN"
+   ]
+  },
+  {
+   "type": "chain",
+   "axis": "h",
+   "base": -1730,
+   "points": [
+    [
+     -1724,
+     -1284
+    ],
+    [
+     -1450,
+     -1284
+    ],
+    [
+     -1129,
+     -1284
+    ],
+    [
+     -900,
+     -1284
+    ],
+    [
+     0,
+     -1284
+    ]
+   ],
+   "texts": [
+    "~<>",
+    "~<>",
+    "",
+    "~<>"
+   ]
+  }
+ ],
+ "legend": [
+  {
+   "no": 1,
+   "targets": [
+    [
+     1384.15,
+     661
+    ]
+   ],
+   "balloons": [
+    [
+     1750,
+     1000
+    ]
+   ],
+   "en": "EXISTING CAMEL 6\" - STEEL MANIFOLD",
+   "he": "גמל קיים 6 צול - סעפת פלדה"
+  },
+  {
+   "no": 2,
+   "targets": [
+    [
+     873.15,
+     1298
+    ]
+   ],
+   "balloons": [
+    [
+     1150,
+     1600
+    ]
+   ],
+   "en": "EXISTING GATE VALVE",
+   "he": "מגוף קיים"
+  },
+  {
+   "no": 3,
+   "targets": [
+    [
+     595,
+     1330
+    ]
+   ],
+   "balloons": [
+    [
+     820,
+     1700
+    ]
+   ],
+   "en": "EXISTING AIR VALVE & SAMPLING TAP",
+   "he": "שסתום אוויר וברז דיגום קיימים"
+  },
+  {
+   "no": 4,
+   "targets": [
+    [
+     1380.0,
+     -450
+    ]
+   ],
+   "balloons": [
+    [
+     1750,
+     -450
+    ]
+   ],
+   "en": "EXISTING 160 PIPE BELOW GRADE (TYP.)",
+   "he": "צינור 160 קיים מתחת לקרקע (טיפוסי)"
+  },
+  {
+   "no": 5,
+   "targets": [
+    [
+     84.15,
+     340
+    ]
+   ],
+   "balloons": [
+    [
+     300,
+     330
+    ]
+   ],
+   "en": "NEW 6\" STEEL SPOOL WITH 6\" BRANCH, WELDED INTO EXISTING LEG",
+   "he": "קטע פלדה חדש 6 צול עם יציאה 6 צול, מרותך לרגל הקיימת",
+   "item": "steel_pipe_6in_sch40"
+  },
+  {
+   "no": 6,
+   "targets": [
+    [
+     -349.15,
+     948
+    ]
+   ],
+   "balloons": [
+    [
+     -550,
+     1350
+    ]
+   ],
+   "en": "GATE VALVE AVK 06/61 DN150 PN16, L=210 - ON BRANCH, STEM VERTICAL",
+   "he": "מגוף טריז AVK 06/61 קוטר 150 דרג 16 - על הענף, ציר אנכי",
+   "item": "avk_0661_dn150"
+  },
+  {
+   "no": 7,
+   "targets": [
+    [
+     -200,
+     155.0
+    ]
+   ],
+   "balloons": [
+    [
+     -600,
+     -300
+    ]
+   ],
+   "en": "GATE VALVE AVK 06/61 DN150 PN16 - ON EXISTING LEG, STEM HORIZONTAL",
+   "he": "מגוף טריז AVK 06/61 קוטר 150 דרג 16 - על הרגל הקיימת, ציר אופקי",
+   "item": "avk_0661_dn150"
+  },
+  {
+   "no": 8,
+   "targets": [
+    [
+     1442.5,
+     426
+    ]
+   ],
+   "balloons": [
+    [
+     1750,
+     120
+    ]
+   ],
+   "en": "FLANGED JOINT 6\" PN16 (D285 PCD240), EPDM GASKET, 8xM20 SS316 BOLTS (TYP.)",
+   "he": "חיבור אוגנים 6 צול דרג 16, אטם EPDM, 8 ברגי M20 נירוסטה 316 (טיפוסי)",
+   "item": "flange_6in_pn16"
+  },
+  {
+   "no": 9,
+   "targets": [
+    [
+     -892.43,
+     492.43
+    ]
+   ],
+   "balloons": [
+    [
+     -1500,
+     950
+    ]
+   ],
+   "en": "6\" STEEL PIPE SCH40 + LR 90 ELBOW A234 WPB, 3 LAYERS VINYL TAPE (TYP.)",
+   "he": "צינור פלדה 6 צול סקדיול 40 + קשת 90 רדיוס ארוך, עטוף 3 שכבות סרט ויניל",
+   "item": "steel_pipe_6in_sch40"
+  },
+  {
+   "no": 10,
+   "targets": [
+    [
+     -1594,
+     -1165
+    ]
+   ],
+   "balloons": [
+    [
+     -1550,
+     -750
+    ]
+   ],
+   "en": "GOLAN STEEL FLANGE CONNECTOR 160x6\" (PEX5081-160)",
+   "he": "מחבר אוגן פלדה לפקסגול 160 מ\"מ / 6 צול, גולן",
+   "item": "golan_pex5081_160"
+  },
+  {
+   "no": 11,
+   "targets": [
+    [
+     -1890,
+     -1360.0
+    ]
+   ],
+   "balloons": [
+    [
+     -2100,
+     -1750
+    ]
+   ],
+   "en": "PEXGOL PE-Xa 160 CLASS 10 - BELOW GRADE, TO SITE",
+   "he": "צינור פקסגול 160 דרג 10 - מתחת לקרקע, לאתר",
+   "item": "pexgol_160_c10"
+  },
+  {
+   "no": 12,
+   "targets": [
+    [
+     -700,
+     -1530
+    ]
+   ],
+   "balloons": [
+    [
+     -450,
+     -1500
+    ]
+   ],
+   "en": "CONCRETE THRUST BLOCK",
+   "he": "גוש עיגון מבטון"
+  }
+ ],
+ "legend_at": [
+  120,
+  -760
+ ],
+ "notes": {},
+ "params": {
+  "cover_min": 1200,
+  "grade_y": 0
+ }
+}

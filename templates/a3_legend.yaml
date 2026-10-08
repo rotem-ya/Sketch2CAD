@@ -1,0 +1,18 @@
+# A3 landscape with a right-hand column: bilingual legend table + notes on top, title block at the bottom.
+id: a3_legend
+name: {en: "A3 with legend", he: "A3 עם מקרא"}
+paper: {w: 420, h: 297}
+margin: 10
+frame_width: 0.7
+drawing_area: {x: 3, y: 3, w: 282, h: 271}
+legend_area: {x: 292, y: 50, w: 105, h: 224}
+blocks:
+  - {x: 289, y: 0, w: 111, h: 277}
+  - {x: 289, y: 0, w: 111, h: 46, lines: [{y: 30}, {y: 18}, {y: 9}, {x: 62, y1: 9}]}
+fields:
+  - {key: title, x: 292, y: 41.5, he_y: 35, w: 105, h: 3.0, en: "{title_en}", he: "{title_he}"}
+  - {key: project, x: 292, y: 24.5, he_y: 20, w: 105, h: 2.2, en: "{project_name_en} | {client}", he: "{project_name_he}"}
+  - {key: code, x: 292, y: 12, w: 105, h: 2.8, en: "{code}"}
+  - {key: rev_scale, x: 292, y: 3.5, w: 58, h: 2.0, en: "REV {rev} | SCALE 1:{scale}"}
+  - {key: date, x: 354, y: 3.5, w: 43, h: 2.0, en: "{date}"}
+  - {key: line3, x: 292, y: 47.5, w: 105, h: 1.8, en: "{line3}", he: "{line3_he}"}

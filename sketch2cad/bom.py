@@ -23,7 +23,10 @@ def build_bom(spec: dict, catalog=None) -> list[dict]:
     """One row per (catalog item, status); pipes and trench drains in metres, everything else in pieces."""
     legend_no = {l["item"]: l.get("no") for l in spec.get("legend", []) if l.get("item")}
     rows: dict[tuple, dict] = {}
-    for el in spec.get("elements", []):
+    elements = list(spec.get("elements", []))
+    elements += [{"type": "cover", "item": e["cover_item"], "status": e.get("cover_status", e.get("status", "new"))}
+                 for e in elements if e.get("cover_item")]          # manhole covers are separate BOM lines
+    for el in elements:
         item_id = el.get("item")
         if not item_id:
             continue

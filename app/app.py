@@ -413,7 +413,7 @@ def tab_drawing(p: Project, d: Document, cat: Catalog) -> None:
     """Spec from a typical detail / AI sketch reading / JSON, then render with a title-block template."""
     from sketch2cad.templates import list_templates
     spec = load_spec(d)
-    mode = st.radio(T("spec_source"), ["typical", "ai", "json"], horizontal=True, key="spec_mode",
+    mode = st.radio(T("spec_source"), ["typical", "ai", "json"], horizontal=True, index=2 if spec else 0,
                     format_func=lambda m: T(f"src_{m}"))
     lang_mode = d.language_mode or p.language_mode
     if mode == "typical":

@@ -9,7 +9,7 @@ import pymupdf
 
 from . import pdfdoc
 from .bom import build_bom
-from .checks import run_checks
+from .checks import items_used, run_checks
 from .documents import STATUSES
 
 L = {
@@ -68,10 +68,7 @@ def find_source_file(name: str, project, document) -> Path | None:
 
 
 def _items(spec, catalog) -> list[dict]:
-    ids = []
-    for el in spec.get("elements", []) + spec.get("legend", []):
-        if el.get("item") and el["item"] not in ids:
-            ids.append(el["item"])
+    ids = dict.fromkeys(item_id for _, item_id in items_used(spec))
     return [catalog.get(i) or {"id": i} for i in ids]
 
 

@@ -102,7 +102,7 @@ def draw_bend(ctx: DrawContext, el: dict):
 def draw_trench_drain(ctx: DrawContext, el: dict):
     """Trench drain: outline along the run, closed ends, grate ticks across."""
     pts = el["points"]
-    w = ctx.size(el, "width", ("dims", "W"), 300)
+    w = ctx.size(el, "width", ("dims", "width"), 300)
     attribs = ctx.attribs(el)
     left, right = offset_polyline(pts, w / 2), offset_polyline(pts, -w / 2)
     for side in (left, right):
@@ -249,7 +249,8 @@ def draw_manhole(ctx: DrawContext, el: dict):
     cover = el.get("cover", "closed")
     cover_attribs = ctx.attribs(el, el.get("cover_status"))
     if cover == "grate":
-        side = ctx.size(el, "grate_size", ("dims", "L"), 0.67 * di / ctx.u, item=ctx.item(el.get("cover_item")))
+        cover_item = ctx.item(el.get("cover_item"))
+        side = ctx.size(el, "grate_size", ("dims", "clear"), 0.67 * di / ctx.u, item=cover_item)
         _grate(ctx, c, side, cover_attribs)
     elif cover == "closed":
         ctx.msp.add_circle(c, 0.4 * di, dxfattribs=cover_attribs)
@@ -332,12 +333,18 @@ def stack_text(ctx: DrawContext, lines: list[str], at: Vec2, h: float, align="le
 
 
 def leader_label(ctx: DrawContext, lines: list[str], at: Vec2, target: Vec2, h: float) -> None:
-    """Reference-style label: left-aligned lines, underline, leader from the nearer end to a dot on target."""
+    """Reference-style label: left-aligned lines on a shelf line, leader from the shelf's nearer end to a dot.
+
+    The shelf runs under the text, or over it when the target is above, so the leader never crosses the text.
+    """
     if not lines:
         return
     stack_text(ctx, lines, at, h)
     w = max(text_width(s, h) for s in lines)
-    y = at.y - (len(lines) - 1) * LINE_SPACING * h - ctx.paper(0.8)
+    if target.y > at.y + h:
+        y = at.y + h + ctx.paper(0.8)
+    else:
+        y = at.y - (len(lines) - 1) * LINE_SPACING * h - ctx.paper(0.8)
     start = Vec2(at.x + w, y) if target.x > at.x + w / 2 else Vec2(at.x, y)
     attribs = {"layer": "TEXT"}
     ctx.msp.add_line((at.x, y), (at.x + w, y), dxfattribs=attribs)
