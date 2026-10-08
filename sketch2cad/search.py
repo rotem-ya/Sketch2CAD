@@ -62,7 +62,25 @@ def hebrew_variants(text: str) -> str:
     return " ".join(out)
 
 
+CONTENT_FILE = "content.txt"
+
+
+def stored_content(doc: Document) -> str:
+    """Text extracted from the document's files (kept in content.txt so a rebuild does not lose it)."""
+    f = doc.path / CONTENT_FILE
+    return f.read_text(encoding="utf-8") if f.exists() else ""
+
+
+def store_content(doc: Document, name: str, text: str) -> None:
+    """Add/replace the extracted text of one file in the document's content.txt."""
+    blocks = [b for b in stored_content(doc).split("\n\f") if b and not b.startswith(f"[{name}]\n")]
+    if text.strip():
+        blocks.append(f"[{name}]\n{text.strip()}")
+    (doc.path / CONTENT_FILE).write_text("\n\f".join(blocks), encoding="utf-8")
+
+
 def _row(project: Project, doc: Document, content: str = "") -> tuple:
+    content = content or stored_content(doc)
     he_text = " ".join([doc.title.get("he", ""), doc.description, " ".join(doc.tags), content])
     return (project.code, project.folder, doc.code, doc.title.get("he", ""), doc.title.get("en", ""),
             doc.description, " ".join(doc.tags), doc.discipline, doc.type, doc.status, content,

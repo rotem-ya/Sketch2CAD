@@ -1,0 +1,58 @@
+# Drainage components – Hatzerim 20117 (CG104/CG105/CG501, transmittal 57 00 00-7.2).
+
+- id: manhole_conc_125
+  category: manhole
+  name: {en: "Concrete drainage manhole D125", he: "שוחת ניקוז מבטון קוטר 125"}
+  unit: pcs
+  material: "Precast concrete"
+  dims: {Di: 1250, Do: 1550}
+  standards: ["SI 658"]
+  source: {submittal: "CG104 / CG105", status: "design drawing", fields: [Di]}
+  notes: "Outer diameter is an estimate."
+
+- id: grate_e600
+  category: cover
+  name: {en: "Grated manhole cover class E600", he: "מכסה רשת לשוחה דרג E600"}
+  unit: pcs
+  material: "Ductile iron"
+  dims: {clear: 600}
+  standards: ["EN 124"]
+  source: {}
+  notes: "Not in the approved submittals - needs a new submittal."
+
+- id: cover_closed_d400
+  category: cover
+  name: {en: "Closed manhole cover D400", he: "מכסה שוחה אטום D400"}
+  unit: pcs
+  material: "Ductile iron"
+  standards: ["EN 124"]
+  source: {submittal: "CG501", status: "design drawing"}
+
+- id: trench_drain_generic
+  category: trench_drain
+  name: {en: "Trench drain 200 mm with grate (A8/CG501)", he: "תעלת ניקוז 200 עם רשת - פרט A8/CG501"}
+  unit: m
+  material: "Polymer concrete, ductile iron grate"
+  dims: {width: 320, inner: 200}
+  standards: ["EN 1433"]
+  source: {submittal: "57 00 00-7.2", status: "submitted", fields: [inner]}
+
+- id: pipe_bt_400
+  category: pipe
+  name: {en: "Reinforced concrete pipe D400", he: "צינור בטון מזוין קוטר 400"}
+  dn: 400
+  unit: m
+  material: "Reinforced concrete"
+  dims: {OD: 480, ID: 400}
+  standards: ["SI 27"]
+  source: {submittal: "CG104 / CG105", status: "design drawing", fields: [ID]}
+
+- id: pipe_pvc_200
+  category: pipe
+  name: {en: "PVC SN8 pipe D200", he: "צינור PVC SN8 קוטר 200"}
+  dn: 200
+  unit: m
+  material: "PVC-U SN8"
+  dims: {OD: 200}
+  standards: ["SI 884"]
+  source: {submittal: "CG501", status: "design drawing", fields: [OD]}

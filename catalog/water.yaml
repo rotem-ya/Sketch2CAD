@@ -1,0 +1,99 @@
+# Water supply components – Hatzerim 20117 approved submittals (Drive: "הגשות/00מאושר").
+# Every dimension that came from a document is listed in source.fields; missing ones are flagged by checks.
+
+- id: avk_0661_dn150
+  category: gate_valve
+  name: {en: "Gate valve AVK 06/61 DN150 PN16", he: "מגוף טריז AVK 06/61 קוטר 150 דרג 16"}
+  manufacturer: AVK
+  supplier: Mendelson
+  part_no: AV0661D6
+  dn: 150
+  pn: 16
+  unit: pcs
+  material: "Ductile iron GGG-50, epoxy 250um"
+  flange: {std: PN16, D: 285, PCD: 240, holes: 8, hole_d: 23, t: 24}
+  dims: {L: 210, H: 448, Dt: 212}
+  standards: ["DIN 3352-4", "SI 61", "SI 5452"]
+  source: {submittal: "07 00 00-7.1", status: "approved B", file: "0661_standard_Israel.pdf",
+           fields: [L, H, Dt, D, PCD, holes, hole_d]}
+
+- id: elbow_6in_lr90
+  category: elbow
+  name: {en: "Elbow 6in LR 90 BW Sch40 A234 WPB, cement lined", he: "קשת 6 צול רדיוס ארוך 90 לריתוך, ציפוי מלט"}
+  manufacturer: Mendelson
+  supplier: Mendelson
+  part_no: "1018005"
+  dn: 150
+  unit: pcs
+  material: "Carbon steel A234 WPB, internal cement lining"
+  dims: {A: 229, OD: 168.3, wall: 7.11}
+  standards: ["ASME B16.9"]
+  source: {submittal: "57 00 00-11", status: "approved B", fields: [A, OD, wall]}
+
+- id: steel_pipe_6in_sch40
+  category: pipe
+  name: {en: "Steel pipe 6in Sch40 OD168.3x7.11, cement lined", he: "צינור פלדה 6 צול SCH40 קוטר 168.3 דופן 7.11, ציפוי מלט"}
+  supplier: Mendelson
+  dn: 150
+  unit: m
+  material: "Carbon steel, cement lined, 3 layers vinyl tape when buried"
+  dims: {OD: 168.3, wall: 7.11}
+  standards: ["ASME B36.10"]
+  source: {submittal: "57 00 00-11", status: "approved B", fields: [OD, wall]}
+
+- id: flange_6in_pn16
+  category: flange
+  name: {en: "Weld-neck flange 6in PN16", he: "אוגן צווארון לריתוך 6 צול דרג 16"}
+  dn: 150
+  pn: 16
+  unit: pcs
+  material: "Carbon steel"
+  flange: {std: PN16, D: 285, PCD: 240, holes: 8, hole_d: 23, t: 24}
+  standards: ["EN 1092-1", "ISO 7005"]
+  source: {submittal: "Plasson catalogue 09903160", status: "reference", fields: [D, PCD, holes, hole_d, t]}
+
+- id: pexgol_160_c10
+  category: pipe
+  name: {en: "Pexgol PE-Xa 160 class 10 OD160x9.9", he: "צינור פקסגול 160 דרג 10 קוטר 160 דופן 9.9"}
+  manufacturer: Golan
+  part_no: PA-1609.9BLK
+  dn: 160
+  pn: 10
+  unit: m
+  material: "PE-Xa"
+  dims: {OD: 160, wall: 9.9}
+  standards: ["EN ISO 15875", "SI 16893"]
+  source: {submittal: "57 00 00-8", status: "approved", fields: [OD, wall]}
+
+- id: golan_pex5081_160
+  category: connector
+  name: {en: "Golan steel flange connector 160 x 6in", he: "מחבר אוגן פלדה גולן 160 על 6 צול"}
+  manufacturer: Golan
+  part_no: PEX5081-160
+  dn: 160
+  unit: pcs
+  material: "Ductile iron"
+  flange: {std: "ASA150+BS"}
+  dims: {L: 250}
+  source: {submittal: "57 00 00-8", status: "approved", fields: []}
+  notes: "Body length L=250 is an estimate - not in the submittal. Drilling ASA150 vs PN16 to verify."
+
+- id: gasket_6in_pn16_epdm
+  category: gasket
+  name: {en: "Flat gasket 6in PN16 EPDM 3 mm", he: "אטם שטוח 6 צול דרג 16 EPDM עובי 3"}
+  dn: 150
+  pn: 16
+  unit: pcs
+  material: "EPDM"
+  dims: {t: 3}
+  standards: ["SI 5452"]
+  source: {}
+
+- id: bolt_m20_ss316
+  category: bolt
+  name: {en: "Bolt set M20 SS316 A4-80 with washers", he: "סט ברגים M20 נירוסטה 316 עם דסקיות"}
+  unit: pcs
+  material: "SS316 A4-80"
+  dims: {d: 20}
+  standards: ["Spec 07.04.02", "RFI-0021 D"]
+  source: {}

@@ -52,6 +52,39 @@ def test_project_document_search_flow(tmp_path, lang):
     _by_label(at.text_input, t("search_text", lang)).input("גמל").run()
     assert any("20117-W-CAMEL-01" in m.value for m in at.markdown)
 
-    # settings page renders
-    next(b for b in at.button if b.label == t("nav_settings", lang)).click().run()
+    # tool pages render
+    for nav in ("nav_import", "nav_templates", "nav_catalog", "nav_settings"):
+        next(b for b in at.button if b.label == t(nav, lang)).click().run()
+        assert not at.exception, nav
+
+
+def test_typical_render_checks_bom_package(tmp_path):
+    """Document page end to end: typical detail → spec → render → outputs, checks, BOM, package."""
+    from sketch2cad.config import Settings
+    from sketch2cad.documents import Document, create_document
+    from sketch2cad.i18n import t
+    from sketch2cad.projects import create_project
+    p = create_project(tmp_path / "projects", "20117", "חצרים", "Hatzerim")
+    d = create_document(p, title_he="חיבור לגמל קיים", title_en="Camel", discipline="W", subject="CAMEL")
+    s = Settings(ui_language="en", projects=[p.folder])
+    s.save()
+
+    at = AppTest.from_file(APP, default_timeout=120)
+    at.session_state["page"] = "document"
+    at.session_state["project_folder"] = p.folder
+    at.session_state["doc_folder"] = d.folder
+    at.run()
     assert not at.exception
+    next(b for b in at.button if b.label == t("generate", "en")).click().run()
+    assert not at.exception
+    assert (d.path / "spec.json").exists()
+    next(b for b in at.button if b.label == t("render", "en")).click().run()
+    assert not at.exception
+    d = Document.load(d.folder)
+    assert {"dxf", "pdf", "preview"} <= set(d.outputs)
+    assert (d.path / d.outputs["dxf"]).exists()
+    assert any("🟠" in m.value for m in at.markdown)                 # checks tab: flange drilling warning
+    assert (d.path / f"{d.code}_BOM.xlsx").exists()
+    next(b for b in at.button if b.key == "pkg_build").click().run()
+    assert not at.exception
+    assert (d.path / Document.load(d.folder).outputs["package"]).exists()

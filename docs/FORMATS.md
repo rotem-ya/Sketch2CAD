@@ -110,10 +110,11 @@ project_name_he, client, date, scale, drawn, checked + anything in `sheet.fields
 | `sketch2cad.compare` | `compare(a, b, out_png)` (PDF/DXF/PNG) | path + change ratio |
 | `sketch2cad.checks` | `run_checks(spec, catalog) -> list[Finding]` | |
 | `sketch2cad.bom` | `build_bom(spec, catalog) -> list[row]`, `bom_to_xlsx(rows, path)` | |
-| `sketch2cad.package` | `build_package(project, document, catalog, out_pdf)` | path |
-| `sketch2cad.printset` | `build_print_set(project, out_pdf)` | path |
-| `sketch2cad.typical` | `list_typicals()`, `generate(name, params) -> spec` | |
-| `sketch2cad.ai.sketch` | `draft_spec_from_images(paths, notes, api_key) -> spec` | |
+| `sketch2cad.package` | `build_package(project, document, catalog, out_pdf, *, lang, spec)` | path |
+| `sketch2cad.printset` | `build_print_set(project, out_pdf, *, lang, codes, statuses)` | path |
+| `sketch2cad.typical` | `list_typicals()`, `generate(name, params, catalog=None) -> spec` | riser_connection, trench_to_manhole, valve_in_line |
+| `sketch2cad.ai.sketch` | `draft_spec_from_images(paths, notes, api_key, *, catalog, units, language) -> Draft` | `Draft.spec`, `.assumptions`, `.questions`, `.warnings` |
+| `sketch2cad.search` | `store_content(doc, name, text)` | extracted file text kept in `content.txt` for the index |
 
 ### Text rules (verified in AutoCAD)
 - DXF/DWG: Hebrew stored in **logical order**; Hebrew table cells as MTEXT `\pxqr;` right-aligned.

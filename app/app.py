@@ -3,15 +3,21 @@
 from __future__ import annotations
 
 import json
+import os
+import shutil
 import sys
+import tempfile
 from pathlib import Path
 
 import streamlit as st
+import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from sketch2cad import codes, search  # noqa: E402
-from sketch2cad.config import Settings  # noqa: E402
+from sketch2cad import bom, codes, search, typical  # noqa: E402
+from sketch2cad.catalog import CATEGORIES, Catalog, load_catalog, save_item  # noqa: E402
+from sketch2cad.checks import run_checks  # noqa: E402
+from sketch2cad.config import Settings, app_home  # noqa: E402
 from sketch2cad.documents import (DOC_TYPES, STATUSES, Document, add_source, create_document,  # noqa: E402
                                   list_documents, new_revision)
 from sketch2cad.i18n import t  # noqa: E402
@@ -60,6 +66,45 @@ def reindex(project: Project, doc: Document) -> None:
     search.index_document(project, doc)
 
 
+def current_project() -> Project | None:
+    return Project.load(ss.project_folder) if ss.project_folder and is_project_folder(ss.project_folder) else None
+
+
+def load_spec(doc: Document) -> dict | None:
+    f = doc.path / "spec.json"
+    return json.loads(f.read_text(encoding="utf-8")) if f.exists() else None
+
+
+def save_spec(doc: Document, spec: dict) -> None:
+    (doc.path / "spec.json").write_text(json.dumps(spec, ensure_ascii=False, indent=1), encoding="utf-8")
+
+
+def lang_choice(label: str, default: str, key: str, options=("both", "en", "he")) -> str:
+    return st.selectbox(label, list(options), index=list(options).index(default) if default in options else 0,
+                        format_func=lambda x: T(f"lang_{x}"), key=key)
+
+
+def index_source(doc: Document, path: Path) -> list[str]:
+    """Extract text from a source file into the search index; returns warnings."""
+    from sketch2cad.io.readers import read_any
+    try:
+        info = read_any(path, Path(tempfile.mkdtemp(prefix="s2c_")))
+    except Exception as e:  # noqa: BLE001 - a broken file must not block the upload
+        return [f"{path.name}: {e}"]
+    search.store_content(doc, path.name, info.text)
+    return list(info.warnings)
+
+
+def download(label: str, path: Path, key: str) -> None:
+    if path and Path(path).exists():
+        st.download_button(label, Path(path).read_bytes(), file_name=Path(path).name, key=key)
+
+
+def show_converter_error(e: Exception) -> None:
+    from sketch2cad.io.oda import ConverterNotFound
+    st.warning(T("no_converter") if isinstance(e, ConverterNotFound) else f"{T('error')}: {e}")
+
+
 # ================================================================== sidebar
 with st.sidebar:
     st.title("Sketch2CAD")
@@ -72,6 +117,9 @@ with st.sidebar:
     st.divider()
     st.button(T("nav_projects"), on_click=go, args=("projects",), use_container_width=True)
     st.button(T("nav_search"), on_click=go, args=("search",), use_container_width=True)
+    st.button(T("nav_import"), on_click=go, args=("import",), use_container_width=True)
+    st.button(T("nav_templates"), on_click=go, args=("templates",), use_container_width=True)
+    st.button(T("nav_catalog"), on_click=go, args=("catalog",), use_container_width=True)
     st.button(T("nav_settings"), on_click=go, args=("settings",), use_container_width=True)
     if ss.project_folder and is_project_folder(ss.project_folder):
         cur = Project.load(ss.project_folder)
@@ -141,7 +189,8 @@ def page_project() -> None:
     p = Project.load(ss.project_folder)
     st.header(f"{p.code} - {p.display_name(L)}")
     st.caption(f"{T('folder')}: `{p.folder}`")
-    tab_docs, tab_new, tab_settings = st.tabs([T("documents"), T("new_document"), T("project_settings")])
+    tab_docs, tab_new, tab_print, tab_settings = st.tabs([T("documents"), T("new_document"), T("print_set"),
+                                                          T("project_settings")])
 
     with tab_docs:
         c1, c2, c3, c4 = st.columns([3, 1, 1, 1])
@@ -198,6 +247,18 @@ def page_project() -> None:
                 except Exception as e:  # noqa: BLE001
                     st.error(f"{T('error')}: {e}")
 
+    with tab_print:
+        st.caption(T("print_set_help"))
+        c1, c2 = st.columns([3, 1])
+        stats = c1.multiselect(T("statuses"), list(STATUSES), default=list(STATUSES),
+                               format_func=lambda k: label_of(STATUSES, k))
+        lang = lang_choice(T("doc_language"), L, "ps_lang", ("en", "he"))
+        if c2.button(T("build"), key="ps_build"):
+            from sketch2cad.printset import build_print_set
+            ss.print_set = str(build_print_set(p, p.path / f"{p.code}_PrintSet.pdf", lang=lang, statuses=stats))
+        if ss.get("print_set") and Path(ss.print_set).parent == p.path:
+            download(f"{T('download')} PDF", Path(ss.print_set), "ps_dl")
+
     with tab_settings:
         with st.form("proj_settings"):
             c1, c2, c3 = st.columns(3)
@@ -248,7 +309,10 @@ def page_document() -> None:
     st.button(T("back_to_project"), on_click=go, args=("project",))
     st.markdown(f"## {ltr(d.code + '  Rev ' + d.rev)}", unsafe_allow_html=True)
     st.subheader(d.display_title(L))
-    tab_det, tab_src, tab_out, tab_rev = st.tabs([T("details"), T("sources"), T("outputs"), T("revisions")])
+    cat = load_catalog(p)
+    (tab_det, tab_src, tab_draw, tab_chk, tab_bom, tab_out, tab_pkg, tab_cmp, tab_rev) = st.tabs(
+        [T("details"), T("sources"), T("drawing"), T("checks"), T("bom"), T("outputs"), T("package"), T("compare"),
+         T("revisions")])
 
     with tab_det, st.form("doc_details"):
         c1, c2 = st.columns(2)
@@ -271,10 +335,15 @@ def page_document() -> None:
     with tab_src:
         files = st.file_uploader(T("upload"), accept_multiple_files=True)
         if files and st.button(T("add")):
+            warnings = []
             for f in files:
-                add_source(d, name=f.name, data=f.getvalue())
-            st.success(T("uploaded"))
+                rel = add_source(d, name=f.name, data=f.getvalue())
+                warnings += index_source(d, d.path / rel)
+            reindex(p, d)
+            ss.src_warnings = warnings
             st.rerun()
+        for w in ss.pop("src_warnings", []):
+            st.warning(w)
         for rel in d.sources:
             fp = d.path / rel
             c1, c2 = st.columns([5, 1])
@@ -284,14 +353,52 @@ def page_document() -> None:
                 if fp.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp"):
                     st.image(str(fp), width=320)
 
+    with tab_draw:
+        tab_drawing(p, d, cat)
+    spec = load_spec(d)
+    with tab_chk:
+        if spec is None:
+            st.info(T("no_spec"))
+        else:
+            findings = run_checks(spec, cat)
+            if not findings:
+                st.success(T("no_findings"))
+            icons = {"error": "🔴", "warning": "🟠", "info": "🔵"}
+            for f in findings:
+                el = f" - {ltr(f.element)}" if f.element else ""
+                st.markdown(f"{icons[f.severity]} {getattr(f, L)}{el}", unsafe_allow_html=True)
+    with tab_bom:
+        if spec is None:
+            st.info(T("no_spec"))
+        else:
+            rows = bom.build_bom(spec, cat)
+            st.dataframe([{T("item"): r["no"], "ID": r["item"], T("description"): r[L] or r["en"],
+                           T("qty"): r["qty"], T("units"): r["unit"], T("submittal"): r["source"]} for r in rows],
+                         use_container_width=True, hide_index=True)
+            xlsx = bom.bom_to_xlsx(rows, d.path / f"{d.code}_BOM.xlsx", lang=L, title=f"{d.code} Rev {d.rev}")
+            download(T("excel"), xlsx, "bom_xlsx")
+
     with tab_out:
         if not d.outputs:
             st.info(T("no_outputs"))
         for kind, rel in d.outputs.items():
-            fp = d.path / rel
-            if fp.exists():
-                st.download_button(f"{T('download')} {kind.upper()}", fp.read_bytes(), file_name=fp.name,
-                                   key=f"out_{kind}")
+            download(f"{T('download')} {kind.upper()}", d.path / rel, f"out_{kind}")
+        if (d.path / d.outputs.get("preview", "-")).exists():
+            st.image(str(d.path / d.outputs["preview"]), use_container_width=True)
+
+    with tab_pkg:
+        st.caption(T("package_help"))
+        lang = lang_choice(T("doc_language"), L, "pkg_lang", ("en", "he"))
+        if st.button(T("build"), key="pkg_build"):
+            from sketch2cad.package import build_package
+            out = build_package(p, d, cat, d.path / f"{d.code}_Rev{d.rev}_Package.pdf", lang=lang)
+            d.outputs["package"] = out.name
+            d.save()
+        if d.outputs.get("package"):
+            download(f"{T('download')} PDF", d.path / d.outputs["package"], "pkg_dl")
+
+    with tab_cmp:
+        tab_compare(p, d)
 
     with tab_rev:
         st.table([{T("rev"): r["rev"], T("date"): r["date"], T("note"): r.get("note", "")} for r in d.revisions])
@@ -300,6 +407,313 @@ def page_document() -> None:
             new_revision(d, p, note)
             reindex(p, d)
             st.rerun()
+
+
+def tab_drawing(p: Project, d: Document, cat: Catalog) -> None:
+    """Spec from a typical detail / AI sketch reading / JSON, then render with a title-block template."""
+    from sketch2cad.templates import list_templates
+    spec = load_spec(d)
+    mode = st.radio(T("spec_source"), ["typical", "ai", "json"], horizontal=True, key="spec_mode",
+                    format_func=lambda m: T(f"src_{m}"))
+    lang_mode = d.language_mode or p.language_mode
+    if mode == "typical":
+        typs = {x.name: x for x in typical.list_typicals()}
+        name = st.selectbox(T("typical"), list(typs), format_func=lambda n: typs[n].title[L])
+        item_ids = [i["id"] for i in cat.items()]
+        with st.form(f"typ_{name}"):
+            values, cols = {}, st.columns(3)
+            for i, (k, meta) in enumerate(typs[name].params.items()):
+                c, dflt = cols[i % 3], meta["default"]
+                if k == "language":
+                    with c:
+                        values[k] = lang_choice(meta[L], lang_mode, f"tp_{name}_{k}")
+                elif k.endswith("_item"):
+                    values[k] = c.selectbox(meta[L], item_ids, key=f"tp_{name}_{k}",
+                                            index=item_ids.index(dflt) if dflt in item_ids else 0)
+                elif isinstance(dflt, (int, float)):
+                    values[k] = c.number_input(meta[L], value=dflt, key=f"tp_{name}_{k}")
+                else:
+                    values[k] = c.text_input(meta[L], value=str(dflt), key=f"tp_{name}_{k}")
+            if st.form_submit_button(T("generate")):
+                spec = typical.generate(name, values, cat)
+                save_spec(d, spec)
+                st.success(T("spec_saved"))
+    elif mode == "ai":
+        usable = [s for s in d.sources if Path(s).suffix.lower() in (".png", ".jpg", ".jpeg", ".webp", ".gif",
+                                                                     ".pdf", ".tif", ".tiff", ".bmp")]
+        if not usable:
+            st.info(T("ai_no_sources"))
+        chosen = st.multiselect(T("ai_inputs"), usable, default=usable)
+        notes = st.text_area(T("ai_notes"), value=d.description)
+        has_key = bool(settings.anthropic_api_key or os.environ.get("ANTHROPIC_API_KEY"))
+        if not has_key:
+            st.warning(T("ai_no_key"))
+        if st.button(T("ai_draft"), disabled=not (chosen and has_key)):
+            from sketch2cad.ai.sketch import draft_spec_from_images
+            try:
+                with st.spinner(T("ai_working")):
+                    draft = draft_spec_from_images([d.path / s for s in chosen], notes, settings.anthropic_api_key,
+                                                   catalog=cat, language=lang_mode)
+                save_spec(d, draft.spec)
+                (d.path / "ai_review.json").write_text(json.dumps(
+                    {"assumptions": draft.assumptions, "questions": draft.questions, "warnings": draft.warnings},
+                    ensure_ascii=False, indent=1), encoding="utf-8")
+                spec = draft.spec
+                st.success(T("spec_saved"))
+            except Exception as e:  # noqa: BLE001 - API / parsing errors are shown to the user
+                st.error(f"{T('error')}: {e}")
+        review = d.path / "ai_review.json"
+        if review.exists():
+            data = json.loads(review.read_text(encoding="utf-8"))
+            st.subheader(T("ai_review"))
+            for key in ("assumptions", "questions"):
+                if data.get(key):
+                    st.markdown(f"**{T(key)}**")
+                    for a in data[key]:
+                        st.markdown(f"- {a.get(L) or a.get('en', '') if isinstance(a, dict) else a}")
+            for w in data.get("warnings", []):
+                st.warning(w)
+    else:
+        text = st.text_area(T("spec_json"), value=json.dumps(spec, ensure_ascii=False, indent=1) if spec else "",
+                            height=400)
+        if st.button(T("save"), key="spec_save"):
+            try:
+                spec = json.loads(text)
+                save_spec(d, spec)
+                st.success(T("saved"))
+            except json.JSONDecodeError as e:
+                st.error(f"{T('invalid_json')}: {e}")
+
+    st.divider()
+    if spec is None:
+        st.info(T("no_spec"))
+        return
+    st.subheader(T("sheet"))
+    templates = {x["id"]: x for x in list_templates()}
+    current = d.titleblock or spec.get("sheet", {}).get("template") or p.default_titleblock
+    ids = list(templates)
+    with st.form("render_form"):
+        c1, c2 = st.columns(2)
+        tb = c1.selectbox(T("titleblock"), ids, index=ids.index(current) if current in ids else 0,
+                          format_func=lambda i: (templates[i].get("name") or {}).get(L, i))
+        formats = c2.multiselect(T("formats"), ["dxf", "dwg", "pdf", "png"], default=["dxf", "dwg", "pdf", "png"])
+        c1, c2 = st.columns(2)
+        ov_en = c1.text_input(T("title_override_en"), value=d.title_overrides.get("title_en", ""))
+        ov_he = c2.text_input(T("title_override_he"), value=d.title_overrides.get("title_he", ""))
+        go_render = st.form_submit_button(T("render"))
+    if go_render:
+        from sketch2cad.drawing import render
+        d.titleblock = tb
+        d.title_overrides = {k: v for k, v in (("title_en", ov_en), ("title_he", ov_he)) if v}
+        spec.setdefault("sheet", {})["template"] = tb
+        spec.setdefault("language", lang_mode)
+        save_spec(d, spec)
+        try:
+            res = render(spec, d.path, f"{d.code}_Rev{d.rev}", project=p, document=d, catalog=cat,
+                         formats=tuple(formats) or ("dxf",))
+        except Exception as e:  # noqa: BLE001 - show render errors (bad spec) to the user
+            st.error(f"{T('error')}: {e}")
+            return
+        d.outputs.update({("preview" if k == "png" else k): Path(v).name for k, v in res.items() if k != "warnings"})
+        d.save()
+        search.store_content(d, "spec.json", " ".join(
+            (l.get("en", "") + " " + l.get("he", "")) for l in spec.get("legend", [])))
+        reindex(p, d)
+        st.success(T("rendered"))
+        for w in res.get("warnings", []):
+            st.warning(w)
+    if (d.path / d.outputs.get("preview", "-")).exists():
+        st.image(str(d.path / d.outputs["preview"]), use_container_width=True)
+
+
+def tab_compare(p: Project, d: Document) -> None:
+    """Overlay two versions: current outputs, archived revisions and sources."""
+    from sketch2cad.compare import compare
+    st.caption(T("compare_help"))
+    exts = (".pdf", ".dxf", ".dwg", ".png")
+    files = [d.path / r for r in d.outputs.values() if (d.path / r).suffix.lower() in exts]
+    files += sorted(f for f in (p.path / "90_Archive").glob(f"{d.code}_Rev*/*") if f.suffix.lower() in exts)
+    files += [d.path / s for s in d.sources if Path(s).suffix.lower() in exts]
+    files = [f for f in dict.fromkeys(files) if f.exists()]
+    if len(files) < 2:
+        st.info(T("need_two"))
+        return
+
+    def name(f: Path) -> str:
+        return f"{f.parent.name}/{f.name}"
+
+    c1, c2 = st.columns(2)
+    a = c1.selectbox(T("compare_a"), files, index=min(1, len(files) - 1), format_func=name)
+    b = c2.selectbox(T("compare_b"), files, index=0, format_func=name)
+    if st.button(T("compare"), key="cmp_go"):
+        try:
+            out, ratio = compare(a, b, d.path / "compare.png")
+            st.metric(T("changed"), f"{ratio:.1%}")
+            st.image(str(out), use_container_width=True)
+        except Exception as e:  # noqa: BLE001
+            show_converter_error(e)
+
+
+def page_import() -> None:
+    """Read any plan format, preview it, convert (PDF/IFC → DXF/DWG, DXF ↔ DWG) and file it in a project."""
+    from sketch2cad.io import oda, readers
+    st.header(T("nav_import"))
+    up = st.file_uploader(T("import_file"), key="imp_file")
+    if not up:
+        return
+    work = app_home() / "imports" / Path(up.name).stem
+    work.mkdir(parents=True, exist_ok=True)
+    src = work / up.name
+    if not src.exists() or src.stat().st_size != up.size:
+        src.write_bytes(up.getvalue())
+    info = readers.read_any(src, work)
+    c1, c2 = st.columns(2)
+    c1.metric(T("file_kind"), info.kind.upper())
+    c2.metric(T("pages"), info.pages)
+    for w in info.warnings:
+        st.warning(w)
+    if info.kind == "rvt":
+        st.info(T("rvt_help"))
+    if info.kind == "image":
+        st.info(T("image_help"))
+    if info.preview_png and Path(info.preview_png).exists():
+        st.image(str(info.preview_png), use_container_width=True)
+    if info.text:
+        with st.expander(T("extracted_text")):
+            st.text(info.text[:20000])
+
+    key = f"imp_dxf_{src}"                       # DXF produced from this upload (kept across reruns)
+    if info.kind == "pdf":
+        from sketch2cad.io.pdf2dxf import pdf_to_dxf
+        c1, c2, c3 = st.columns(3)
+        page = c1.number_input(T("pdf_page"), 1, max(info.pages, 1), 1) - 1
+        scale = c2.number_input(T("pdf_scale"), 1.0, 10000.0, 100.0)
+        units = c3.selectbox(T("units"), ["mm", "m"])
+        if st.button(T("convert")):
+            ss[key] = str(pdf_to_dxf(src, work / f"{src.stem}_p{page + 1}.dxf", page=page, scale=scale, units=units))
+    elif info.kind == "ifc":
+        from sketch2cad.io.ifc2dxf import ifc_to_dxf
+        cut = st.number_input(T("cut_height"), 0.0, 10.0, 1.2, 0.1)
+        if st.button(T("convert")):
+            ss[key] = str(ifc_to_dxf(src, work / f"{src.stem}_plan.dxf", cut_height=cut))
+    elif info.kind == "dwg" and info.dxf_path:
+        ss[key] = str(info.dxf_path)
+    elif info.kind == "dxf":
+        ss[key] = str(src)
+
+    results: list[Path] = []                     # converted files, besides the uploaded original
+    if ss.get(key):
+        dxf = Path(ss[key])
+        dwg = src if info.kind == "dwg" else dxf.with_suffix(".dwg")
+        if not dwg.exists() and st.button(T("to_dwg")):
+            try:
+                oda.convert(dxf, "dwg", work)
+            except Exception as e:  # noqa: BLE001
+                show_converter_error(e)
+        results = [f for f in (dxf, dwg) if f.exists() and f != src]
+    for f in results:
+        download(f"{T('download')} {f.suffix[1:].upper()} - {f.name}", f, f"imp_dl_{f}")
+
+    st.divider()
+    p = current_project()
+    if p is None:
+        st.info(T("no_current_project"))
+        return
+    with st.form("imp_save"):
+        st.markdown(f"**{T('save_to_project')}** - {ltr(p.code)}", unsafe_allow_html=True)
+        c1, c2 = st.columns(2)
+        title_en = c1.text_input(T("title_en"), value=src.stem)
+        title_he = c2.text_input(T("title_he"))
+        c1, c2 = st.columns(2)
+        disc = c1.selectbox(T("discipline"), list(p.disciplines), format_func=lambda k: f"{k} - {label_of(p.disciplines, k)}")
+        subj = c2.text_input(T("subject"), value="IMP")
+        if st.form_submit_button(T("save")):
+            d = create_document(p, title_he=title_he, title_en=title_en, discipline=disc, subject=subj,
+                                type="import", description=up.name)
+            add_source(d, src)
+            for f in results:
+                shutil.copy2(f, d.path / f.name)
+                d.outputs[f.suffix[1:].lower()] = f.name
+            if info.preview_png and Path(info.preview_png).exists():
+                shutil.copy2(info.preview_png, d.path / "preview.png")
+                d.outputs["preview"] = "preview.png"
+            d.save()
+            search.store_content(d, src.name, info.text)
+            reindex(p, d)
+            go("document", None, d.folder)
+            st.rerun()
+
+
+def page_templates() -> None:
+    """Browse title-block templates, preview, and save edited copies as user templates."""
+    from sketch2cad.drawing import render
+    from sketch2cad.templates import list_templates, load_template
+    st.header(T("nav_templates"))
+    templates = {x["id"]: x for x in list_templates()}
+    tid = st.selectbox(T("titleblock"), list(templates),
+                       format_func=lambda i: f"{i} - {(templates[i].get('name') or {}).get(L, '')}")
+    tpl = load_template(tid)
+    c1, c2 = st.columns([1, 1])
+    with c1:
+        text = st.text_area(T("template_yaml"), value=yaml.safe_dump(tpl, allow_unicode=True, sort_keys=False),
+                            height=480, key=f"tpl_{tid}")
+        new_id = st.text_input(T("new_id"), value=f"{tid}_my" if not tid.endswith("_my") else tid)
+        if st.button(T("save_as_user")):
+            try:
+                data = yaml.safe_load(text)
+                data["id"] = new_id
+                folder = app_home() / "templates"
+                folder.mkdir(parents=True, exist_ok=True)
+                (folder / f"{new_id}.yaml").write_text(yaml.safe_dump(data, allow_unicode=True, sort_keys=False),
+                                                       encoding="utf-8")
+                st.success(T("saved"))
+            except Exception as e:  # noqa: BLE001
+                st.error(f"{T('error')}: {e}")
+    with c2:
+        st.markdown(f"**{T('preview')}**")
+        tmp = Path(tempfile.mkdtemp(prefix="s2c_tpl_"))
+        spec = {"version": 1, "units": "mm", "scale": 1, "language": "both",
+                "sheet": {"template": tid, "fields": {"title_en": "SAMPLE TITLE", "title_he": "כותרת לדוגמה"}},
+                "elements": [], "dimensions": [], "legend": [], "notes": {"en": [], "he": []}, "params": {}}
+        try:
+            res = render(spec, tmp, "preview", formats=("png",))
+            st.image(str(res["png"]), use_container_width=True)
+        except Exception as e:  # noqa: BLE001
+            st.warning(f"{T('error')}: {e}")
+
+
+def page_catalog() -> None:
+    """Catalog items with their sources; edit/add items into the project or user catalog."""
+    st.header(T("nav_catalog"))
+    p = current_project()
+    cat = load_catalog(p)
+    c1, c2 = st.columns([1, 3])
+    category = c1.selectbox(T("category"), [""] + list(CATEGORIES), format_func=lambda k: k or T("all"))
+    q = c2.text_input(T("filter_text"), key="cat_q").lower()
+    items = [i for i in cat.items(category or None)
+             if not q or q in json.dumps(i, ensure_ascii=False).lower()]
+    st.dataframe([{"ID": i["id"], T("category"): i.get("category", ""), T("item"): Catalog.label(i, L),
+                   T("submittal"): (i.get("source") or {}).get("submittal", ""),
+                   T("status"): (i.get("source") or {}).get("status", ""),
+                   T("without_source"): ", ".join(Catalog.missing_source(i))} for i in items],
+                 use_container_width=True, hide_index=True)
+    ids = [i["id"] for i in items]
+    choice = st.selectbox(T("item"), [""] + ids, format_func=lambda k: k or T("new_item"))
+    base = cat.get(choice) or {"id": "new_item", "category": "other", "name": {"en": "", "he": ""}, "unit": "pcs",
+                               "dims": {}, "source": {"submittal": "", "status": "", "file": "", "fields": []}}
+    base = {k: v for k, v in base.items() if not k.startswith("_")}
+    text = st.text_area(T("item_yaml"), value=yaml.safe_dump(base, allow_unicode=True, sort_keys=False),
+                        height=360, key=f"item_{choice}")
+    targets = (["project"] if p else []) + ["user"]
+    target = st.radio(T("save_to"), targets, horizontal=True,
+                      format_func=lambda x: T("project_catalog") if x == "project" else T("user_catalog"))
+    if st.button(T("save"), key="item_save"):
+        try:
+            item = yaml.safe_load(text)
+            save_item(item, p if target == "project" else None)
+            st.success(T("saved"))
+        except Exception as e:  # noqa: BLE001
+            st.error(f"{T('error')}: {e}")
 
 
 def page_search() -> None:
@@ -337,4 +751,4 @@ def page_settings() -> None:
 
 
 {"projects": page_projects, "project": page_project, "document": page_document, "search": page_search,
- "settings": page_settings}[ss.page]()
+ "import": page_import, "templates": page_templates, "catalog": page_catalog, "settings": page_settings}[ss.page]()
