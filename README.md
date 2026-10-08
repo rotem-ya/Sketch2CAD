@@ -11,7 +11,7 @@
 1. מורידים את התוכנה: **[Sketch2CAD-main.zip](https://github.com/rotem-ya/Sketch2CAD/archive/refs/heads/main.zip)**, ומחלצים לתיקייה קבועה, למשל `C:\Sketch2CAD`.
 2. לוחצים פעמיים על `install.bat`. הקובץ מתקין Python אם הוא חסר (דרך winget), מתקין את כל הספריות ויוצר קיצור דרך "Sketch2CAD" בשולחן העבודה. לוקח כמה דקות, ורק בפעם הראשונה.
 3. מפעילים מקיצור הדרך (או `run.bat`). התוכנה נפתחת בדפדפן בכתובת http://localhost:8517.
-4. לעבודה עם DWG מתקינים את [ODA File Converter](https://www.opendesign.com/guestfiles/oda_file_converter) (חינמי לשימוש פנימי). התוכנה מוצאת אותו לבד בתיקיית ההתקנה הרגילה, ואם לא, מגדירים את הנתיב במסך ההגדרות.
+4. **DWG:** אם מותקן AutoCAD מלא, התוכנה משתמשת בו אוטומטית להמרה ל-DWG (דרך accoreconsole) ואין צורך בשום דבר נוסף. בלי AutoCAD (או עם AutoCAD LT) מתקינים את [ODA File Converter](https://www.opendesign.com/guestfiles/oda_file_converter), שהוא חינמי לשימוש פנימי. בלשונית "תוצרים" יש כפתור "פתח באוטוקד".
 5. לקריאת סקיצות עם AI מזינים מפתח Claude API במסך ההגדרות.
 
 **עדכון גרסה:** מורידים שוב את ה-zip, מחלצים מעל אותה תיקייה ומריצים `install.bat`. הפרויקטים לא נפגעים, כי הם שמורים בתיקיות שלהם.

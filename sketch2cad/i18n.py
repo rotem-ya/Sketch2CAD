@@ -90,7 +90,8 @@ STRINGS: dict[str, dict[str, str]] = {
     "settings": {"en": "Settings", "he": "הגדרות"},
     "ui_language": {"en": "Interface language", "he": "שפת ממשק"},
     "default_root": {"en": "Default folder for new projects", "he": "תיקיית ברירת מחדל לפרויקטים חדשים"},
-    "oda_path": {"en": "ODA File Converter path (DWG)", "he": "נתיב ODA File Converter (DWG)"},
+    "oda_path": {"en": "ODA File Converter path (DWG) - optional when AutoCAD is installed",
+                 "he": "נתיב ODA File Converter (DWG) - לא חובה אם מותקן AutoCAD"},
     "api_key": {"en": "Claude API key (sketch to drawing)", "he": "מפתח Claude API (סקיצה לשרטוט)"},
     "rebuild_index": {"en": "Rebuild search index", "he": "בנה מחדש את אינדקס החיפוש"},
     "indexed": {"en": "documents indexed", "he": "מסמכים נוספו לאינדקס"},
@@ -138,6 +139,7 @@ STRINGS: dict[str, dict[str, str]] = {
     "no_findings": {"en": "No findings.", "he": "אין ממצאים."},
     "bom": {"en": "Bill of materials", "he": "כתב כמויות"},
     "qty": {"en": "Qty", "he": "כמות"},
+    "open_in_cad": {"en": "Open in AutoCAD", "he": "פתח באוטוקד"},
     "excel": {"en": "Download Excel", "he": "הורדת Excel"},
     "package": {"en": "Submittal package", "he": "תיק הגשה"},
     "package_help": {"en": "Transmittal, compliance matrix, checks, BOM, drawing and the datasheets found in the "
@@ -179,8 +181,10 @@ STRINGS: dict[str, dict[str, str]] = {
                         "he": "שמור בפרויקט הנוכחי כמסמך מיובא חדש"},
     "no_current_project": {"en": "Open a project to save imports into it.",
                            "he": "פתח פרויקט כדי לשמור אליו את הייבוא."},
-    "no_converter": {"en": "ODA File Converter not found - set its path in Settings (needed for DWG).",
-                     "he": "ODA File Converter לא נמצא - יש להגדיר את הנתיב בהגדרות (נדרש ל-DWG)."},
+    "no_converter": {"en": "No DWG converter found - install ODA File Converter (free) or full AutoCAD "
+                           "(its Core Console is used automatically). DXF files open in AutoCAD directly.",
+                     "he": "לא נמצא ממיר DWG - יש להתקין ODA File Converter (חינמי) או AutoCAD מלא "
+                           "(התוכנה משתמשת בו אוטומטית). קבצי DXF נפתחים ישירות באוטוקד."},
     # templates / catalog pages
     "template_yaml": {"en": "Template (YAML)", "he": "תבנית (YAML)"},
     "save_as_user": {"en": "Save as my template", "he": "שמור כתבנית שלי"},

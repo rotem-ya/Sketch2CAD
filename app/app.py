@@ -382,7 +382,12 @@ def page_document() -> None:
         if not d.outputs:
             st.info(T("no_outputs"))
         for kind, rel in d.outputs.items():
-            download(f"{T('download')} {kind.upper()}", d.path / rel, f"out_{kind}")
+            c1, c2 = st.columns([3, 1])
+            with c1:
+                download(f"{T('download')} {kind.upper()}", d.path / rel, f"out_{kind}")
+            if os.name == "nt" and kind in ("dwg", "dxf") and (d.path / rel).exists():
+                # the app runs on the user's own PC, so this opens the file in the program registered for it
+                c2.button(T("open_in_cad"), key=f"open_{kind}", on_click=os.startfile, args=(str(d.path / rel),))
         if (d.path / d.outputs.get("preview", "-")).exists():
             st.image(str(d.path / d.outputs["preview"]), use_container_width=True)
 

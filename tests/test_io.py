@@ -290,3 +290,19 @@ def test_oda_round_trip(dxf_file, tmp_path):
     assert len(msp.query("LINE")) == 2 and len(msp.query("CIRCLE")) == 1
     info = readers.read_any(dwg, tmp_path / "read")
     assert info.kind == "dwg" and "מגוף" in info.text and info.preview_png.exists()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="fake console is a POSIX shell script")
+def test_autocad_core_console_fallback(tmp_path, monkeypatch):
+    """No ODA: convert() drives accoreconsole with /i <file> /s <script>; SAVEAS target comes from the script."""
+    fake = tmp_path / "accoreconsole"
+    fake.write_text('#!/bin/sh\nout=$(sed -n \'s/^"\\(.*\\)"$/\\1/p\' "$4")\ncp "$2" "$out"\n')
+    fake.chmod(0o755)
+    monkeypatch.setattr(oda, "find_converter", lambda settings=None: None)
+    monkeypatch.setenv("AUTOCAD_CORECONSOLE", str(fake))
+    src = tmp_path / "חיבור.dxf"
+    src.write_text("0\nEOF\n")
+    out = oda.convert(src, "dwg", tmp_path / "out")
+    assert out == tmp_path / "out" / "חיבור.dwg" and out.read_text() == "0\nEOF\n"
+    script = oda.autocad_script("dxf", Path("C:/t/out.dxf"))
+    assert script.splitlines() == ["FILEDIA 0", "_.SAVEAS", "DXF", "", '"C:/t/out.dxf"']
