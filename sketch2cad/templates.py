@@ -86,6 +86,8 @@ def build_values(spec: dict, project=None, document=None) -> dict:
         "title_en": title.get("en", ""), "title_he": title.get("he", ""),
         "project_code": value_of(project, "code", ""), "project_name_en": pname.get("en", ""),
         "project_name_he": pname.get("he", ""), "client": value_of(project, "client", ""),
+        "contract": value_of(project, "contract_no", ""), "contractor": value_of(project, "contractor", ""),
+        "location": value_of(project, "location", ""),
         "date": date.today().strftime("%d/%m/%Y"), "scale": format_scale(spec.get("scale", 1)),
         "units": spec.get("units", "mm"), "view": spec.get("view", ""), "paper": spec.get("paper", ""),
     }

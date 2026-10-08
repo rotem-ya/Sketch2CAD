@@ -95,6 +95,45 @@ def index_source(doc: Document, path: Path) -> list[str]:
     return list(info.warnings)
 
 
+def has_api_key() -> bool:
+    return bool(settings.anthropic_api_key or os.environ.get("ANTHROPIC_API_KEY"))
+
+
+def _browse(key: str, title: str) -> None:
+    from sketch2cad.native import pick_folder
+    path = pick_folder(ss.get(key, ""), title)
+    if path:
+        ss[key] = path
+
+
+def folder_input(label: str, key: str) -> str:
+    """Text box for a folder path + a button that opens the Windows folder picker."""
+    ss.setdefault(key, "")
+    c1, c2 = st.columns([6, 1], vertical_alignment="bottom")
+    c1.text_input(label, key=key)
+    c2.button(f"📂 {T('browse')}", key=f"{key}_browse", on_click=_browse, args=(key, label),
+              use_container_width=True)
+    return ss[key]
+
+
+def fill_project_from_docs(files) -> None:
+    """Callback: read project details from uploaded documents with Claude and fill the new-project fields."""
+    from sketch2cad.ai.project_info import extract_project_info
+    tmp = Path(tempfile.mkdtemp(prefix="s2c_np_"))
+    paths = []
+    for f in files or []:
+        paths.append(tmp / f.name)
+        paths[-1].write_bytes(f.getvalue())
+    try:
+        info = extract_project_info(paths, settings.anthropic_api_key)
+    except Exception as e:  # noqa: BLE001 - API / file errors are shown to the user
+        ss.np_fill_msg = ("error", f"{T('error')}: {e}")
+        return
+    filled = {f"np_{k}": v for k, v in info.items() if v}
+    ss.update(filled)
+    ss.np_fill_msg = ("success", T("fill_done")) if filled else ("warning", T("fill_nothing"))
+
+
 def download(label: str, path: Path, key: str) -> None:
     if path and Path(path).exists():
         st.download_button(label, Path(path).read_bytes(), file_name=Path(path).name, key=key)
@@ -148,31 +187,54 @@ def page_projects() -> None:
         c2.button(T("open"), key=f"open_{folder}", on_click=go, args=("project", p.folder))
 
     st.subheader(T("new_project"))
-    with st.form("new_project"):
-        c1, c2, c3 = st.columns(3)
-        code = c1.text_input(T("project_code"))
-        name_he = c2.text_input(T("name_he"))
-        name_en = c3.text_input(T("name_en"))
-        c1, c2 = st.columns(2)
-        client = c1.text_input(T("client"))
-        parent = c2.text_input(T("parent_folder"), value=settings.default_projects_root)
-        c1, c2 = st.columns(2)
-        pattern = c1.text_input(T("code_pattern"), value=codes.DEFAULT_PATTERN, help=T("code_pattern_help"))
-        lang_mode = c2.selectbox(T("drawing_language"), ["both", "en", "he"],
-                                 format_func=lambda x: T(f"lang_{x}"))
-        if st.form_submit_button(T("create")):
+    with st.expander(T("fill_from_doc")):
+        files = st.file_uploader(T("fill_files"), accept_multiple_files=True, key="np_files",
+                                 type=["pdf", "png", "jpg", "jpeg", "webp", "docx", "txt", "dxf", "dwg"])
+        if not has_api_key():
+            st.warning(T("ai_no_key"))
+        st.button(T("fill_go"), key="np_fill", on_click=fill_project_from_docs, args=(files,),
+                  disabled=not (files and has_api_key()))
+        kind, msg = ss.pop("np_fill_msg", (None, None))
+        if kind:
+            getattr(st, kind)(msg)
+
+    for key, default in (("np_parent", settings.default_projects_root), ("np_pattern", codes.DEFAULT_PATTERN)):
+        ss.setdefault(key, default)
+    c1, c2, c3 = st.columns(3)
+    code = c1.text_input(T("project_code"), key="np_code")
+    name_he = c2.text_input(T("name_he"), key="np_name_he")
+    name_en = c3.text_input(T("name_en"), key="np_name_en")
+    c1, c2, c3, c4 = st.columns(4)
+    client = c1.text_input(T("client"), key="np_client")
+    contractor = c2.text_input(T("contractor"), key="np_contractor")
+    location = c3.text_input(T("location"), key="np_location")
+    contract_no = c4.text_input(T("contract_no"), key="np_contract_no")
+    parent = folder_input(T("parent_folder"), "np_parent")
+    c1, c2 = st.columns(2)
+    pattern = c1.text_input(T("code_pattern"), key="np_pattern", help=T("code_pattern_help"))
+    lang_mode = c2.selectbox(T("drawing_language"), ["both", "en", "he"], key="np_lang",
+                             format_func=lambda x: T(f"lang_{x}"))
+    if st.button(T("create"), key="np_create", type="primary"):
+        if not code.strip():
+            st.error(T("code_required"))
+        elif not parent.strip():
+            st.error(T("parent_required"))
+        else:
             try:
-                p = create_project(parent or ".", code, name_he, name_en, client=client,
-                                   doc_code_pattern=pattern, language_mode=lang_mode)
-                codes.seq_regex(pattern, prj=p.code)          # validates the pattern
+                codes.seq_regex(pattern, prj=code.strip())          # validates the pattern first
+                p = create_project(parent, code, name_he, name_en, client=client, contractor=contractor,
+                                   location=location, contract_no=contract_no, doc_code_pattern=pattern,
+                                   language_mode=lang_mode)
                 settings.register_project(p.path)
+                for k in [k for k in ss if str(k).startswith("np_")]:
+                    del ss[k]
                 go("project", p.folder)
                 st.rerun()
             except Exception as e:  # noqa: BLE001 - show any validation error to the user
                 st.error(f"{T('error')}: {e}")
 
     with st.expander(T("add_existing")):
-        folder = st.text_input(T("folder_path"), key="existing_folder")
+        folder = folder_input(T("folder_path"), "existing_folder")
         if st.button(T("add")):
             if is_project_folder(folder):
                 settings.register_project(folder)
@@ -265,6 +327,10 @@ def page_project() -> None:
             name_he = c1.text_input(T("name_he"), value=p.name.get("he", ""))
             name_en = c2.text_input(T("name_en"), value=p.name.get("en", ""))
             client = c3.text_input(T("client"), value=p.client)
+            c1, c2, c3 = st.columns(3)
+            contractor = c1.text_input(T("contractor"), value=p.contractor)
+            location = c2.text_input(T("location"), value=p.location)
+            contract_no = c3.text_input(T("contract_no"), value=p.contract_no)
             c1, c2 = st.columns(2)
             pattern = c1.text_input(T("code_pattern"), value=p.doc_code_pattern, help=T("code_pattern_help"))
             lang_mode = c2.selectbox(T("drawing_language"), ["both", "en", "he"],
@@ -277,6 +343,7 @@ def page_project() -> None:
                     codes.seq_regex(pattern, prj=p.code)
                     p.name, p.client, p.doc_code_pattern, p.language_mode = (
                         {"he": name_he, "en": name_en}, client, pattern, lang_mode)
+                    p.contractor, p.location, p.contract_no = contractor, location, contract_no
                     p.disciplines = json.loads(disc_json)
                     p.save()
                     st.success(T("saved"))
@@ -286,7 +353,7 @@ def page_project() -> None:
         st.subheader(T("relocate"))
         mode = st.radio(T("relocate"), ["move", "link"], format_func=lambda m: T("relocate_move" if m == "move" else
                                                                        "relocate_link"), label_visibility="collapsed")
-        new_loc = st.text_input(T("new_location"))
+        new_loc = folder_input(T("new_location"), "relocate_to")
         if st.button(T("apply")) and new_loc:
             try:
                 old = p.folder
@@ -450,7 +517,7 @@ def tab_drawing(p: Project, d: Document, cat: Catalog) -> None:
             st.info(T("ai_no_sources"))
         chosen = st.multiselect(T("ai_inputs"), usable, default=usable)
         notes = st.text_area(T("ai_notes"), value=d.description)
-        has_key = bool(settings.anthropic_api_key or os.environ.get("ANTHROPIC_API_KEY"))
+        has_key = has_api_key()
         if not has_key:
             st.warning(T("ai_no_key"))
         if st.button(T("ai_draft"), disabled=not (chosen and has_key)):
@@ -743,14 +810,14 @@ def page_search() -> None:
 
 def page_settings() -> None:
     st.header(T("settings"))
-    with st.form("settings"):
-        root = st.text_input(T("default_root"), value=settings.default_projects_root)
-        oda = st.text_input(T("oda_path"), value=settings.oda_converter_path)
-        key = st.text_input(T("api_key"), value=settings.anthropic_api_key, type="password")
-        if st.form_submit_button(T("save")):
-            settings.default_projects_root, settings.oda_converter_path, settings.anthropic_api_key = root, oda, key
-            settings.save()
-            st.success(T("saved"))
+    ss.setdefault("set_root", settings.default_projects_root)
+    root = folder_input(T("default_root"), "set_root")
+    oda = st.text_input(T("oda_path"), value=settings.oda_converter_path)
+    key = st.text_input(T("api_key"), value=settings.anthropic_api_key, type="password")
+    if st.button(T("save"), key="settings_save", type="primary"):
+        settings.default_projects_root, settings.oda_converter_path, settings.anthropic_api_key = root, oda, key
+        settings.save()
+        st.success(T("saved"))
     if st.button(T("rebuild_index")):
         st.success(f"{search.rebuild(settings)} {T('indexed')}")
 

@@ -195,3 +195,38 @@ def test_ai_draft_parses_and_normalizes(tmp_path, cat):
     assert "avk_0661_dn150" in captured["system"] and "trench_drain" in captured["system"]
     blocks = captured["messages"][0]["content"]
     assert blocks[0]["type"] == "image" and "left leg" in blocks[-1]["text"]
+
+
+# ---------------------------------------------------------------- project details from a document
+def test_project_info_from_docx_and_pdf(tmp_path):
+    import zipfile
+    from sketch2cad.ai import project_info
+    docx = tmp_path / "contract.docx"
+    with zipfile.ZipFile(docx, "w") as z:
+        z.writestr("word/document.xml", "<w:document><w:p><w:t>Contract W912 - Hatzerim 20117</w:t></w:p>"
+                                        "<w:p><w:t>חצרים</w:t></w:p></w:document>")
+    pdf = tmp_path / "title.pdf"
+    d = pymupdf.open()
+    d.new_page().insert_text((72, 72), "SITE 20117")
+    d.save(pdf)
+    answer = {"code": "20117 ", "name_he": "חצרים", "name_en": "Hatzerim", "client": "USACE",
+              "contractor": "", "location": "", "contract_no": "W912"}
+    captured = {}
+
+    def create(**kw):
+        captured.update(kw)
+        return SimpleNamespace(stop_reason="end_turn", content=[SimpleNamespace(type="text", text=json.dumps(answer))])
+
+    client = SimpleNamespace(beta=SimpleNamespace(messages=SimpleNamespace(create=create)))
+    info = project_info.extract_project_info([docx, pdf], client=client)
+    assert info["code"] == "20117" and info["name_he"] == "חצרים" and info["contract_no"] == "W912"
+    blocks = captured["messages"][0]["content"]
+    assert blocks[0]["type"] == "document"                                  # the PDF goes as a document
+    assert any("Contract W912" in b.get("text", "") and "חצרים" in b.get("text", "") for b in blocks)
+    assert captured["output_config"]["format"]["schema"]["required"] == list(project_info.FIELDS)
+
+
+def test_pick_folder_without_desktop(monkeypatch):
+    from sketch2cad import native
+    monkeypatch.delenv("DISPLAY", raising=False)
+    assert native.pick_folder() is None

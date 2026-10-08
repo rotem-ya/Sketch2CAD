@@ -35,6 +35,9 @@ class Project:
     name: dict                                  # {"he": ..., "en": ...}
     folder: str                                 # absolute path of the project folder
     client: str = ""
+    contractor: str = ""
+    location: str = ""
+    contract_no: str = ""
     language_mode: str = "both"                 # "en" | "he" | "both" (drawing text default)
     doc_code_pattern: str = DEFAULT_PATTERN
     default_titleblock: str = "a3_simple"

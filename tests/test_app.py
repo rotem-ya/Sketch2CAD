@@ -88,3 +88,23 @@ def test_typical_render_checks_bom_package(tmp_path):
     next(b for b in at.button if b.key == "pkg_build").click().run()
     assert not at.exception
     assert (d.path / Document.load(d.folder).outputs["package"]).exists()
+
+
+def test_new_project_validation(tmp_path):
+    """Missing code / parent folder give clear Hebrew errors; the folder-picker and AI-fill buttons render."""
+    from sketch2cad.config import Settings
+    from sketch2cad.i18n import t
+    Settings(ui_language="he", default_projects_root="").save()
+    at = AppTest.from_file(APP, default_timeout=30).run()
+    assert any(b.key == "np_parent_browse" for b in at.button) and any(b.key == "np_fill" for b in at.button)
+    next(b for b in at.button if b.label == t("create", "he")).click().run()
+    assert any(t("code_required", "he") in e.value for e in at.error)
+    _by_label(at.text_input, t("project_code", "he")).input("20117")
+    next(b for b in at.button if b.label == t("create", "he")).click().run()
+    assert any(t("parent_required", "he") in e.value for e in at.error)
+    _by_label(at.text_input, t("parent_folder", "he")).input(str(tmp_path / "p"))
+    _by_label(at.text_input, t("contract_no", "he")).input("W912")
+    next(b for b in at.button if b.label == t("create", "he")).click().run()
+    assert not at.exception
+    from sketch2cad.projects import Project
+    assert Project.load(tmp_path / "p" / "20117").contract_no == "W912"
