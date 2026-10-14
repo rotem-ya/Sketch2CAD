@@ -9,6 +9,15 @@ import sys
 import tempfile
 from pathlib import Path
 
+if __name__ == "__main__" and "streamlit" not in sys.modules:
+    # Started as a plain script (double-click on app.py, "python app.py"): that runs no web server, so the
+    # browser shows "connection refused". Start the real app with the program's own Python instead.
+    import subprocess
+    _root = Path(__file__).resolve().parents[1]
+    _venv = _root / ".venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+    sys.exit(subprocess.call([str(_venv if _venv.exists() else sys.executable), "-m", "streamlit", "run",
+                              str(Path(__file__).resolve()), "--server.port", "8517"], cwd=_root))
+
 import streamlit as st
 import yaml
 
