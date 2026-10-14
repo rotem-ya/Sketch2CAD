@@ -44,6 +44,23 @@ def test_project_document_search_flow(tmp_path, lang):
     assert not at.exception
     assert any("20117-W-CAMEL-01" in m.value for m in at.markdown)
 
+    # drawing tab: typical detail -> generate spec -> render DXF/PDF/PNG (DWG is skipped without a converter)
+    assert _by_label(at.radio, t("spec_source", lang)).value == "typical"
+    next(b for b in at.button if b.label == t("generate", lang)).click().run()
+    assert not at.exception
+    assert any(s.value == t("spec_saved", lang) for s in at.success)
+    next(b for b in at.button if b.label == t("render", lang)).click().run()
+    assert not at.exception
+    assert any(s.value == t("rendered", lang) for s in at.success)
+    doc_dir = tmp_path / "projects" / "20117_Hatzerim" / "10_Drawings" / "20117-W-CAMEL-01"
+    if not doc_dir.exists():
+        doc_dir = next(f.parent for f in (tmp_path / "projects").rglob("document.json"))
+    assert (doc_dir / "spec.json").exists()
+    for ext in ("dxf", "pdf", "png"):
+        assert (doc_dir / f"20117-W-CAMEL-01_RevA.{ext}").exists(), ext
+    assert (doc_dir / "20117-W-CAMEL-01_BOM.xlsx").exists()     # BOM tab rendered its table and Excel file
+    assert not at.error
+
     # global search
     next(b for b in at.button if b.label == t("nav_search", lang)).click().run()
     _by_label(at.text_input, t("search_text", lang)).input("camel").run()

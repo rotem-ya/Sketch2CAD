@@ -112,7 +112,7 @@ def folder_input(label: str, key: str) -> str:
     c1, c2 = st.columns([6, 1], vertical_alignment="bottom")
     c1.text_input(label, key=key)
     c2.button(f"📂 {T('browse')}", key=f"{key}_browse", on_click=_browse, args=(key, label),
-              use_container_width=True)
+              width="stretch")
     return ss[key]
 
 
@@ -173,14 +173,14 @@ def update_box() -> None:
     if info and updater.update_available(info):
         st.warning(f"{T('update_available')}  \n{info.date} - {info.message}")
         if os.name == "nt":
-            st.button(f"⬇️ {T('update_now')}", on_click=start_update, use_container_width=True, type="primary")
+            st.button(f"⬇️ {T('update_now')}", on_click=start_update, width="stretch", type="primary")
         else:
             st.caption(T("update_manual"))
     elif info:
         st.caption(f"✓ {T('up_to_date')}")
     if ss.get("update_error"):
         st.caption(T("update_check_failed"))
-    st.button(f"🔄 {T('check_updates')}", on_click=check_updates, use_container_width=True)
+    st.button(f"🔄 {T('check_updates')}", on_click=check_updates, width="stretch")
 
 
 # ================================================================== sidebar
@@ -193,18 +193,18 @@ with st.sidebar:
         settings.save()
         st.rerun()
     st.divider()
-    st.button(T("nav_projects"), on_click=go, args=("projects",), use_container_width=True)
-    st.button(T("nav_search"), on_click=go, args=("search",), use_container_width=True)
-    st.button(T("nav_import"), on_click=go, args=("import",), use_container_width=True)
-    st.button(T("nav_templates"), on_click=go, args=("templates",), use_container_width=True)
-    st.button(T("nav_catalog"), on_click=go, args=("catalog",), use_container_width=True)
-    st.button(T("nav_settings"), on_click=go, args=("settings",), use_container_width=True)
+    st.button(T("nav_projects"), on_click=go, args=("projects",), width="stretch")
+    st.button(T("nav_search"), on_click=go, args=("search",), width="stretch")
+    st.button(T("nav_import"), on_click=go, args=("import",), width="stretch")
+    st.button(T("nav_templates"), on_click=go, args=("templates",), width="stretch")
+    st.button(T("nav_catalog"), on_click=go, args=("catalog",), width="stretch")
+    st.button(T("nav_settings"), on_click=go, args=("settings",), width="stretch")
     if ss.project_folder and is_project_folder(ss.project_folder):
         cur = Project.load(ss.project_folder)
         st.divider()
         st.caption(T("current_project"))
         st.button(f"{cur.code} - {cur.display_name(L)}", on_click=go, args=("project",),
-                  use_container_width=True)
+                  width="stretch")
     st.divider()
     update_box()
 
@@ -480,9 +480,9 @@ def page_document() -> None:
             st.info(T("no_spec"))
         else:
             rows = bom.build_bom(spec, cat)
-            st.dataframe([{T("item"): r["no"], "ID": r["item"], T("description"): r[L] or r["en"],
+            st.dataframe([{T("item"): str(r["no"]), "ID": r["item"], T("description"): r[L] or r["en"],
                            T("qty"): r["qty"], T("units"): r["unit"], T("submittal"): r["source"]} for r in rows],
-                         use_container_width=True, hide_index=True)
+                         width="stretch", hide_index=True)
             xlsx = bom.bom_to_xlsx(rows, d.path / f"{d.code}_BOM.xlsx", lang=L, title=f"{d.code} Rev {d.rev}")
             download(T("excel"), xlsx, "bom_xlsx")
 
@@ -497,7 +497,7 @@ def page_document() -> None:
                 # the app runs on the user's own PC, so this opens the file in the program registered for it
                 c2.button(T("open_in_cad"), key=f"open_{kind}", on_click=os.startfile, args=(str(d.path / rel),))
         if (d.path / d.outputs.get("preview", "-")).exists():
-            st.image(str(d.path / d.outputs["preview"]), use_container_width=True)
+            st.image(str(d.path / d.outputs["preview"]), width="stretch")
 
     with tab_pkg:
         st.caption(T("package_help"))
@@ -636,7 +636,7 @@ def tab_drawing(p: Project, d: Document, cat: Catalog) -> None:
         for w in res.get("warnings", []):
             st.warning(w)
     if (d.path / d.outputs.get("preview", "-")).exists():
-        st.image(str(d.path / d.outputs["preview"]), use_container_width=True)
+        st.image(str(d.path / d.outputs["preview"]), width="stretch")
 
 
 def tab_compare(p: Project, d: Document) -> None:
@@ -662,7 +662,7 @@ def tab_compare(p: Project, d: Document) -> None:
         try:
             out, ratio = compare(a, b, d.path / "compare.png")
             st.metric(T("changed"), f"{ratio:.1%}")
-            st.image(str(out), use_container_width=True)
+            st.image(str(out), width="stretch")
         except Exception as e:  # noqa: BLE001
             show_converter_error(e)
 
@@ -690,7 +690,7 @@ def page_import() -> None:
     if info.kind == "image":
         st.info(T("image_help"))
     if info.preview_png and Path(info.preview_png).exists():
-        st.image(str(info.preview_png), use_container_width=True)
+        st.image(str(info.preview_png), width="stretch")
     if info.text:
         with st.expander(T("extracted_text")):
             st.text(info.text[:20000])
@@ -790,7 +790,7 @@ def page_templates() -> None:
                 "elements": [], "dimensions": [], "legend": [], "notes": {"en": [], "he": []}, "params": {}}
         try:
             res = render(spec, tmp, "preview", formats=("png",))
-            st.image(str(res["png"]), use_container_width=True)
+            st.image(str(res["png"]), width="stretch")
         except Exception as e:  # noqa: BLE001
             st.warning(f"{T('error')}: {e}")
 
@@ -809,7 +809,7 @@ def page_catalog() -> None:
                    T("submittal"): (i.get("source") or {}).get("submittal", ""),
                    T("status"): (i.get("source") or {}).get("status", ""),
                    T("without_source"): ", ".join(Catalog.missing_source(i))} for i in items],
-                 use_container_width=True, hide_index=True)
+                 width="stretch", hide_index=True)
     ids = [i["id"] for i in items]
     choice = st.selectbox(T("item"), [""] + ids, format_func=lambda k: k or T("new_item"))
     base = cat.get(choice) or {"id": "new_item", "category": "other", "name": {"en": "", "he": ""}, "unit": "pcs",
