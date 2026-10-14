@@ -117,6 +117,15 @@ STRINGS: dict[str, dict[str, str]] = {
     "settings": {"en": "Settings", "he": "הגדרות"},
     "ui_language": {"en": "Interface language", "he": "שפת ממשק"},
     "default_root": {"en": "Default folder for new projects", "he": "תיקיית ברירת מחדל לפרויקטים חדשים"},
+    "data_home": {"en": "Data folder (settings, search index, personal catalog and templates)",
+                  "he": "תיקיית הנתונים (הגדרות, אינדקס חיפוש, קטלוג ותבניות אישיות)"},
+    "data_home_help": {"en": "The program can stay on C: while its data lives on another drive. Projects are "
+                             "stored in the folder chosen for each project (default below). Changing the data "
+                             "folder copies the current data there; a folder that already has data keeps it.",
+                       "he": "התוכנה יכולה להישאר ב-C: והנתונים בכונן אחר. הפרויקטים נשמרים בתיקייה שנבחרת לכל "
+                             "פרויקט (ברירת המחדל למטה). שינוי תיקיית הנתונים מעתיק אליה את הנתונים הנוכחיים; "
+                             "תיקייה שכבר יש בה נתונים שומרת אותם."},
+    "data_home_changed": {"en": "Data folder changed", "he": "תיקיית הנתונים שונתה"},
     "oda_path": {"en": "ODA File Converter path (DWG) - optional when AutoCAD is installed",
                  "he": "נתיב ODA File Converter (DWG) - לא חובה אם מותקן AutoCAD"},
     "api_key": {"en": "Claude API key (sketch to drawing)", "he": "מפתח Claude API (סקיצה לשרטוט)"},

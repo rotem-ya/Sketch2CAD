@@ -36,6 +36,23 @@ if errorlevel 1 (
     exit /b 1
 )
 
+rem Data folder (settings, search index, personal catalog and templates). Projects go where you
+rem choose per project. Keeps the program on C: and the data on another drive when wanted.
+set "DATA="
+if exist data_home.txt goto :data_done
+echo.
+echo Where should Sketch2CAD keep its data (settings, search index, personal catalog and templates)?
+set /p "DATA=Press Enter for %APPDATA%\Sketch2CAD, or type a folder such as E:\Sketch2CAD\Data: "
+if not defined DATA goto :data_done
+if not exist "%DATA%" mkdir "%DATA%"
+if not exist "%DATA%" (
+    echo Could not create %DATA% - the default data folder will be used. Change it later in Settings.
+    goto :data_done
+)
+>data_home.txt echo %DATA%
+echo Data folder: %DATA%
+:data_done
+
 rem Streamlit asks for an e-mail on its first run; an empty credentials file skips the question.
 if not exist "%USERPROFILE%\.streamlit\credentials.toml" (
     mkdir "%USERPROFILE%\.streamlit" 2>nul

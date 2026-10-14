@@ -102,3 +102,33 @@ def test_hebrew_variants():
     v = search.hebrew_variants("חיבור לגמל והשוחה").split()
     assert {"גמל", "השוחה", "שוחה"} <= set(v) and "חיבור" not in v
     assert search.hebrew_variants("camel 6in") == ""
+
+
+def test_data_home_file_and_move(tmp_path, monkeypatch):
+    """data_home.txt next to the app picks the data folder; changing it copies data without overwriting."""
+    from sketch2cad import config
+    monkeypatch.delenv("SKETCH2CAD_HOME", raising=False)
+    monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
+    monkeypatch.setattr(config, "APP_DIR", tmp_path / "app")
+    (tmp_path / "app").mkdir()
+    assert config.app_home() == tmp_path / "appdata" / "Sketch2CAD"
+    config.Settings(ui_language="en", projects=["x"]).save()
+    (config.app_home() / "catalog").mkdir()
+    (config.app_home() / "catalog" / "user.yaml").write_text("items: []\n", encoding="utf-8")
+
+    new = tmp_path / "E" / "Sketch2CAD" / "Data"
+    (new).mkdir(parents=True)
+    (new / "settings.json").write_text('{"ui_language": "he", "projects": ["old-pc"]}', encoding="utf-8")
+    assert config.set_data_home(str(new)) == new
+    assert config.data_home_file().read_text(encoding="utf-8").strip() == str(new)
+    assert config.app_home() == new
+    assert config.Settings.load().projects == ["old-pc"]                 # existing data kept
+    assert (new / "catalog" / "user.yaml").exists()                      # missing data copied
+    # a BOM / stray whitespace in the pointer file (written by install.bat) is tolerated
+    config.data_home_file().write_text("\ufeff" + str(new) + " \r\n", encoding="utf-8")
+    assert config.app_home() == new
+    # an empty pointer file means the default folder
+    config.data_home_file().write_text("", encoding="utf-8")
+    assert config.app_home() == tmp_path / "appdata" / "Sketch2CAD"
+    monkeypatch.setenv("SKETCH2CAD_HOME", str(tmp_path / "env"))
+    assert config.app_home() == tmp_path / "env"                          # the env var always wins

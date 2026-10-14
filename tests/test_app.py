@@ -137,3 +137,23 @@ def test_update_box(monkeypatch):
     next(b for b in at.button if b.label.endswith(t("check_updates", "he"))).click().run()
     assert not at.exception
     assert any(t("update_available", "he") in w.value for w in at.warning)
+
+
+def test_settings_change_data_folder(tmp_path, monkeypatch):
+    """Settings page: choosing a data folder writes data_home.txt next to the app and copies the data there."""
+    from sketch2cad import config
+    from sketch2cad.i18n import t
+    monkeypatch.setattr(config, "APP_DIR", tmp_path / "app")
+    (tmp_path / "app").mkdir()
+    config.Settings(ui_language="en", default_projects_root="D:/Projects").save()
+
+    at = AppTest.from_file(APP, default_timeout=30).run()
+    next(b for b in at.button if b.label == t("nav_settings", "en")).click().run()
+    assert _by_label(at.text_input, t("data_home", "en")).value == str(tmp_path / "home")
+    new = tmp_path / "E" / "Data"
+    _by_label(at.text_input, t("data_home", "en")).input(str(new))
+    next(b for b in at.button if b.label == t("save", "en")).click().run()
+    assert not at.exception
+    assert config.data_home_file().read_text(encoding="utf-8").strip() == str(new)
+    assert (new / "settings.json").exists()
+    assert any(t("data_home_changed", "en") in s.value for s in at.success)

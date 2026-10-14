@@ -3,7 +3,7 @@
 The app checks the latest commit, and "update now" starts update.bat in its own window: it stops the
 running app, runs `python -m sketch2cad.updater apply` (download + copy files + pip install when
 requirements changed) and starts run.bat again. User data is never touched: settings live in
-%APPDATA%/Sketch2CAD and projects in their own folders.
+%APPDATA%/Sketch2CAD (or the data folder named in data_home.txt) and projects in their own folders.
 """
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ REPO = "rotem-ya/Sketch2CAD"
 BRANCH = "main"
 APP_DIR = Path(__file__).resolve().parents[1]
 VERSION_FILE = ".version"
-KEEP = {".venv", ".git", VERSION_FILE}                 # never overwritten by an update
+KEEP = {".venv", ".git", VERSION_FILE, "data_home.txt"}   # never overwritten by an update
 TIMEOUT_S = 30
 
 

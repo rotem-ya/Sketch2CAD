@@ -850,7 +850,11 @@ def page_search() -> None:
 
 
 def page_settings() -> None:
+    from sketch2cad import config
     st.header(T("settings"))
+    ss.setdefault("set_data_home", str(app_home()))
+    data_home = folder_input(T("data_home"), "set_data_home")
+    st.caption(T("data_home_help"))
     ss.setdefault("set_root", settings.default_projects_root)
     root = folder_input(T("default_root"), "set_root")
     oda = st.text_input(T("oda_path"), value=settings.oda_converter_path)
@@ -858,7 +862,16 @@ def page_settings() -> None:
     if st.button(T("save"), key="settings_save", type="primary"):
         settings.default_projects_root, settings.oda_converter_path, settings.anthropic_api_key = root, oda, key
         settings.save()
+        if data_home.strip() and Path(data_home).expanduser().resolve() != app_home().resolve():
+            try:
+                config.set_data_home(data_home)
+                ss.settings_msg = T("data_home_changed")
+                st.rerun()                       # reload settings from the new folder
+            except OSError as e:
+                st.error(f"{T('error')}: {e}")
         st.success(T("saved"))
+    if ss.pop("settings_msg", None):
+        st.success(f"{T('data_home_changed')}: {app_home()}")
     if st.button(T("rebuild_index")):
         st.success(f"{search.rebuild(settings)} {T('indexed')}")
 

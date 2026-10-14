@@ -4,3 +4,5 @@ __pycache__/
 *.png
 !docs/**/*.png
 .pytest_cache/
+data_home.txt
+.version
