@@ -35,3 +35,20 @@ def pick_folder(initial: str = "", title: str = "") -> str | None:
     path = filedialog.askdirectory(master=root, initialdir=initial or None, title=title or None)
     root.destroy()
     return path or None
+
+
+def disable_console_quick_edit() -> None:
+    """Windows: a click inside the program's console window starts "QuickEdit" selection, which pauses
+    the program until Enter/Esc is pressed; the browser then shows "Connection error". Turn it off."""
+    if os.name != "nt":
+        return
+    try:
+        import ctypes
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.GetStdHandle(-10)                  # STD_INPUT_HANDLE
+        mode = ctypes.c_uint32()
+        if kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
+            ENABLE_QUICK_EDIT_MODE, ENABLE_EXTENDED_FLAGS = 0x0040, 0x0080
+            kernel32.SetConsoleMode(handle, (mode.value & ~ENABLE_QUICK_EDIT_MODE) | ENABLE_EXTENDED_FLAGS)
+    except Exception:  # noqa: BLE001 - no console (pythonw) or API unavailable: nothing to do
+        pass

@@ -34,6 +34,10 @@ from sketch2cad.projects import Project, create_project, is_project_folder, relo
 
 st.set_page_config(page_title="Sketch2CAD", layout="wide")
 
+if os.name == "nt":
+    from sketch2cad.native import disable_console_quick_edit  # noqa: E402
+    disable_console_quick_edit()          # a click in the black window must not freeze the app
+
 settings = Settings.load()
 ss = st.session_state
 ss.setdefault("page", "projects")
