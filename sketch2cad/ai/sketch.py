@@ -17,6 +17,11 @@ IMAGE_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
                ".webp": "image/webp"}
 MAX_IMAGE_BYTES = 3_500_000
 MAX_IMAGE_SIDE = 2000
+# The API takes at most 32 MB per request (base64 included) and 600 PDF pages. Files are sent within a raw
+# budget that leaves room for base64 (+1/3) and the prompt; larger PDFs are shrunk or sent as page images.
+FILES_BUDGET = 22 * 1024 * 1024
+MAX_PDF_PAGES = 100                     # pages per PDF (cost); the rest is reported, never dropped silently
+MAX_PAGE_IMAGES = 20                    # pages sent as images when a PDF cannot be shrunk enough
 
 SYSTEM = """You turn engineering hand sketches, site photos and marked-up plans into a drawing spec \
 (JSON) for the Sketch2CAD renderer. The renderer, not you, draws the CAD file.
@@ -87,15 +92,81 @@ def _image_block(path: Path) -> dict:
                                         "data": base64.standard_b64encode(data).decode("ascii")}}
 
 
-def _content_blocks(paths) -> list[dict]:
-    blocks = []
+def _b64(data: bytes) -> str:
+    return base64.standard_b64encode(data).decode("ascii")
+
+
+def _mb(n: int) -> str:
+    return f"{n / 1e6:.1f} MB"
+
+
+def _page_jpeg(page) -> bytes:
+    """One PDF page as a JPEG, at most MAX_IMAGE_SIDE px on its long side."""
+    zoom = min(MAX_IMAGE_SIDE / max(page.rect.width, page.rect.height), 200 / 72)
+    pix = page.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom), alpha=False)
+    return pix.tobytes("jpeg", jpg_quality=80)
+
+
+def _pdf_blocks(path: Path, budget: int, max_pages: int, notes: list) -> tuple[list[dict], int]:
+    """Content blocks for one PDF within `budget` raw bytes; returns (blocks, bytes used).
+
+    1. the file as is, when it is small enough;  2. a copy with the first `max_pages` pages and
+    recompressed images;  3. the first pages rendered as JPEG images. Steps 2-3 are reported in `notes`.
+    """
+    data = path.read_bytes()
+    doc = pymupdf.open(path)
+    total = doc.page_count
+    pages = min(total, max_pages)
+    if len(data) <= budget and total <= max_pages:
+        return [{"type": "document", "source": {"type": "base64", "media_type": "application/pdf",
+                                                "data": _b64(data)}, "title": path.name}], len(data)
+    small = pymupdf.open()
+    small.insert_pdf(doc, to_page=pages - 1)
+    small.rewrite_images(dpi_threshold=160, dpi_target=150, quality=70)
+    small_data = small.tobytes(garbage=4, deflate=True, clean=True)
+    if len(small_data) <= budget:
+        part = f"pages 1-{pages} of {total}" if pages < total else f"all {total} pages"
+        notes.append(f"{path.name}: {_mb(len(data))} - sent as a compressed copy ({_mb(len(small_data))}, {part}).")
+        blocks = [{"type": "document", "source": {"type": "base64", "media_type": "application/pdf",
+                                                  "data": _b64(small_data)}, "title": path.name}]
+        if pages < total:
+            blocks.append({"type": "text", "text": f"({path.name}: only pages 1-{pages} of {total} are attached.)"})
+        return blocks, len(small_data)
+    images, used = [], 0
+    for i in range(min(pages, MAX_PAGE_IMAGES)):
+        jpg = _page_jpeg(doc[i])
+        if used + len(jpg) > budget:
+            break
+        images.append({"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": _b64(jpg)}})
+        used += len(jpg)
+    if not images:
+        raise ValueError(f"{path.name} is too large to send ({_mb(len(data))}). Send fewer files at once, "
+                         "or split the PDF and send only the relevant pages.")
+    notes.append(f"{path.name}: {_mb(len(data))}, too large to send as a PDF - pages 1-{len(images)} of {total} "
+                 "were sent as images. To send other pages, split the PDF and send only those pages.")
+    head = {"type": "text", "text": f"{path.name}: pages 1-{len(images)} of {total}, as images:"}
+    return [head, *images], used
+
+
+def _content_blocks(paths, notes: list | None = None, *, max_pdf_pages: int = MAX_PDF_PAGES) -> list[dict]:
+    """Image/document blocks for the files, kept within the API request limit.
+
+    Anything that had to be reduced (pages left out, compressed copy, pages as images) is added to `notes`
+    so the user is told; a request that cannot fit raises ValueError instead of failing at the API.
+    """
+    notes = notes if notes is not None else []
+    blocks, budget = [], FILES_BUDGET
     for p in map(Path, paths):
         if p.suffix.lower() == ".pdf":
-            blocks.append({"type": "document", "source": {
-                "type": "base64", "media_type": "application/pdf",
-                "data": base64.standard_b64encode(p.read_bytes()).decode("ascii")}, "title": p.name})
+            new, used = _pdf_blocks(p, budget, max_pdf_pages, notes)
         else:
-            blocks.append(_image_block(p))
+            new = [_image_block(p)]
+            used = len(new[0]["source"]["data"]) * 3 // 4
+            if used > budget:
+                raise ValueError(f"Too many files for one request (limit about {_mb(FILES_BUDGET)}). "
+                                 f"Send {p.name} separately.")
+        blocks += new
+        budget -= used
     return blocks
 
 
@@ -141,6 +212,8 @@ def draft_spec_from_images(paths, notes: str = "", api_key: str | None = None, *
     """Ask Claude for a spec draft from sketches/photos/PDFs plus free-text notes."""
     import anthropic
 
+    file_notes: list[str] = []
+    content = _content_blocks(paths, file_notes)
     client = client or anthropic.Anthropic(api_key=api_key or None)
     system = SYSTEM.format(types=", ".join(ELEMENT_TYPES), formats=_spec_format(), catalog=_catalog_lines(catalog))
     request = (f"Units: {units}. Drawing language: {language}.\n"
@@ -154,7 +227,7 @@ def draft_spec_from_images(paths, notes: str = "", api_key: str | None = None, *
         output_config={"effort": "high"},
         betas=["server-side-fallback-2026-07-01"],
         fallbacks="default",
-        messages=[{"role": "user", "content": _content_blocks(paths) + [{"type": "text", "text": request}]}],
+        messages=[{"role": "user", "content": content + [{"type": "text", "text": request}]}],
     ) as stream:
         message = stream.get_final_message()
     if message.stop_reason == "refusal":
@@ -168,4 +241,4 @@ def draft_spec_from_images(paths, notes: str = "", api_key: str | None = None, *
         raise RuntimeError(f"Could not read the model answer as JSON: {exc}") from exc
     spec, warnings = normalize_spec(reply.get("spec", reply), units=units, language=language)
     return Draft(spec=spec, assumptions=reply.get("assumptions", []), questions=reply.get("questions", []),
-                 warnings=warnings, model=message.model)
+                 warnings=file_notes + warnings, model=message.model)

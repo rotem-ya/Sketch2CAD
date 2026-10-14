@@ -137,8 +137,10 @@ def fill_project_from_docs(files) -> None:
     for f in files or []:
         paths.append(tmp / f.name)
         paths[-1].write_bytes(f.getvalue())
+    notes: list[str] = []
+    ss.np_fill_notes = notes
     try:
-        info = extract_project_info(paths, settings.anthropic_api_key)
+        info = extract_project_info(paths, settings.anthropic_api_key, notes=notes)
     except Exception as e:  # noqa: BLE001 - API / file errors are shown to the user
         ss.np_fill_msg = ("error", f"{T('error')}: {e}")
         return
@@ -251,6 +253,8 @@ def page_projects() -> None:
         kind, msg = ss.pop("np_fill_msg", (None, None))
         if kind:
             getattr(st, kind)(msg)
+            for note in ss.pop("np_fill_notes", []):
+                st.warning(note)
 
     for key, default in (("np_parent", settings.default_projects_root), ("np_pattern", codes.DEFAULT_PATTERN)):
         ss.setdefault(key, default)

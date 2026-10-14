@@ -29,6 +29,7 @@ SYSTEM = ("You read construction-project documents (contracts, title blocks, tra
           "invent a value.\nFields:\n" + "\n".join(f"- {k}: {v}" for k, v in FIELDS.items()))
 DIRECT = {".pdf", *IMAGE_TYPES}
 MAX_TEXT = 60_000
+MAX_PDF_PAGES = 20            # project details are on the first pages (title page, contract header)
 
 
 def _docx_text(path: Path) -> str:
@@ -48,12 +49,15 @@ def _text_of(path: Path) -> str:
     return read_any(path, Path(tempfile.mkdtemp(prefix="s2c_info_"))).text
 
 
-def extract_project_info(paths, api_key: str | None = None, *, client=None) -> dict:
-    """Read one or more documents and return {field: value} for FIELDS (empty string = not found)."""
+def extract_project_info(paths, api_key: str | None = None, *, client=None, notes: list | None = None) -> dict:
+    """Read one or more documents and return {field: value} for FIELDS (empty string = not found).
+
+    Large PDFs are reduced to fit the API limit; what was reduced is appended to `notes`.
+    """
     import anthropic
 
     paths = [Path(p) for p in paths]
-    blocks = _content_blocks([p for p in paths if p.suffix.lower() in DIRECT])
+    blocks = _content_blocks([p for p in paths if p.suffix.lower() in DIRECT], notes, max_pdf_pages=MAX_PDF_PAGES)
     for p in paths:
         if p.suffix.lower() not in DIRECT:
             text = _text_of(p).strip()

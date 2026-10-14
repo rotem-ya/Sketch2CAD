@@ -268,3 +268,89 @@ def test_updater_latest_and_apply(tmp_path, monkeypatch):
     zip_bytes = _zip_of({"requirements.txt": "ezdxf\nnewlib\n"})
     updater.apply_update(app, "def456", log=lambda m: None, download=lambda url, t: zip_bytes)
     assert calls and calls[0][1:4] == ["-m", "pip", "install"]
+
+
+# ---------------------------------------------------------------- large PDFs fit the API request limit
+def _noisy_pdf(path, pages):
+    """A PDF whose pages carry large, poorly compressible images (like a scanned plan set)."""
+    import os
+    doc = pymupdf.open()
+    for i in range(pages):
+        page = doc.new_page(width=842, height=595)
+        pix = pymupdf.Pixmap(pymupdf.csRGB, pymupdf.IRect(0, 0, 1200, 850), False)
+        pix.set_rect(pix.irect, (255, 255, 255))
+        raw = bytearray(pix.samples)
+        raw[: len(raw) // 2] = os.urandom(len(raw) // 2)            # noise does not compress
+        page.insert_image(page.rect, pixmap=pymupdf.Pixmap(pymupdf.csRGB, 1200, 850, bytes(raw), False))
+        page.insert_text((40, 40), f"SHEET {i + 1}")
+    doc.save(path)
+    return path
+
+
+def test_small_pdf_is_sent_unchanged(tmp_path):
+    pdf = tmp_path / "small.pdf"
+    d = pymupdf.open()
+    d.new_page().insert_text((72, 72), "SITE 20117")
+    d.save(pdf)
+    notes = []
+    blocks = sketch._content_blocks([pdf], notes)
+    assert blocks[0]["type"] == "document" and notes == []
+    import base64
+    assert base64.standard_b64decode(blocks[0]["source"]["data"]) == pdf.read_bytes()
+
+
+def test_large_pdf_is_compressed_then_page_limited(tmp_path, monkeypatch):
+    pdf = _noisy_pdf(tmp_path / "plans.pdf", 4)
+    size = pdf.stat().st_size
+    monkeypatch.setattr(sketch, "FILES_BUDGET", size - 1)            # the original no longer fits
+    notes = []
+    blocks = sketch._content_blocks([pdf], notes, max_pdf_pages=2)
+    assert blocks[0]["type"] == "document"
+    import base64
+    sent = pymupdf.open(stream=base64.standard_b64decode(blocks[0]["source"]["data"]), filetype="pdf")
+    assert sent.page_count == 2 and "SHEET 1" in sent[0].get_text()
+    assert "pages 1-2 of 4" in blocks[1]["text"]                       # the model is told, too
+    assert notes and "compressed copy" in notes[0] and "pages 1-2 of 4" in notes[0]
+
+
+def test_huge_pdf_falls_back_to_page_images(tmp_path, monkeypatch):
+    pdf = _noisy_pdf(tmp_path / "huge.pdf", 3)
+    doc = pymupdf.open(pdf)
+    one_page = len(sketch._page_jpeg(doc[0]))
+    small = pymupdf.open()
+    small.insert_pdf(doc)
+    small.rewrite_images(dpi_threshold=160, dpi_target=150, quality=70)
+    budget = one_page + one_page // 4                                 # one page image fits, two do not
+    assert len(small.tobytes(garbage=4, deflate=True, clean=True)) > budget   # nor does a compressed copy
+    monkeypatch.setattr(sketch, "FILES_BUDGET", budget)
+    notes = []
+    blocks = sketch._content_blocks([pdf], notes)
+    assert blocks[0]["type"] == "text" and "pages 1-1 of 3" in blocks[0]["text"]
+    images = [b for b in blocks if b["type"] == "image"]
+    assert len(images) == 1 and images[0]["source"]["media_type"] == "image/jpeg"
+    assert notes and "pages 1-1 of 3 were sent as images" in notes[0]
+
+
+def test_pdf_too_large_for_any_form_raises_clear_error(tmp_path, monkeypatch):
+    pdf = _noisy_pdf(tmp_path / "plans.pdf", 1)
+    monkeypatch.setattr(sketch, "FILES_BUDGET", 1000)
+    with pytest.raises(ValueError, match="too large to send"):
+        sketch._content_blocks([pdf])
+
+
+def test_project_info_reports_reduced_pdf(tmp_path, monkeypatch):
+    from sketch2cad.ai import project_info
+    pdf = _noisy_pdf(tmp_path / "contract.pdf", 3)
+    monkeypatch.setattr(sketch, "FILES_BUDGET", pdf.stat().st_size - 1)
+    answer = {k: "" for k in project_info.FIELDS} | {"code": "20117"}
+    captured = {}
+
+    def create(**kw):
+        captured.update(kw)
+        return SimpleNamespace(stop_reason="end_turn", content=[SimpleNamespace(type="text", text=json.dumps(answer))])
+
+    notes = []
+    info = project_info.extract_project_info([pdf], client=SimpleNamespace(
+        beta=SimpleNamespace(messages=SimpleNamespace(create=create))), notes=notes)
+    assert info["code"] == "20117" and notes and "contract.pdf" in notes[0]
+    assert captured["messages"][0]["content"][0]["type"] == "document"
