@@ -70,7 +70,9 @@ if not exist "%DATA%" (
     echo Could not create %DATA% - the default data folder will be used. Change it later in Settings.
     goto :data_done
 )
->data_home.txt echo %DATA%
+rem Point to the new folder and copy existing data (settings, project list, API key, index) into it.
+python -c "from sketch2cad import config; config.set_data_home(r'%DATA%', copy_from=config.default_data_home())"
+if errorlevel 1 (>data_home.txt echo %DATA%)
 echo Data folder: %DATA%
 :data_done
 
