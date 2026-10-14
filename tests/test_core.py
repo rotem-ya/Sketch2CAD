@@ -5,7 +5,7 @@ import pytest
 from sketch2cad import codes, search
 from sketch2cad.config import Settings
 from sketch2cad.documents import Document, add_source, create_document, list_documents, new_revision
-from sketch2cad.projects import Project, create_project, relocate_project
+from sketch2cad.projects import Project, create_project, is_project_folder, relocate_project
 
 
 @pytest.fixture(autouse=True)
@@ -132,3 +132,12 @@ def test_data_home_file_and_move(tmp_path, monkeypatch):
     assert config.app_home() == tmp_path / "appdata" / "Sketch2CAD"
     monkeypatch.setenv("SKETCH2CAD_HOME", str(tmp_path / "env"))
     assert config.app_home() == tmp_path / "env"                          # the env var always wins
+
+
+def test_relocate_to_where_it_already_is_is_a_no_op(tmp_path):
+    p = create_project(tmp_path / "a", "20117", "חצרים", "Hatzerim")
+    same = relocate_project(p, p.path.parent)                         # "move into the folder it is in"
+    assert same.path == p.path and is_project_folder(p.path)
+    assert relocate_project(p, p.path).path == p.path                 # the project folder itself
+    linked = relocate_project(p, p.path.parent, move_files=False)     # parent chosen in "link" mode
+    assert linked.path == p.path

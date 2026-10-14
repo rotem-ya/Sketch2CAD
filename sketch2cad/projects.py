@@ -8,6 +8,7 @@ The project folder is the source of truth; the search index is rebuilt from it.
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 from dataclasses import asdict, dataclass, field
@@ -103,12 +104,21 @@ def relocate_project(project: Project, new_parent_or_folder: Path | str, move_fi
     target = Path(new_parent_or_folder).resolve()
     if move_files:
         dest = target / project.path.name
+        if _same_path(dest, project.path) or _same_path(target, project.path):
+            return Project.load(project.path)          # already there: nothing to move
         if dest.exists():
             raise FileExistsError(f"{dest} already exists")
         target.mkdir(parents=True, exist_ok=True)
         shutil.move(str(project.path), str(dest))
     else:
         dest = target
+        if not is_project_folder(dest) and is_project_folder(target / project.path.name):
+            dest = target / project.path.name           # the parent folder was chosen
         if not is_project_folder(dest):
             raise FileNotFoundError(f"no {PROJECT_FILE} in {dest}")
     return Project.load(dest)
+
+
+def _same_path(a: Path, b: Path) -> bool:
+    """Same folder (case-insensitive on Windows)."""
+    return os.path.normcase(str(Path(a).resolve())) == os.path.normcase(str(Path(b).resolve()))
