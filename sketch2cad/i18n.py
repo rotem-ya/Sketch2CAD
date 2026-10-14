@@ -126,6 +126,34 @@ STRINGS: dict[str, dict[str, str]] = {
                              "פרויקט (ברירת המחדל למטה). שינוי תיקיית הנתונים מעתיק אליה את הנתונים הנוכחיים; "
                              "תיקייה שכבר יש בה נתונים שומרת אותם."},
     "data_home_changed": {"en": "Data folder changed", "he": "תיקיית הנתונים שונתה"},
+    "revise": {"en": "Mark up and revise on request", "he": "סימון ותיקון לפי בקשה"},
+    "revise_help": {"en": "Mark on the drawing with the free pen or straight lines, write what to change and "
+                          "press Revise. The drawing is updated and rendered again; the previous version can be "
+                          "restored.",
+                    "he": "סמנו על השרטוט בעט חופשי או בקווים ישרים, כתבו מה לשנות ולחצו \"תקן שרטוט\". "
+                          "השרטוט יתוקן ויופק מחדש, ואפשר לחזור לגרסה הקודמת."},
+    "revise_request": {"en": "What to change", "he": "מה לשנות"},
+    "revise_placeholder": {"en": "e.g. move the valve marked in red 500 mm to the left; add a manhole where the "
+                                 "blue line ends",
+                           "he": "לדוגמה: להזיז את המגוף המסומן באדום 500 מ\"מ שמאלה; להוסיף שוחה בקצה הקו הכחול"},
+    "revise_empty": {"en": "Write what to change first.", "he": "כתבו קודם מה לשנות."},
+    "revise_go": {"en": "Revise drawing", "he": "תקן שרטוט"},
+    "revise_undo": {"en": "Undo last revision", "he": "בטל תיקון אחרון"},
+    "revise_done": {"en": "The drawing was revised and rendered again", "he": "השרטוט תוקן והופק מחדש"},
+    "revise_undone": {"en": "The previous version was restored", "he": "הגרסה הקודמת שוחזרה"},
+    "revise_failed": {"en": "The revised drawing could not be rendered - the previous version was kept",
+                      "he": "לא ניתן היה להפיק את השרטוט המתוקן - הגרסה הקודמת נשמרה"},
+    "revise_last": {"en": "Last request", "he": "הבקשה האחרונה"},
+    "changes": {"en": "What changed", "he": "מה שונה"},
+    "mk_pen": {"en": "Free pen", "he": "עט חופשי"},
+    "mk_line": {"en": "Straight line", "he": "קו ישר"},
+    "mk_undo": {"en": "Undo", "he": "בטל"},
+    "mk_clear": {"en": "Clear", "he": "נקה"},
+    "mk_red": {"en": "Red", "he": "אדום"},
+    "mk_blue": {"en": "Blue", "he": "כחול"},
+    "mk_green": {"en": "Green", "he": "ירוק"},
+    "mk_will_send": {"en": "{n} markings will be sent with the request", "he": "{n} סימונים יישלחו עם הבקשה"},
+    "mk_count": {"en": "markings", "he": "סימונים"},
     "oda_not_exe": {"en": "The ODA path must be the program file ODAFileConverter.exe, not a folder. "
                           "A folder for projects goes in \"Default folder for new projects\".",
                     "he": "בשדה ODA צריך להיות קובץ התוכנה ODAFileConverter.exe ולא תיקייה. "

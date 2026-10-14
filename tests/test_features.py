@@ -354,3 +354,50 @@ def test_project_info_reports_reduced_pdf(tmp_path, monkeypatch):
         beta=SimpleNamespace(messages=SimpleNamespace(create=create))), notes=notes)
     assert info["code"] == "20117" and notes and "contract.pdf" in notes[0]
     assert captured["messages"][0]["content"][0]["type"] == "document"
+
+
+# ---------------------------------------------------------------- markup + revise on request (no network)
+def _white_png(path, w=400, h=300):
+    from PIL import Image
+    Image.new("RGB", (w, h), "white").save(path)
+    return path
+
+
+def test_markup_clean_and_compose(tmp_path):
+    from PIL import Image
+    from sketch2cad import markup
+    strokes = [
+        {"tool": "line", "color": "red", "width": 0.01, "points": [[0.1, 0.5], [0.3, 0.5], [0.9, 0.5]]},
+        {"tool": "pen", "color": "blue", "points": [[0.5, 0.1], [0.5, 0.2], [0.5, 0.3]]},
+        {"tool": "laser", "points": [[0, 0], [1, 1]]},                         # unknown tool: dropped
+        {"tool": "pen", "color": "pink", "points": [[2, -1], [0.2, 0.2]]},     # colour -> red, clipped
+        {"tool": "pen", "points": [[0.5, 0.5]]},                                # a single point: dropped
+    ]
+    clean = markup.clean_strokes(strokes)
+    assert [s["tool"] for s in clean] == ["line", "pen", "pen"]
+    assert clean[0]["points"] == [[0.1, 0.5], [0.9, 0.5]]                      # a line keeps its two ends
+    assert clean[2]["color"] == "red" and clean[2]["points"][0] == [1.0, 0.0]
+    out = markup.compose(_white_png(tmp_path / "p.png"), strokes, tmp_path / "m" / "marked.png")
+    with Image.open(out) as img:
+        assert img.getpixel((200, 150)) == markup.COLORS["red"]               # on the red line
+        assert img.getpixel((200, 45)) == markup.COLORS["blue"]               # on the blue stroke
+        assert img.getpixel((20, 280)) == (255, 255, 255)                      # untouched
+    assert markup.canvas_image(tmp_path / "p.png").startswith("data:image/jpeg;base64,")
+
+
+def test_revise_spec_sends_marked_sheet_spec_and_request(tmp_path, cat):
+    from sketch2cad.ai import revise
+    spec = {"units": "mm", "scale": 20, "elements": [{"id": "v1", "type": "gate_valve", "at": [0, 0]}]}
+    reply = {"spec": {**spec, "elements": [{"id": "v1", "type": "gate_valve", "at": [-500, 0]}]},
+             "changes": [{"en": "Valve moved 500 mm left", "he": "המגוף הוזז 500 מ\"מ שמאלה"}], "questions": []}
+    captured = {}
+    rev = revise.revise_spec(spec, "move the valve 500 mm left", image=_white_png(tmp_path / "m.png"),
+                             marked=True, catalog=cat, client=fake_client(json.dumps(reply), captured))
+    assert rev.spec["elements"][0]["at"] == [-500, 0]
+    assert rev.changes[0]["he"].startswith("המגוף")
+    blocks = captured["messages"][0]["content"]
+    assert blocks[0]["type"] == "image" and "markings" in blocks[1]["text"]
+    assert '"gate_valve"' in blocks[2]["text"] and "500 mm left" in blocks[3]["text"]
+    assert captured["model"] == "claude-opus-5-5" and "Change only what" in captured["system"]
+    with pytest.raises(ValueError):
+        revise.revise_spec(spec, "  ", client=fake_client("{}", {}))

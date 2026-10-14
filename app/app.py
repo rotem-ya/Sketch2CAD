@@ -92,6 +92,43 @@ def save_spec(doc: Document, spec: dict) -> None:
     (doc.path / "spec.json").write_text(json.dumps(spec, ensure_ascii=False, indent=1), encoding="utf-8")
 
 
+SPEC_HISTORY = "spec_history"
+
+
+def backup_spec(doc: Document) -> None:
+    """Keep the current spec.json before a revision replaces it (restored by "undo last revision")."""
+    from datetime import datetime
+    src = doc.path / "spec.json"
+    if src.exists():
+        folder = doc.path / SPEC_HISTORY
+        folder.mkdir(exist_ok=True)
+        shutil.copy2(src, folder / f"spec_{datetime.now():%Y%m%d_%H%M%S_%f}.json")
+
+
+def spec_history(doc: Document) -> list[Path]:
+    folder = doc.path / SPEC_HISTORY
+    return sorted(folder.glob("spec_*.json")) if folder.exists() else []
+
+
+def render_document(p: Project, d: Document, spec: dict, cat: Catalog, formats) -> list[str]:
+    """Render the spec into the document folder and record the outputs; returns the render warnings."""
+    from sketch2cad.drawing import render
+    res = render(spec, d.path, f"{d.code}_Rev{d.rev}", project=p, document=d, catalog=cat,
+                 formats=tuple(formats) or ("dxf",))
+    d.outputs.update({("preview" if k == "png" else k): Path(v).name for k, v in res.items() if k != "warnings"})
+    d.save()
+    search.store_content(d, "spec.json", " ".join(
+        (l.get("en", "") + " " + l.get("he", "")) for l in spec.get("legend", [])))
+    reindex(p, d)
+    return res.get("warnings", [])
+
+
+def last_formats(d: Document) -> list[str]:
+    """The formats rendered last time (PNG is always included: it is the preview)."""
+    fmts = [k for k in ("dxf", "dwg", "pdf") if k in d.outputs]
+    return fmts + ["png"] if fmts else ["dxf", "dwg", "pdf", "png"]
+
+
 def lang_choice(label: str, default: str, key: str, options=("both", "en", "he")) -> str:
     return st.selectbox(label, list(options), index=list(options).index(default) if default in options else 0,
                         format_func=lambda x: T(f"lang_{x}"), key=key)
@@ -632,28 +669,109 @@ def tab_drawing(p: Project, d: Document, cat: Catalog) -> None:
         ov_he = c2.text_input(T("title_override_he"), value=d.title_overrides.get("title_he", ""))
         go_render = st.form_submit_button(T("render"))
     if go_render:
-        from sketch2cad.drawing import render
         d.titleblock = tb
         d.title_overrides = {k: v for k, v in (("title_en", ov_en), ("title_he", ov_he)) if v}
         spec.setdefault("sheet", {})["template"] = tb
         spec.setdefault("language", lang_mode)
         save_spec(d, spec)
         try:
-            res = render(spec, d.path, f"{d.code}_Rev{d.rev}", project=p, document=d, catalog=cat,
-                         formats=tuple(formats) or ("dxf",))
+            warnings = render_document(p, d, spec, cat, formats)
         except Exception as e:  # noqa: BLE001 - show render errors (bad spec) to the user
             st.error(f"{T('error')}: {e}")
             return
-        d.outputs.update({("preview" if k == "png" else k): Path(v).name for k, v in res.items() if k != "warnings"})
-        d.save()
-        search.store_content(d, "spec.json", " ".join(
-            (l.get("en", "") + " " + l.get("he", "")) for l in spec.get("legend", [])))
-        reindex(p, d)
         st.success(T("rendered"))
-        for w in res.get("warnings", []):
+        for w in warnings:
             st.warning(w)
-    if (d.path / d.outputs.get("preview", "-")).exists():
-        st.image(str(d.path / d.outputs["preview"]), width="stretch")
+    for kind, msg in ss.pop("rev_msgs", []):
+        getattr(st, kind)(msg)
+    preview = d.path / d.outputs.get("preview", "-")
+    if preview.exists():
+        st.image(str(preview), width="stretch")
+        revise_panel(p, d, spec, cat, preview, lang_mode)
+
+
+def revise_panel(p: Project, d: Document, spec: dict, cat: Catalog, preview: Path, lang_mode: str) -> None:
+    """Mark up the rendered sheet (free pen / straight lines), ask for a change, and re-render in place."""
+    from datetime import datetime
+
+    from sketch2cad.markup import compose, markup_canvas
+    with st.expander(f"✏️ {T('revise')}", expanded=bool(ss.get("rev_open"))):
+        st.caption(T("revise_help"))
+        labels = {k: T(f"mk_{k}") for k in ("pen", "line", "undo", "clear", "red", "blue", "green", "count")}
+        strokes = markup_canvas(preview, key=f"mk_{Path(d.folder).name}_{preview.stat().st_mtime_ns}",
+                                labels=labels, rtl=L == "he")
+        if strokes:
+            st.caption(T("mk_will_send").format(n=len(strokes)))
+        request = st.text_area(T("revise_request"), key=f"rev_req_{Path(d.folder).name}",
+                               placeholder=T("revise_placeholder"))
+        has_key = has_api_key()
+        if not has_key:
+            st.warning(T("ai_no_key"))
+        history = spec_history(d)
+        c1, c2 = st.columns(2)
+        # enabled while typing: a text area commits only on blur, so a disabled-until-filled button would
+        # swallow the first click; an empty request is reported instead
+        go = c1.button(f"🛠️ {T('revise_go')}", type="primary", key="rev_go", disabled=not has_key)
+        undo = c2.button(f"↶ {T('revise_undo')}", key="rev_undo", disabled=not history)
+        review = d.path / "ai_revision.json"
+        if review.exists():
+            data = json.loads(review.read_text(encoding="utf-8"))
+            st.markdown(f"**{T('revise_last')}:** {data.get('request', '')}")
+            for key in ("changes", "assumptions", "questions"):
+                if data.get(key):
+                    st.markdown(f"**{T(key)}**")
+                    for a in data[key]:
+                        st.markdown(f"- {a.get(L) or a.get('en', '') if isinstance(a, dict) else a}")
+            for w in data.get("warnings", []):
+                st.warning(w)
+    if go and not request.strip():
+        ss.rev_open = True
+        st.warning(T("revise_empty"))
+    elif go:
+        from sketch2cad.ai.revise import revise_spec
+        ss.rev_open = True
+        stamp = f"{datetime.now():%Y%m%d_%H%M%S}"
+        image = compose(preview, strokes, d.path / "markups" / f"markup_{stamp}.png")
+        try:
+            with st.spinner(T("ai_working")):
+                rev = revise_spec(spec, request, settings.anthropic_api_key, image=image, marked=bool(strokes),
+                                  catalog=cat, language=lang_mode)
+        except Exception as e:  # noqa: BLE001 - API / parsing errors are shown to the user
+            st.error(f"{T('error')}: {e}")
+            return
+        backup_spec(d)
+        save_spec(d, rev.spec)
+        try:
+            warnings = render_document(p, d, rev.spec, cat, last_formats(d))
+        except Exception as e:  # noqa: BLE001 - a revised spec that does not render is rolled back
+            restore_last_spec(d)
+            st.error(f"{T('revise_failed')}: {e}")
+            return
+        review.write_text(json.dumps({
+            "request": request.strip(), "markup": f"markups/{image.name}" if strokes else "",
+            "changes": rev.changes, "assumptions": rev.assumptions, "questions": rev.questions,
+            "warnings": rev.warnings + warnings, "date": stamp}, ensure_ascii=False, indent=1), encoding="utf-8")
+        ss.rev_msgs = [("success", T("revise_done"))]
+        ss.pop(f"rev_req_{Path(d.folder).name}", None)
+        st.rerun()
+    if undo:
+        ss.rev_open = True
+        restore_last_spec(d)
+        review.unlink(missing_ok=True)
+        try:
+            warnings = render_document(p, d, load_spec(d), cat, last_formats(d))
+        except Exception as e:  # noqa: BLE001
+            st.error(f"{T('error')}: {e}")
+            return
+        ss.rev_msgs = [("success", T("revise_undone"))] + [("warning", w) for w in warnings]
+        st.rerun()
+
+
+def restore_last_spec(d: Document) -> None:
+    """Put the newest backed-up spec back as spec.json (and remove it from the history)."""
+    history = spec_history(d)
+    if history:
+        shutil.move(str(history[-1]), str(d.path / "spec.json"))
 
 
 def tab_compare(p: Project, d: Document) -> None:

@@ -172,3 +172,58 @@ def test_settings_rejects_folder_in_oda_field(tmp_path):
     assert not at.exception
     assert any(t("oda_not_exe", "he") in e.value for e in at.error)
     assert Settings.load().oda_converter_path == "" and Settings.load().default_projects_root == ""
+
+
+def test_revise_on_request_and_undo(tmp_path, monkeypatch):
+    """Render a typical detail, revise it on request (fake AI), then undo the revision."""
+    import json
+    from sketch2cad.ai import revise
+    from sketch2cad.config import Settings
+    from sketch2cad.i18n import t
+    lang = "he"
+    Settings(ui_language=lang, default_projects_root=str(tmp_path / "projects"), anthropic_api_key="test").save()
+    calls = {}
+
+    def fake_revise(spec, request, api_key=None, *, image=None, marked=False, catalog=None, language="both",
+                    client=None):
+        calls.update(request=request, image=image, marked=marked)
+        new = json.loads(json.dumps(spec))
+        new["legend"][0]["en"] = "REVISED ITEM"
+        return revise.Revision(spec=new, changes=[{"en": "Legend 1 renamed", "he": "שם פריט 1 שונה"}])
+
+    monkeypatch.setattr(revise, "revise_spec", fake_revise)
+    at = AppTest.from_file(APP, default_timeout=60).run()
+    _by_label(at.text_input, t("project_code", lang)).input("20117")
+    _by_label(at.text_input, t("name_en", lang)).input("Hatzerim")
+    next(b for b in at.button if b.label == t("create", lang)).click().run()
+    _by_label(at.text_input, t("subject", lang)).input("CAMEL").run()
+    _by_label(at.text_input, t("title_en", lang)).input("Camel")
+    next(b for b in at.button if b.label == t("create", lang)).click().run()
+    next(b for b in at.button if b.label == t("generate", lang)).click().run()
+    next(b for b in at.button if b.label == t("render", lang)).click().run()
+    assert not at.exception
+    doc_dir = next(f.parent for f in (tmp_path / "projects").rglob("document.json"))
+    original = json.loads((doc_dir / "spec.json").read_text(encoding="utf-8"))
+
+    # an empty request is reported, nothing changes
+    next(b for b in at.button if b.label.endswith(t("revise_go", lang))).click().run()
+    assert any(w.value == t("revise_empty", lang) for w in at.warning) and not calls
+
+    # revise on request
+    _by_label(at.text_area, t("revise_request", lang)).input("לשנות את שם פריט 1")
+    next(b for b in at.button if b.label.endswith(t("revise_go", lang))).click().run()
+    assert not at.exception, at.exception
+    assert calls["request"] == "לשנות את שם פריט 1" and calls["image"].exists() and calls["marked"] is False
+    revised = json.loads((doc_dir / "spec.json").read_text(encoding="utf-8"))
+    assert revised["legend"][0]["en"] == "REVISED ITEM"
+    assert len(list((doc_dir / "spec_history").glob("spec_*.json"))) == 1
+    assert any(s.value == t("revise_done", lang) for s in at.success)
+    assert any("שם פריט 1 שונה" in m.value for m in at.markdown)
+    assert (doc_dir / "20117-W-CAMEL-01_RevA.png").exists()
+
+    # undo
+    next(b for b in at.button if b.label.endswith(t("revise_undo", lang))).click().run()
+    assert not at.exception, at.exception
+    assert json.loads((doc_dir / "spec.json").read_text(encoding="utf-8")) == original
+    assert not list((doc_dir / "spec_history").glob("spec_*.json"))
+    assert any(s.value == t("revise_undone", lang) for s in at.success)
