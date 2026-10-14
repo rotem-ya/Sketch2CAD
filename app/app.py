@@ -877,6 +877,9 @@ def page_settings() -> None:
     oda = st.text_input(T("oda_path"), value=settings.oda_converter_path)
     key = st.text_input(T("api_key"), value=settings.anthropic_api_key, type="password")
     if st.button(T("save"), key="settings_save", type="primary"):
+        if oda.strip() and not (oda.strip().lower().endswith(".exe") and Path(oda.strip()).is_file()):
+            st.error(T("oda_not_exe"))
+            return
         settings.default_projects_root, settings.oda_converter_path, settings.anthropic_api_key = root, oda, key
         settings.save()
         if data_home.strip() and Path(data_home).expanduser().resolve() != app_home().resolve():

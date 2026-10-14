@@ -126,6 +126,10 @@ STRINGS: dict[str, dict[str, str]] = {
                              "פרויקט (ברירת המחדל למטה). שינוי תיקיית הנתונים מעתיק אליה את הנתונים הנוכחיים; "
                              "תיקייה שכבר יש בה נתונים שומרת אותם."},
     "data_home_changed": {"en": "Data folder changed", "he": "תיקיית הנתונים שונתה"},
+    "oda_not_exe": {"en": "The ODA path must be the program file ODAFileConverter.exe, not a folder. "
+                          "A folder for projects goes in \"Default folder for new projects\".",
+                    "he": "בשדה ODA צריך להיות קובץ התוכנה ODAFileConverter.exe ולא תיקייה. "
+                          "תיקייה לפרויקטים נכנסת לשדה \"תיקיית ברירת מחדל לפרויקטים חדשים\"."},
     "oda_path": {"en": "ODA File Converter path (DWG) - optional when AutoCAD is installed",
                  "he": "נתיב ODA File Converter (DWG) - לא חובה אם מותקן AutoCAD"},
     "api_key": {"en": "Claude API key (sketch to drawing)", "he": "מפתח Claude API (סקיצה לשרטוט)"},

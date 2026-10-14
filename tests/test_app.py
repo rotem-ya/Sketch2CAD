@@ -157,3 +157,18 @@ def test_settings_change_data_folder(tmp_path, monkeypatch):
     assert config.data_home_file().read_text(encoding="utf-8").strip() == str(new)
     assert (new / "settings.json").exists()
     assert any(t("data_home_changed", "en") in s.value for s in at.success)
+
+
+def test_settings_rejects_folder_in_oda_field(tmp_path):
+    """A folder typed into the ODA converter field is refused with a clear message, and nothing is saved."""
+    from sketch2cad.config import Settings
+    from sketch2cad.i18n import t
+    Settings(ui_language="he").save()
+    at = AppTest.from_file(APP, default_timeout=30).run()
+    next(b for b in at.button if b.label == t("nav_settings", "he")).click().run()
+    _by_label(at.text_input, t("oda_path", "he")).input(str(tmp_path))
+    _by_label(at.text_input, t("default_root", "he")).input(str(tmp_path / "Projects"))
+    next(b for b in at.button if b.label == t("save", "he")).click().run()
+    assert not at.exception
+    assert any(t("oda_not_exe", "he") in e.value for e in at.error)
+    assert Settings.load().oda_converter_path == "" and Settings.load().default_projects_root == ""
