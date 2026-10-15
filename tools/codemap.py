@@ -192,14 +192,14 @@ TS_DECL = re.compile(
 )
 DART_DECL = re.compile(r"^(abstract\s+|sealed\s+|final\s+|base\s+)*(class|mixin|enum|extension|typedef)\s+([A-Za-z_]\w*)")
 DART_FN = re.compile(r"^(?:[\w<>?,\[\] ]+\s+)?([A-Za-z_]\w*)\s*(?:<[^>]*>)?\s*\(([^)]*)\)?\s*(async\*?|sync\*)?\s*(\{|=>)")
-DART_MEMBER = re.compile(r"^  (?:static\s+|@override\s+)?(?:[\w<>?,\[\] ]+\s+)?([A-Za-z_]\w*)\s*\(([^)]*)\)?\s*(async\*?)?\s*(\{|=>)")
+DART_MEMBER = re.compile(r"^  (?:static\s+|@override\s+)?(?:[\w<>?,\[\]][\w<>?,\[\] ]*\s+)?([A-Za-z_]\w*)\s*\(([^)]*)\)?\s*(async\*?)?\s*(\{|=>)")
 
 
 def first_params(text: str) -> str:
     m = re.search(r"\(([^()]*)\)", text)
     if not m:
         return "()"
-    names = [re.split(r"[:=?]", p.strip().lstrip("{[").strip())[0].split()[-1:] for p in m.group(1).split(",") if p.strip()]
+    names = [re.split(r"[:=?]", re.sub(r"[{}\[\]]", "", p).strip())[0].split()[-1:] for p in m.group(1).split(",") if p.strip()]
     return "(" + cut(", ".join(n[0] for n in names if n), SIG_MAX) + ")"
 
 
