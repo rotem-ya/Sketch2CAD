@@ -41,9 +41,9 @@ CODE_EXT = {".py", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".dart"}
 TS_EXT = {".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"}
 SKIP_DIRS = {
     "node_modules", "dist", "build", "out", "static", "ui_dist", "vendor", "third_party", ".venv", "venv", "__pycache__",
-    "migrations", "versions", "coverage", ".dart_tool", "generated", "android", "ios", "linux", "macos", "windows", "web",
-    "public", "assets", "fixtures",
+    "migrations", "versions", "coverage", ".dart_tool", "generated", "public", "assets", "fixtures",
 }
+FLUTTER_PLATFORM_DIRS = {"android", "ios", "linux", "macos", "windows", "web"}  # generated runner code in a Flutter app
 TEST_DIRS = {"tests", "test", "__tests__", "integration_test", "e2e"}
 
 
@@ -70,6 +70,7 @@ def list_files() -> tuple[list[str], list[str]]:
         cfg = json.loads((ROOT / ".codemap.json").read_text(encoding="utf-8"))
     inc, exc = cfg.get("include", []), cfg.get("exclude", [])
     src, tests = [], []
+    skip = SKIP_DIRS | (FLUTTER_PLATFORM_DIRS if (ROOT / "pubspec.yaml").exists() else set())
     for rel in sorted(set(res.stdout.splitlines())):
         p = Path(rel)
         if p.suffix not in CODE_EXT or rel.endswith(".d.ts") or ".min." in p.name or not (ROOT / rel).is_file():
@@ -79,7 +80,7 @@ def list_files() -> tuple[list[str], list[str]]:
         forced = any(fnmatch.fnmatch(rel, g) for g in inc)
         if is_test(rel):
             tests.append(rel)
-        elif forced or not any(part in SKIP_DIRS or part.startswith(".") for part in p.parts[:-1]):
+        elif forced or not any(part in skip or part.startswith(".") for part in p.parts[:-1]):
             src.append(rel)
     return src, tests
 
