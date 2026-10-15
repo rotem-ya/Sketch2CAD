@@ -15,7 +15,9 @@ A local Windows tool (Python, Streamlit) that turns sketches, photos, typical de
 ## Save tokens and time, never quality (token-kit)
 Measured on a large project, 15.10.2026: one 22-hour session grew to 733K tokens of context, and ~70% of its cost was
 re-reading that context on every turn. Every turn re-reads the whole context, so a tool result costs its size times the
-turns left. The rules, for every session, agent and tool:
+turns left. This is the working method of every repository from now on (Rotem, 15.10.2026), for every session, account
+and tool. The method in full, and how to install it in a new repository: the skill `.claude/skills/token-kit/SKILL.md`.
+Other tools read the same rules through `AGENTS.md`. The rules:
 1. **Short sessions.** One session = one task or one round. When it is done, or the context passes ~200K tokens: update the
    handoff, push, and continue in a fresh session (or `/compact`). Never carry a day in one context.
 2. **Find code through the code map, not by reading files.** `docs/codemap/INDEX.md` → the area's map (every function,
