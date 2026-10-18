@@ -30,5 +30,5 @@ if errorlevel 1 (
     exit /b 1
 )
 echo Starting Sketch2CAD ...
-start "Sketch2CAD" "%CD%\run.bat"
+start "" "%CD%\.venv\Scripts\pythonw.exe" -m sketch2cad.launcher
 timeout /t 3 /nobreak >nul

@@ -7,3 +7,4 @@ __pycache__/
 data_home.txt
 .version
 docs/codemap/
+!app/icon.png

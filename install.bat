@@ -83,9 +83,11 @@ if not exist "%USERPROFILE%\.streamlit\credentials.toml" (
     >> "%USERPROFILE%\.streamlit\credentials.toml" echo email = ""
 )
 
-powershell -NoProfile -Command "$s=(New-Object -ComObject WScript.Shell).CreateShortcut([Environment]::GetFolderPath('Desktop')+'\Sketch2CAD.lnk'); $s.TargetPath='%~dp0run.bat'; $s.WorkingDirectory='%~dp0'; $s.Save()"
+rem Desktop shortcut: pythonw (no console window) runs the launcher, which opens the app in its own window.
+powershell -NoProfile -Command "$s=(New-Object -ComObject WScript.Shell).CreateShortcut([Environment]::GetFolderPath('Desktop')+'\Sketch2CAD.lnk'); $s.TargetPath='%~dp0.venv\Scripts\pythonw.exe'; $s.Arguments='-m sketch2cad.launcher'; $s.WorkingDirectory='%~dp0'; $s.IconLocation='%~dp0app\icon.ico'; $s.Description='Sketch2CAD'; $s.Save()"
 
 echo.
-echo Sketch2CAD is installed. Start it from the "Sketch2CAD" shortcut on the desktop (or run.bat).
+echo Sketch2CAD is installed. Start it from the "Sketch2CAD" shortcut on the desktop (or run.bat):
+echo it opens in a window of its own; closing the window stops the program.
 echo For DWG files also install ODA File Converter: https://www.opendesign.com/guestfiles/oda_file_converter
 pause

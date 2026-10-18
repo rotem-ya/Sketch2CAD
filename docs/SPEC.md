@@ -33,7 +33,8 @@ Sketch2CAD/
 ├── templates/                  ← תבניות כותרת מוכנות (YAML)
 ├── tests/
 ├── prototypes/                 ← הסקריפטים מהסשן הראשון (גמל, תעלות)
-└── run.bat                     ← הפעלה בלחיצה (Windows)
+├── run.bat                     ← הפעלה בלחיצה (Windows): sketch2cad/launcher.py פותח את התוכנה בחלון משלה
+└── run-debug.bat               ← הפעלה עם חלון הודעות, לבירור תקלות
 ```
 
 **טכנולוגיות:**
