@@ -34,6 +34,18 @@
 
 **Revit:** אין קורא RVT חינמי ומקומי. ב-Revit מבצעים File > Export > IFC ומייבאים את ה-IFC.
 
+## גשר עבודה (בלי קריאת API)
+התוכנה מייצאת חבילת עבודה לסוכן חיצוני ומייבאת ממנו spec, בלי לקרוא ל-Claude ובלי רשת. שורת הפקודה:
+
+```bash
+python -m sketch2cad.bridge export <תיקיית פרויקט או שרטוט> --out <תיקייה> [--request "..."]
+python -m sketch2cad.bridge import <תשובה.json> --drawing <תיקיית שרטוט> [--apply]
+```
+
+הייצוא כותב מקורות (סקיצה, תמונות, PDF), את `spec.json` הנוכחי אם יש, שורות קטלוג, את פורמט ה-spec, תצוגה מסומנת אם יש, ו-`manifest.json`. הסוכן מחזיר מעטפת `{spec, assumptions, questions, changes}`. הייבוא מאמת, מריץ את הבדיקות ההנדסיות, ומרנדר לתיקיית ניסיון בלבד. בלי `--apply` קובץ ה-spec שבפרויקט לא משתנה. פירוט: [docs/BRIDGE.md](docs/BRIDGE.md).
+
+**אזהרה:** חבילה עם שרטוטי לקוחות נשארת אצל המשתמש. לא מכניסים אותה לריפו הציבורי.
+
 ## בדיקות
 ```bash
 pip install -r requirements.txt
