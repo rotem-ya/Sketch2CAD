@@ -3,10 +3,10 @@
 The program does the mechanical work. An agent outside this program reads the package and returns
 a spec. This module does not call a model API and does not use the network.
 
-    python -m sketch2cad.bridge export FOLDER --out DIR [--drawing CODE]
+    python -m sketch2cad.bridge export FOLDER (--out DIR | --to-outbox) [--drawing CODE]
         [--request TEXT | --request-file PATH]
-    python -m sketch2cad.bridge import REPLY.json --drawing FOLDER [--trial DIR] [--apply]
-        [--package DIR]
+    python -m sketch2cad.bridge import (REPLY.json | --from-inbox) --drawing FOLDER
+        [--trial DIR] [--apply] [--package DIR]
 
 `FOLDER` is a project folder (`project.json`) or a drawing folder (`document.json`).
 Import renders only into the trial folder. `--apply` replaces `spec.json` after a successful render,
@@ -29,6 +29,9 @@ from .documents import DOC_FILE, Document, list_documents
 from .projects import PROJECT_FILE, Project
 
 SPEC_HISTORY = "spec_history"          # same folder app.backup_spec writes, so undo keeps working
+EXCHANGE_OUTBOX = "agent_exchange/outbox"   # work packages, relative to the project folder
+EXCHANGE_INBOX = "agent_exchange/inbox"     # agent reply JSON files, newest file is imported
+EXCHANGE = {"outbox": EXCHANGE_OUTBOX, "inbox": EXCHANGE_INBOX}
 SOURCE_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tif", ".tiff", ".pdf"}
 SECRET_NAMES = {"settings.json", "data_home.txt", ".env", "credentials.json", "secrets.json"}
 SECRET_MARKERS = (b"anthropic_api_key", b"ANTHROPIC_API_KEY", b"sk-ant-")
@@ -195,7 +198,9 @@ def _agent_text() -> str:
         "- `sources/` — sketches, photos and PDFs\n"
         "- `preview.png` — current sheet; hand markings are already drawn on it when the engineer marked it\n"
         "- `request.txt` — what to change, when a request was included\n"
-        "- `manifest.json` — hashes, units, language, file names, and the return envelope\n\n"
+        "- `manifest.json` — hashes, units, language, file names, the return envelope, and the exchange folders\n"
+        "- Put the return JSON in the project folder's `agent_exchange/inbox/` "
+        "(the newest `*.json` file there is the one that is imported)\n\n"
         "## Return envelope\n"
         "```json\n"
         f"{envelope}\n"
@@ -231,6 +236,36 @@ def _assert_no_secrets(root: Path) -> None:
     for path in root.rglob("*"):
         if path.is_file() and _has_secret(path.read_bytes()):
             raise BridgeError(f"refusing to write the package: {path.name} contains a secret marker")
+
+
+def _project_of(folder: Path | str) -> Project:
+    """A project folder, or the project that contains a drawing folder."""
+    folder = Path(folder)
+    if (folder / PROJECT_FILE).is_file():
+        return Project.load(folder)
+    if (folder / DOC_FILE).is_file():
+        return _project_above(Document.load(folder))
+    raise BridgeError(f"folder has neither {PROJECT_FILE} nor {DOC_FILE}")
+
+
+def export_to_outbox(folder: Path | str, *, drawing: str | None = None, request: str = "") -> Path:
+    """Write one work package under `<project>/agent_exchange/outbox/<time>_<code>/`."""
+    project, doc = open_drawing(folder, drawing)
+    dest = project.path / EXCHANGE_OUTBOX / f"{datetime.now():%Y%m%d_%H%M%S_%f}_{doc.code}"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    (project.path / EXCHANGE_INBOX).mkdir(parents=True, exist_ok=True)
+    return export_package(doc.path, dest, request=request)
+
+
+def latest_inbox_reply(project_dir: Path | str) -> Path:
+    """The newest `*.json` file in the project's agent inbox. Raises BridgeError when there is none."""
+    project = _project_of(project_dir)
+    inbox = project.path / EXCHANGE_INBOX
+    files = sorted(inbox.glob("*.json")) if inbox.is_dir() else []
+    files = [path for path in files if path.is_file()]
+    if not files:
+        raise BridgeError(f"no reply in {inbox}")
+    return max(files, key=lambda path: (path.stat().st_mtime, path.name))
 
 
 def export_package(folder: Path | str, out: Path | str, *, drawing: str | None = None,
@@ -311,6 +346,7 @@ def _fill_package(project: Project, doc: Document, out: Path, request: str) -> N
         "return_envelope": RETURN_ENVELOPE,
         "precision_rules": list(PRECISION_RULES),
         "precision_source": {"en": PAPIS_NOTE_EN, "he": PAPIS_NOTE_HE},
+        "exchange": dict(EXCHANGE),
     }
     (out / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
                                        encoding="utf-8")
@@ -378,6 +414,7 @@ def _empty_report(trial: Path) -> dict:
         "backup": None,
         "element_count": 0,
         "trial_dir": str(trial),
+        "dwg": {"produced": False, "reason": "not rendered"},
         "precision_rules": list(PRECISION_RULES),
         "precision_source": {"en": PAPIS_NOTE_EN, "he": PAPIS_NOTE_HE},
     }
@@ -451,7 +488,7 @@ def import_reply(reply_path: Path | str, drawing: Path | str, *, package: Path |
     try:
         from .drawing import render
         rendered = render(spec, trial, "trial", project=project, document=doc, catalog=catalog,
-                          formats=("dxf", "pdf", "png"))
+                          formats=("dxf", "pdf", "png", "dwg"))
     except Exception as exc:  # noqa: BLE001 - a spec that does not render must not replace spec.json
         report["errors"].append(f"render failed: {exc}")
         _write_report(trial, report)
@@ -461,12 +498,22 @@ def import_reply(reply_path: Path | str, drawing: Path | str, *, package: Path |
     report["render_warnings"] = list(rendered.get("warnings") or [])
     report["outputs"] = {key: Path(value).name for key, value in rendered.items()
                          if key != "warnings" and isinstance(value, Path)}
+    report["dwg"] = _dwg_status(rendered, report["render_warnings"])
     if apply:
         report["backup"] = backup_spec(doc)
         write_spec(doc, spec)
         report["applied"] = True
     _write_report(trial, report)
     return report
+
+
+def _dwg_status(rendered: dict, warnings: list[str]) -> dict:
+    """Whether trial.dwg was written. A missing converter is a skip, not a failed import."""
+    dwg = rendered.get("dwg")
+    if isinstance(dwg, Path) and dwg.is_file():
+        return {"produced": True, "file": dwg.name}
+    reason = next((item for item in warnings if item.startswith("DWG skipped")), "DWG was not written")
+    return {"produced": False, "reason": reason}
 
 
 def parse_agent_reply(text: str) -> dict:
@@ -511,12 +558,16 @@ def main(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="cmd", required=True)
     export_cmd = sub.add_parser("export", help="write a work package for one drawing")
     export_cmd.add_argument("folder", help="project folder or drawing folder")
-    export_cmd.add_argument("--out", required=True, help="empty folder to create the package in")
+    export_cmd.add_argument("--out", help="empty folder to create the package in")
+    export_cmd.add_argument("--to-outbox", action="store_true",
+                            help="write the package under <project>/agent_exchange/outbox/")
     export_cmd.add_argument("--drawing", help="document code, when folder is a project with several drawings")
     export_cmd.add_argument("--request", default="", help="revision request written to request.txt")
     export_cmd.add_argument("--request-file", help="read the revision request from this text file")
     import_cmd = sub.add_parser("import", help="validate, check and render a reply into a trial folder")
-    import_cmd.add_argument("reply", help="agent reply, a JSON envelope")
+    import_cmd.add_argument("reply", nargs="?", help="agent reply, a JSON envelope")
+    import_cmd.add_argument("--from-inbox", action="store_true",
+                            help="use the newest JSON file in <project>/agent_exchange/inbox/")
     import_cmd.add_argument("--drawing", required=True, help="drawing folder (document.json)")
     import_cmd.add_argument("--package", help="work package folder, for units and language when there is no spec")
     import_cmd.add_argument("--trial", help="trial output folder (default: <drawing>/bridge_trials/<time>)")
@@ -527,13 +578,25 @@ def main(argv: list[str] | None = None) -> int:
         if args.cmd == "export":
             if args.request and args.request_file:
                 raise BridgeError("pass only one of --request and --request-file")
+            if args.to_outbox and args.out:
+                raise BridgeError("pass only one of --out and --to-outbox")
             request = args.request
             if args.request_file:
                 request = Path(args.request_file).read_text(encoding="utf-8")
-            package = export_package(args.folder, args.out, drawing=args.drawing, request=request)
+            if args.to_outbox:
+                package = export_to_outbox(args.folder, drawing=args.drawing, request=request)
+            elif args.out:
+                package = export_package(args.folder, args.out, drawing=args.drawing, request=request)
+            else:
+                raise BridgeError("pass --out or --to-outbox")
             print(package)
             return 0
-        report = import_reply(args.reply, args.drawing, package=args.package, trial=args.trial, apply=args.apply)
+        if args.from_inbox and args.reply:
+            raise BridgeError("pass only one of a reply file and --from-inbox")
+        reply = latest_inbox_reply(args.drawing) if args.from_inbox else args.reply
+        if not reply:
+            raise BridgeError("pass a reply file or --from-inbox")
+        report = import_reply(reply, args.drawing, package=args.package, trial=args.trial, apply=args.apply)
     except BridgeError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2

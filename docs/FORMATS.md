@@ -123,6 +123,26 @@ project_name_he, client, date, scale, drawn, checked + anything in `sheet.fields
 | `sketch2cad.typical` | `list_typicals()`, `generate(name, params, catalog=None) -> spec` | riser_connection, trench_to_manhole, valve_in_line |
 | `sketch2cad.ai.sketch` | `draft_spec_from_images(paths, notes, api_key, *, catalog, units, language) -> Draft` | `Draft.spec`, `.assumptions`, `.questions`, `.warnings` |
 | `sketch2cad.search` | `store_content(doc, name, text)` | extracted file text kept in `content.txt` for the index |
+| `sketch2cad.bridge` | `export_to_outbox(folder, *, drawing, request)`, `latest_inbox_reply(project_dir)`, `import_reply(reply, drawing, *, apply)` | package path / reply path / report dict |
+
+## 5. Agent exchange – `<project>/agent_exchange/`
+
+The drawing program does not call a model. It leaves a work package for an outside agent and reads the agent's reply back.
+
+```text
+<project>/
+    agent_exchange/
+        outbox/<YYYYMMDD_HHMMSS_ffffff>_<document code>/    # one work package (see docs/BRIDGE.md)
+        inbox/*.json                                        # agent replies; the newest file is imported
+```
+
+`export --to-outbox` creates both folders and writes the package into `outbox`. The agent puts one JSON envelope (`spec`, `changes`, `assumptions`, `questions`) in `inbox`. `import --from-inbox` uses the newest `*.json` there. Every package `manifest.json` repeats the relative folders:
+
+```json
+"exchange": {"outbox": "agent_exchange/outbox", "inbox": "agent_exchange/inbox"}
+```
+
+Paths are relative to the project folder. A trial import does not change `spec.json`. `--apply` replaces it only after the trial render succeeded, and keeps the previous file in `spec_history/`. A DWG is written next to the trial DXF when a converter is installed; without one, the report says `dwg.produced: false` and the import still succeeds.
 
 ### Text rules (verified in AutoCAD)
 - DXF/DWG: Hebrew stored in **logical order**; Hebrew table cells as MTEXT `\pxqr;` right-aligned.

@@ -254,6 +254,77 @@ def test_secret_reply_is_refused_without_copying_it(tmp_path):
     assert (doc.path / "spec.json").read_bytes() == original
 
 
+def test_outbox_and_inbox_do_not_apply_without_a_flag(tmp_path):
+    project, doc = _drawing(tmp_path, PIPE)
+    spec_path = doc.path / "spec.json"
+    original = spec_path.read_bytes()
+    package = bridge.export_to_outbox(doc.path, request="keep the pipe")
+    manifest = json.loads((package / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["exchange"] == {"outbox": "agent_exchange/outbox", "inbox": "agent_exchange/inbox"}
+    assert package.parent == project.path / "agent_exchange" / "outbox"
+    assert (package / "request.txt").read_text(encoding="utf-8").startswith("keep the pipe")
+    assert (project.path / "agent_exchange" / "inbox").is_dir()
+    with pytest.raises(BridgeError, match="no reply"):
+        bridge.latest_inbox_reply(project.path)
+    inbox = project.path / "agent_exchange" / "inbox"
+    older = inbox / "older.json"
+    newer = inbox / "newer.json"
+    older.write_text("{}", encoding="utf-8")
+    newer.write_text(json.dumps({"spec": PIPE, "changes": [{"en": "none", "he": "אין"}],
+                                 "assumptions": [], "questions": []}), encoding="utf-8")
+    os.utime(older, (1_000, 1_000))
+    os.utime(newer, (2_000, 2_000))
+    assert bridge.latest_inbox_reply(doc.path) == newer
+    report = import_reply(bridge.latest_inbox_reply(project.path), doc.path, trial=tmp_path / "trial", apply=False)
+    assert report["ok"] is True and report["applied"] is False
+    assert spec_path.read_bytes() == original
+    assert not (doc.path / "spec_history").exists()
+
+
+def test_import_skips_dwg_when_no_converter(tmp_path, monkeypatch):
+    from sketch2cad.io.oda import ConverterNotFound
+
+    def missing(*_args, **_kwargs):
+        raise ConverterNotFound("No DWG converter found.")
+
+    monkeypatch.setattr("sketch2cad.io.oda.convert", missing)
+    _project, doc = _drawing(tmp_path, PIPE)
+    reply = tmp_path / "reply.json"
+    reply.write_text(json.dumps({"spec": PIPE, "changes": [], "assumptions": [], "questions": []}), encoding="utf-8")
+    original = (doc.path / "spec.json").read_bytes()
+    report = import_reply(reply, doc.path, trial=tmp_path / "trial", apply=False)
+    assert report["ok"] is True and report["applied"] is False
+    assert report["dwg"]["produced"] is False
+    assert report["dwg"]["reason"].startswith("DWG skipped")
+    assert (tmp_path / "trial" / "trial.dxf").is_file()
+    assert not (tmp_path / "trial" / "trial.dwg").exists()
+    assert (doc.path / "spec.json").read_bytes() == original
+
+
+def test_cli_to_outbox_and_from_inbox(tmp_path):
+    project, doc = _drawing(tmp_path, PIPE)
+    env = dict(os.environ)
+    env["PYTHONPATH"] = str(ROOT)
+    env["SKETCH2CAD_HOME"] = str(tmp_path / "home")
+    proc = subprocess.run(
+        [sys.executable, "-m", "sketch2cad.bridge", "export", str(doc.path), "--to-outbox", "--request", "note"],
+        cwd=ROOT, env=env, capture_output=True, text=True, check=False)
+    assert proc.returncode == 0, proc.stderr
+    package = Path(proc.stdout.strip())
+    assert (package / "manifest.json").is_file() and (package / "request.txt").is_file()
+    inbox = project.path / "agent_exchange" / "inbox"
+    (inbox / "reply.json").write_text(json.dumps({"spec": PIPE}), encoding="utf-8")
+    original = (doc.path / "spec.json").read_bytes()
+    proc = subprocess.run(
+        [sys.executable, "-m", "sketch2cad.bridge", "import", "--from-inbox", "--drawing", str(doc.path),
+         "--trial", str(tmp_path / "trial")],
+        cwd=ROOT, env=env, capture_output=True, text=True, check=False)
+    assert proc.returncode == 0, proc.stderr
+    assert "applied" not in proc.stdout
+    assert (doc.path / "spec.json").read_bytes() == original
+    assert not (doc.path / "spec_history").exists()
+
+
 def test_bridge_calls_do_not_import_anthropic(tmp_path):
     sys.modules.pop("anthropic", None)
     _project, doc = _drawing(tmp_path, PIPE)

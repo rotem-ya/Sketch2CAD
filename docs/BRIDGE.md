@@ -12,7 +12,10 @@
 
 ```bash
 python -m sketch2cad.bridge export <תיקייה> --out <חבילה> [--drawing <קוד>] [--request "..."]
+python -m sketch2cad.bridge export <תיקייה> --to-outbox [--drawing <קוד>] [--request "..."]
 ```
+
+`--to-outbox` כותב את החבילה אל `<פרויקט>/agent_exchange/outbox/<זמן>_<קוד>/` ויוצר גם את `agent_exchange/inbox/`. בממשק, בתוך «סימון ותיקון לפי בקשה», הכפתור «שלח לסוכן» עושה את זה עם הטקסט משדה «מה לשנות» (אם השדה ריק נפתח דיאלוג קצר). הכפתור לא תלוי במפתח API.
 
 `<תיקייה>` היא תיקיית פרויקט (`project.json`) או תיקיית שרטוט (`document.json`). בפרויקט עם יותר משרטוט אחד חובה `--drawing`.
 
@@ -35,7 +38,12 @@ python -m sketch2cad.bridge export <תיקייה> --out <חבילה> [--drawing 
 
 ```bash
 python -m sketch2cad.bridge import <תשובה.json> --drawing <תיקיית שרטוט> [--trial <תיקייה>] [--apply]
+python -m sketch2cad.bridge import --from-inbox --drawing <תיקיית שרטוט> [--trial <תיקייה>] [--apply]
 ```
+
+`--from-inbox` קורא את קובץ ה-JSON החדש ביותר ב-`<פרויקט>/agent_exchange/inbox/`. בממשק, «קבל מהסוכן» מריץ את זה בלי `--apply`, מציג בדיקות ואזהרות, ומחליף את ה-spec רק אחרי «החל על השרטוט». אחרי ההחלה השרטוט מופק מחדש לתיקיית המסמך.
+
+אם יש ממיר DWG, תיקיית הניסיון מקבלת גם `trial.dwg`. בלי ממיר הדוח רושם `dwg.produced: false` והסיבה, והייבוא נשאר הצליח.
 
 התשובה היא אובייקט JSON, גם בתוך גדר ` ```json `. המעטפת:
 
@@ -43,7 +51,7 @@ python -m sketch2cad.bridge import <תשובה.json> --drawing <תיקיית ש�
 {"spec": {}, "changes": [{"en": "", "he": ""}], "assumptions": [{"en": "", "he": ""}], "questions": [{"en": "", "he": ""}]}
 ```
 
-הייבוא קורא ל-`parse_reply` ול-`normalize_spec`, מריץ `run_checks`, ומרנדר DXF, PDF ו-PNG לתיקיית הניסיון בלבד. `report.json` באותה תיקייה מכיל ממצאי בדיקות, אזהרות, קבצי פלט, שגיאות, ואת כללי הדיוק.
+הייבוא קורא ל-`parse_reply` ול-`normalize_spec`, מריץ `run_checks`, ומרנדר DXF, PDF, PNG ו-DWG לתיקיית הניסיון. `report.json` באותה תיקייה מכיל ממצאי בדיקות, אזהרות, קבצי פלט, שגיאות, ואת כללי הדיוק.
 
 `--apply` פועל רק אחרי רינדור שהצליח: `spec.json` הקודם מועתק ל-`spec_history/spec_<זמן>.json` (אותה תבנית שהמסך "בטל תיקון אחרון" משחזר ממנה), ואז נכתב ה-spec המאומת. בלי הדגל, ובכל כשל, הקובץ הקיים לא משתנה. תוצרי הרינדור לא מועתקים לתיקיית השרטוט.
 
