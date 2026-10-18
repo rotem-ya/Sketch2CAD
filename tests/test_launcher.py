@@ -1,25 +1,31 @@
-"""The desktop launcher: find a browser, start and watch the server, stop it when the window closes,
-report a server that did not start, and the idle timer that stops a server nobody looks at."""
+"""The background launcher: serve (keep the server running, restart it when it falls, give up after repeated
+failures), open (start if needed, then the browser), stop (supervisor first), and the update command."""
 import pytest
 
-from sketch2cad import launcher
+from sketch2cad import launcher, updater
 
 
 @pytest.fixture(autouse=True)
 def isolated_home(tmp_path, monkeypatch):
     monkeypatch.setenv("SKETCH2CAD_HOME", str(tmp_path / "home"))
     monkeypatch.setattr(launcher, "_sleep", lambda s: None)
+    monkeypatch.setattr(launcher, "START_TIMEOUT", 0)        # wait_alive never waits on the clock
 
 
 class FakeProc:
-    """poll() returns the exit code after `exits_after` polls (or after terminate())."""
-    def __init__(self, exits_after=None, code=0):
-        self.polls, self.exits_after, self.code = 0, exits_after, code
+    """poll() returns the exit code after `exits_after` polls (or after terminate()); `interrupt_at` raises
+    KeyboardInterrupt on that poll, like Ctrl+C in a console."""
+    def __init__(self, exits_after=None, code=0, interrupt_at=None, pid=100):
+        self.polls, self.exits_after, self.code, self.interrupt_at, self.pid = 0, exits_after, code, interrupt_at, pid
         self.terminated = self.killed = False
+        self.returncode = None
 
     def poll(self):
         self.polls += 1
+        if self.interrupt_at is not None and self.polls == self.interrupt_at:
+            raise KeyboardInterrupt
         if self.terminated or (self.exits_after is not None and self.polls > self.exits_after):
+            self.returncode = self.code
             return self.code
         return None
 
@@ -33,81 +39,116 @@ class FakeProc:
         return self.code
 
 
-def test_find_browser_override_known_paths_then_none(tmp_path, monkeypatch):
-    exe = tmp_path / "msedge.exe"
-    exe.write_bytes(b"")
-    monkeypatch.setenv("SKETCH2CAD_BROWSER", str(exe))
-    assert launcher.find_browser() == str(exe)
-    monkeypatch.delenv("SKETCH2CAD_BROWSER")
-    monkeypatch.setattr(launcher, "BROWSER_PATHS", (str(tmp_path / "missing.exe"), str(exe)))
-    monkeypatch.setattr(launcher, "BROWSER_NAMES", ())
-    assert launcher.find_browser() == str(exe)
-    monkeypatch.setattr(launcher, "BROWSER_PATHS", ("%NoSuchVariable%\\x.exe",))
-    assert launcher.find_browser() is None
+def _alive(monkeypatch, answers):
+    seq = iter(answers)
+    monkeypatch.setattr(launcher, "server_alive", lambda port=launcher.PORT, timeout=1.0: next(seq, answers[-1]))
 
 
-def _wire(monkeypatch, server, window, alive):
-    seq = iter(alive)
-    calls = {}
-    monkeypatch.setattr(launcher, "server_alive", lambda port=launcher.PORT, timeout=1.0: next(seq, True))
-    monkeypatch.setattr(launcher, "start_server",
-                        lambda port=launcher.PORT, log=None: calls.setdefault("started", server))
-    monkeypatch.setattr(launcher, "open_window",
-                        lambda target, port=launcher.PORT: calls.setdefault("url", target) and window)
-    return calls
+def _servers(monkeypatch, procs):
+    it = iter(procs)
+    started = []
+    def fake_start(port=launcher.PORT, log_handle=None):
+        started.append(next(it))
+        return started[-1]
+    monkeypatch.setattr(launcher, "start_server", fake_start)
+    return started
 
 
-def test_window_closed_stops_the_server(monkeypatch):
-    server, window = FakeProc(), FakeProc(exits_after=2)
-    calls = _wire(monkeypatch, server, window, [False, False, True])
-    assert launcher.main() == 0
-    assert calls["url"] == "http://localhost:8517" and calls["started"] is server
-    assert server.terminated and not window.terminated
+# ------------------------------------------------------------------------------------------- serve
+def test_serve_restarts_a_fallen_server_and_stops_on_interrupt(monkeypatch):
+    crashed = FakeProc(exits_after=3, code=1, pid=11)              # answers, then dies
+    second = FakeProc(interrupt_at=4, pid=12)                      # answers, then Ctrl+C
+    started = _servers(monkeypatch, [crashed, second])
+    # not running -> first server answers -> (after the crash) nobody answers -> second answers
+    _alive(monkeypatch, [False, True, False, True])
+    assert launcher.serve() == 0
+    assert started == [crashed, second] and second.terminated
+    assert not launcher.pid_file().exists()
+    text = launcher.log_file().read_text(encoding="utf-8")
+    assert "server 11 answers" in text and "exited with code 1" in text and "restarting in 2 s" in text
+    assert "supervisor stopped" in text
 
 
-def test_server_stopped_closes_the_window(monkeypatch):
-    server, window = FakeProc(exits_after=3), FakeProc()
-    _wire(monkeypatch, server, window, [False, True])
-    assert launcher.main() == 0
-    assert window.terminated and not server.terminated
+def test_serve_does_nothing_when_a_server_already_answers(monkeypatch):
+    started = _servers(monkeypatch, [])
+    _alive(monkeypatch, [True])
+    assert launcher.serve() == 0 and started == [] and not launcher.pid_file().exists()
 
 
-def test_default_browser_waits_for_the_server(monkeypatch):
-    server = FakeProc(exits_after=2)
-    _wire(monkeypatch, server, None, [False, True])          # no window process to watch
-    assert launcher.main() == 0 and not server.terminated
-
-
-def test_running_server_gets_another_window_only(monkeypatch):
-    window = FakeProc(exits_after=0)
-    calls = _wire(monkeypatch, FakeProc(), window, [True])
-    assert launcher.main() == 0
-    assert "started" not in calls and calls["url"] == "http://localhost:8517"
-
-
-def test_server_that_did_not_start_is_reported(monkeypatch):
-    server = FakeProc(exits_after=0, code=1)
-    _wire(monkeypatch, server, None, [False, False, False])
+def test_serve_gives_up_after_repeated_failed_starts(monkeypatch):
+    procs = [FakeProc(exits_after=0, code=1, pid=20 + i) for i in range(launcher.MAX_FAILED_STARTS)]
+    started = _servers(monkeypatch, procs)
+    _alive(monkeypatch, [False])
     errors = []
     monkeypatch.setattr(launcher, "report_error", errors.append)
-    log = launcher.log_file()
-    log.write_text("Port 8517 is already in use", encoding="utf-8")
-    assert launcher.main() == 1
-    assert "already in use" in errors[0] and str(log) in errors[0]
+    assert launcher.serve() == 1
+    assert len(started) == launcher.MAX_FAILED_STARTS and "5 attempts" in errors[0]
+    assert str(launcher.log_file()) in errors[0]
 
 
-def test_idle_timer():
-    t = launcher.IdleTimer(grace=3, startup=10)
-    assert t.tick(0) is False                           # the first window is still opening
-    assert t.tick(1) is False
-    assert [t.tick(0), t.tick(0)] == [False, False]     # closed: the grace period runs
-    assert t.tick(1) is False                           # a window came back (F5): reset
-    assert [t.tick(0), t.tick(0), t.tick(0)] == [False, False, True]
-    never = launcher.IdleTimer(grace=3, startup=10)
-    assert [never.tick(0) for _ in range(9)] == [False] * 9
-    assert never.tick(0) is True                        # no window ever came
+def test_serve_yields_to_another_server_on_the_port(monkeypatch):
+    started = _servers(monkeypatch, [FakeProc(exits_after=2, code=1)])
+    _alive(monkeypatch, [False, True, True])                       # after the crash someone else answers
+    assert launcher.serve() == 0 and len(started) == 1
+    assert "another server answers" in launcher.log_file().read_text(encoding="utf-8")
 
 
-def test_watchdog_only_under_the_launcher(monkeypatch):
-    monkeypatch.delenv("SKETCH2CAD_LAUNCHER", raising=False)
-    assert launcher.start_idle_watchdog() is False
+# -------------------------------------------------------------------------------------------- open
+def test_open_starts_the_background_server_then_the_browser(monkeypatch):
+    calls = []
+    monkeypatch.setattr(launcher, "spawn_serve", lambda port=launcher.PORT: calls.append("serve"))
+    monkeypatch.setattr(launcher.webbrowser, "open", lambda u: calls.append(u))
+    _alive(monkeypatch, [False, True])
+    assert launcher.main([]) == 0 and calls == ["serve", "http://localhost:8517"]
+
+
+def test_open_with_a_running_server_only_opens_the_browser(monkeypatch):
+    calls = []
+    monkeypatch.setattr(launcher, "spawn_serve", lambda port=launcher.PORT: calls.append("serve"))
+    monkeypatch.setattr(launcher.webbrowser, "open", lambda u: calls.append(u))
+    _alive(monkeypatch, [True])
+    assert launcher.main([]) == 0 and calls == ["http://localhost:8517"]
+
+
+def test_open_reports_a_server_that_does_not_come_up(monkeypatch):
+    monkeypatch.setattr(launcher, "spawn_serve", lambda port=launcher.PORT: None)
+    monkeypatch.setattr(launcher.webbrowser, "open", lambda u: pytest.fail("no browser without a server"))
+    errors = []
+    monkeypatch.setattr(launcher, "report_error", errors.append)
+    launcher.log_file().write_text("Port 8517 is already in use", encoding="utf-8")
+    _alive(monkeypatch, [False])
+    assert launcher.main([]) == 1 and "already in use" in errors[0]
+
+
+# -------------------------------------------------------------------------------------- stop/status
+def test_stop_terminates_the_supervisor_from_the_pid_file(monkeypatch, capsys):
+    launcher.pid_file().write_text("4242", encoding="utf-8")
+    killed = []
+    monkeypatch.setattr(launcher, "terminate_pid", killed.append)
+    _alive(monkeypatch, [True, False])
+    assert launcher.main(["--stop"]) == 0 and killed == [4242] and not launcher.pid_file().exists()
+    assert "stopped" in capsys.readouterr().out
+
+
+def test_stop_reports_a_server_it_did_not_start(monkeypatch, capsys):
+    monkeypatch.setattr(launcher, "terminate_pid", lambda pid: pytest.fail("nothing to terminate"))
+    monkeypatch.setattr(launcher.time, "monotonic", iter([0, 100, 200]).__next__)
+    _alive(monkeypatch, [True])
+    assert launcher.main(["--stop"]) == 1 and "run-debug" in capsys.readouterr().out
+
+
+def test_status(monkeypatch, capsys):
+    _alive(monkeypatch, [True])
+    assert launcher.main(["--status"]) == 0 and "running at http://localhost:8517" in capsys.readouterr().out
+    _alive(monkeypatch, [False])
+    assert launcher.main(["--status"]) == 1
+
+
+# ------------------------------------------------------------------------------------------ update
+def test_update_command_stops_the_supervisor_too(monkeypatch, tmp_path):
+    monkeypatch.delenv("SKETCH2CAD_SUPERVISOR_PID", raising=False)
+    assert updater.update_command(77, tmp_path)[-2:] == [str(tmp_path), "77"]
+    monkeypatch.setenv("SKETCH2CAD_SUPERVISOR_PID", "55")
+    assert updater.update_command(77, tmp_path)[-3:] == [str(tmp_path), "77", "55"]
+    monkeypatch.setenv("SKETCH2CAD_SUPERVISOR_PID", "junk")
+    assert updater.update_command(77, tmp_path)[-1] == "77"

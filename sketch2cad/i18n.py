@@ -300,9 +300,6 @@ STRINGS: dict[str, dict[str, str]] = {
                                "the drawing.",
                          "he": "קבצי מייל מטופלים במסך המייל: הוא מוצא את המסמך ומתקן את השרטוט."},
     "open_document": {"en": "Open the document", "he": "פתח את המסמך"},
-    "quit_app": {"en": "Close the program", "he": "סגירת התוכנה"},
-    "quit_done": {"en": "The program was closed - you can close this window.",
-                  "he": "התוכנה נסגרה - אפשר לסגור את החלון."},
     # Claude API errors, explained
     "api_no_credit": {"en": "The office Anthropic account has no credit left, so the AI cannot run. Load credit "
                             "at console.anthropic.com (Plans & Billing) and try again.",

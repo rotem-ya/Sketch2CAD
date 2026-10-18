@@ -8,7 +8,6 @@ import os
 import shutil
 import sys
 import tempfile
-import threading
 from pathlib import Path
 
 if __name__ == "__main__" and "streamlit" not in sys.modules:
@@ -36,16 +35,6 @@ from sketch2cad.projects import Project, create_project, is_project_folder, relo
 
 ICON = Path(__file__).with_name("icon.png")
 st.set_page_config(page_title="Sketch2CAD", page_icon=str(ICON) if ICON.exists() else None, layout="wide")
-
-
-@st.cache_resource
-def _idle_watchdog() -> bool:
-    """Started by the desktop launcher: the server stops once all its windows have been closed for a while."""
-    from sketch2cad.launcher import start_idle_watchdog
-    return start_idle_watchdog()
-
-
-_idle_watchdog()
 
 if os.name == "nt":
     from sketch2cad.native import disable_console_quick_edit  # noqa: E402
@@ -288,9 +277,6 @@ with st.sidebar:
                   width="stretch")
     st.divider()
     update_box()
-    if st.button(f"⏻ {T('quit_app')}", width="stretch", key="quit_app"):
-        st.info(T("quit_done"))
-        threading.Timer(1.0, os._exit, [0]).start()     # after this run has reached the browser
 
 
 # ================================================================== pages

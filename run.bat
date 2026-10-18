@@ -1,7 +1,8 @@
 @echo off
-rem Sketch2CAD - start the program. The desktop shortcut does the same without this window.
-rem The app opens in a window of its own (Edge or Chrome in app mode); closing that window stops the program.
-rem Messages go to <data folder>\logs\app.log. To watch them live, start with run-debug.bat instead.
+rem Sketch2CAD - open the program. The desktop shortcut does the same without this window.
+rem The server runs in the background all the time (it starts with Windows); this makes sure it runs and
+rem opens the browser at http://localhost:8517. Messages: <data folder>\logs\app.log.
+rem Other scripts: stop.bat stops the background server, run-debug.bat runs it in a console window.
 cd /d "%~dp0"
 if not exist .venv\Scripts\pythonw.exe call install.bat
 if not exist .venv\Scripts\pythonw.exe (

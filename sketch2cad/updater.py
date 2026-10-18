@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -100,15 +101,24 @@ def apply_update(app_dir: Path = APP_DIR, sha: str | None = None, *, log=print, 
     return sha
 
 
+def update_command(app_pid: int, app_dir: Path = APP_DIR) -> list[str]:
+    """update.bat <app folder> <server pid> [<supervisor pid>]. Under the launcher the supervisor is stopped
+    first (its pid comes in SKETCH2CAD_SUPERVISOR_PID), or it would start the server again mid-update."""
+    cmd = ["cmd", "/c", str(app_dir / "update.bat"), str(app_dir), str(app_pid)]
+    supervisor = os.environ.get("SKETCH2CAD_SUPERVISOR_PID", "").strip()
+    if supervisor.isdigit():
+        cmd.append(supervisor)
+    return cmd
+
+
 def start_update_and_restart(app_pid: int, app_dir: Path = APP_DIR) -> None:
     """Windows: run update.bat in its own console; it stops this app (app_pid), updates and restarts it."""
     flags = subprocess.CREATE_NEW_CONSOLE | subprocess.CREATE_BREAKAWAY_FROM_JOB
     try:
-        subprocess.Popen(["cmd", "/c", str(app_dir / "update.bat"), str(app_dir), str(app_pid)],
-                         creationflags=flags, cwd=tempfile.gettempdir())
+        subprocess.Popen(update_command(app_pid, app_dir), creationflags=flags, cwd=tempfile.gettempdir())
     except OSError:                                        # job objects that forbid breakaway
-        subprocess.Popen(["cmd", "/c", str(app_dir / "update.bat"), str(app_dir), str(app_pid)],
-                         creationflags=subprocess.CREATE_NEW_CONSOLE, cwd=tempfile.gettempdir())
+        subprocess.Popen(update_command(app_pid, app_dir), creationflags=subprocess.CREATE_NEW_CONSOLE,
+                         cwd=tempfile.gettempdir())
 
 
 if __name__ == "__main__":

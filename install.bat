@@ -83,11 +83,16 @@ if not exist "%USERPROFILE%\.streamlit\credentials.toml" (
     >> "%USERPROFILE%\.streamlit\credentials.toml" echo email = ""
 )
 
-rem Desktop shortcut: pythonw (no console window) runs the launcher, which opens the app in its own window.
+rem Desktop shortcut: makes sure the background server runs and opens the browser (a bookmark that heals itself).
 powershell -NoProfile -Command "$s=(New-Object -ComObject WScript.Shell).CreateShortcut([Environment]::GetFolderPath('Desktop')+'\Sketch2CAD.lnk'); $s.TargetPath='%~dp0.venv\Scripts\pythonw.exe'; $s.Arguments='-m sketch2cad.launcher'; $s.WorkingDirectory='%~dp0'; $s.IconLocation='%~dp0app\icon.ico'; $s.Description='Sketch2CAD'; $s.Save()"
+rem Startup folder: the server starts with Windows and stays in the background (restarted by itself when it falls).
+powershell -NoProfile -Command "$s=(New-Object -ComObject WScript.Shell).CreateShortcut([Environment]::GetFolderPath('Startup')+'\Sketch2CAD server.lnk'); $s.TargetPath='%~dp0.venv\Scripts\pythonw.exe'; $s.Arguments='-m sketch2cad.launcher --serve'; $s.WorkingDirectory='%~dp0'; $s.IconLocation='%~dp0app\icon.ico'; $s.Description='Sketch2CAD background server'; $s.Save()"
 
 echo.
-echo Sketch2CAD is installed. Start it from the "Sketch2CAD" shortcut on the desktop (or run.bat):
-echo it opens in a window of its own; closing the window stops the program.
+echo Sketch2CAD is installed. The server runs in the background all the time, also after a restart.
+echo Open it at http://localhost:8517 (save it as a bookmark) or from the "Sketch2CAD" desktop shortcut.
+echo stop.bat stops the background server; uninstall.bat removes the automatic start.
+echo Starting it now - the browser opens in a moment.
+start "" "%~dp0.venv\Scripts\pythonw.exe" -m sketch2cad.launcher
 echo For DWG files also install ODA File Converter: https://www.opendesign.com/guestfiles/oda_file_converter
 pause

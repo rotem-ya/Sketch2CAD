@@ -1,7 +1,7 @@
 @echo off
 rem Sketch2CAD - start with a console window that shows every message (for troubleshooting).
-rem The normal start is the desktop shortcut or run.bat: the app opens in a window of its own.
-rem Keep this window open while working: closing it stops the program.
+rem Normally the server runs in the background (run.bat / the desktop shortcut); run stop.bat first,
+rem otherwise the port is taken. Keep this window open while working: closing it stops the program.
 chcp 65001 >nul
 cd /d "%~dp0"
 if not exist .venv\Scripts\python.exe call install.bat
