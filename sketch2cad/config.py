@@ -79,7 +79,6 @@ class Settings:
     ui_language: str = "he"                    # "he" | "en"
     default_projects_root: str = ""            # where new project folders are created by default
     oda_converter_path: str = ""               # ODAFileConverter.exe (DWG <-> DXF)
-    anthropic_api_key: str = ""                # Claude API (AI sketch reading, later stage)
     projects: list[str] = field(default_factory=list)   # registered project folders
 
     @classmethod

@@ -22,7 +22,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from .ai.sketch import _catalog_lines, _spec_format, normalize_spec, parse_reply
+from .spec import _catalog_lines, _spec_format, normalize_spec, parse_reply
 from .catalog import Catalog, load_catalog
 from .checks import items_used, run_checks
 from .documents import DOC_FILE, Document, list_documents
@@ -41,7 +41,7 @@ RETURN_ENVELOPE = {
     "assumptions": [{"en": "", "he": ""}],
     "questions": [{"en": "", "he": ""}],
 }
-# Standing revision rules, same obligations as sketch2cad/ai/revise.py SYSTEM.
+# Standing revision rules for the outside agent.
 # There is no Papis precision document in the repository; see PAPIS_NOTE.
 PRECISION_RULES = (
     "Change only what the request and the markings ask for. Keep every other element, id, "

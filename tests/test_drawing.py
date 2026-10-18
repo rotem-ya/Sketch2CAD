@@ -144,7 +144,7 @@ ALL_TYPES = [
 
 def test_circle_passes_validation_and_renders(tmp_path):
     """A documented circle (at, radius) is kept by normalize_spec and drawn, with no drop warning."""
-    from sketch2cad.ai.sketch import normalize_spec
+    from sketch2cad.spec import normalize_spec
     element = {"id": "circle-25", "type": "circle", "status": "existing", "at": [365, 1150], "radius": 22}
     spec, warnings = normalize_spec({"units": "mm", "scale": 15, "elements": [dict(element)]})
     assert spec["elements"] == [element]

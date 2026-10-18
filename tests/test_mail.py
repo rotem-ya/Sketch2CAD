@@ -1,5 +1,4 @@
-"""E-mail intake: reading .eml and .msg, the newest message and its points, matching the document, filing,
-the revision request with the reviewer's attachments, and readable API errors."""
+"""E-mail intake: reading .eml and .msg, the newest message and its points, matching the document, filing."""
 import io
 import json
 import struct
@@ -7,7 +6,6 @@ from datetime import datetime, timezone
 from email.message import EmailMessage
 
 import pytest
-from test_features import _white_png, fake_client
 
 from sketch2cad import mail, search
 from sketch2cad.documents import Document, create_document
@@ -192,56 +190,3 @@ def test_file_mail_saves_sources_and_indexes_the_text(tmp_path):
     assert again.mail == "sources/review_1.eml"
 
 
-# ------------------------------------------------------------------------------------------- the API
-def test_revise_spec_sends_the_reviewer_attachments(tmp_path):
-    import pymupdf
-
-    from sketch2cad.ai import revise
-    from sketch2cad.catalog import load_catalog
-    pdf = tmp_path / "SITE20117_Drawings 33.pdf"
-    doc = pymupdf.open()
-    doc.new_page()
-    doc.save(pdf)
-    spec = {"units": "mm", "scale": 20,
-            "elements": [{"id": "t1", "type": "trench_drain", "points": [[0, 0], [3000, 0]]}]}
-    reply = {"spec": spec, "changes": [{"en": "Channel replaced", "he": "התעלה הוחלפה"}]}
-    captured = {}
-    rev = revise.revise_spec(spec, "Replace the trench drain with the approved product",
-                             image=_white_png(tmp_path / "sheet.png"), catalog=load_catalog(),
-                             attachments=[pdf, _white_png(tmp_path / "m.png")],
-                             client=fake_client(json.dumps(reply), captured))
-    blocks = captured["messages"][0]["content"]
-    assert blocks[0]["type"] == "image" and "no markings" in blocks[1]["text"]          # the sheet first
-    assert blocks[2]["text"].endswith("in this order: SITE20117_Drawings 33.pdf, m.png")
-    assert [b["type"] for b in blocks[3:5]] == ["document", "image"] and blocks[3]["title"] == pdf.name
-    assert "Current spec" in blocks[5]["text"] and "approved product" in blocks[6]["text"]
-    assert "reviewer's e-mail" in captured["system"] and rev.warnings == [] and rev.changes[0]["he"]
-
-
-def test_api_errors_are_explained():
-    import anthropic
-    try:
-        import httpx2 as httpx
-    except ImportError:                                       # anthropic < 1.0
-        import httpx
-    from sketch2cad.ai.errors import explain
-    from sketch2cad.i18n import t
-    req = httpx.Request("POST", "https://api.anthropic.com/v1/messages")
-
-    def status(cls, code, body=None):
-        return cls("boom", response=httpx.Response(code, request=req, headers={"request-id": "req_1"}), body=body)
-
-    credit = status(anthropic.BadRequestError, 400, body={"type": "error", "error": {
-        "type": "invalid_request_error", "message": "Your credit balance is too low to access the Anthropic API."}})
-    assert explain(credit) == ("api_no_credit", "Your credit balance is too low to access the Anthropic API. (req_1)")
-    assert explain(status(anthropic.BadRequestError, 400))[0] == "api_rejected"
-    assert explain(status(anthropic.AuthenticationError, 401))[0] == "api_bad_key"
-    assert explain(status(anthropic.PermissionDeniedError, 403))[0] == "api_no_permission"
-    assert explain(status(anthropic.RateLimitError, 429))[0] == "api_rate_limit"
-    assert explain(status(anthropic.InternalServerError, 500))[0] == "api_server"
-    assert explain(anthropic.APIConnectionError(request=req))[0] == "api_offline"
-    assert explain(anthropic.APITimeoutError(request=req))[0] == "api_timeout"
-    assert explain(ValueError("not an API error")) is None
-    for key in ("api_no_credit", "api_bad_key", "api_no_permission", "api_rate_limit", "api_server", "api_offline",
-                "api_timeout", "api_rejected"):
-        assert t(key, "he") != key and t(key, "en") != key and "Anthropic" in t(key, "he")

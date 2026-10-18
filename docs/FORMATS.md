@@ -121,7 +121,7 @@ project_name_he, client, date, scale, drawn, checked + anything in `sheet.fields
 | `sketch2cad.package` | `build_package(project, document, catalog, out_pdf, *, lang, spec)` | path |
 | `sketch2cad.printset` | `build_print_set(project, out_pdf, *, lang, codes, statuses)` | path |
 | `sketch2cad.typical` | `list_typicals()`, `generate(name, params, catalog=None) -> spec` | riser_connection, trench_to_manhole, valve_in_line |
-| `sketch2cad.ai.sketch` | `draft_spec_from_images(paths, notes, api_key, *, catalog, units, language) -> Draft` | `Draft.spec`, `.assumptions`, `.questions`, `.warnings` |
+| `sketch2cad.spec` | `normalize_spec(spec, *, units, language)`, `parse_reply(text)` | spec plus warnings / JSON object |
 | `sketch2cad.search` | `store_content(doc, name, text)` | extracted file text kept in `content.txt` for the index |
 | `sketch2cad.bridge` | `export_to_outbox(folder, *, drawing, request)`, `latest_inbox_reply(project_dir)`, `import_reply(reply, drawing, *, apply)` | package path / reply path / report dict |
 
