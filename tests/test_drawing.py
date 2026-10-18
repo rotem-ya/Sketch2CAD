@@ -142,6 +142,22 @@ ALL_TYPES = [
 ]
 
 
+def test_circle_passes_validation_and_renders(tmp_path):
+    """A documented circle (at, radius) is kept by normalize_spec and drawn, with no drop warning."""
+    from sketch2cad.ai.sketch import normalize_spec
+    element = {"id": "circle-25", "type": "circle", "status": "existing", "at": [365, 1150], "radius": 22}
+    spec, warnings = normalize_spec({"units": "mm", "scale": 15, "elements": [dict(element)]})
+    assert spec["elements"] == [element]
+    assert not any("Dropped" in warning for warning in warnings)
+    res = render(spec, tmp_path, "circle", formats=("dxf",))
+    assert not any("circle" in warning or "Dropped" in warning for warning in res["warnings"])
+    drawn = list(ezdxf.readfile(res["dxf"]).modelspace().query("CIRCLE"))
+    assert len(drawn) == 1
+    assert (drawn[0].dxf.center.x, drawn[0].dxf.center.y) == pytest.approx((365, 1150))
+    assert drawn[0].dxf.radius == pytest.approx(22)
+    assert drawn[0].dxf.layer == "EXISTING"
+
+
 def test_every_element_type_draws(tmp_path):
     elements = [{"id": f"e{i}", "status": ("existing", "new", "proposed")[i % 3], **el}
                 for i, el in enumerate(ALL_TYPES)]

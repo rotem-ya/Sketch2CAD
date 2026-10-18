@@ -702,6 +702,9 @@ def tab_drawing(p: Project, d: Document, cat: Catalog) -> None:
             st.warning(w)
     for kind, msg in ss.pop("rev_msgs", []):
         getattr(st, kind)(msg)
+    notice = ss.pop("agent_notice", None)
+    if notice:
+        getattr(st, notice[0])(notice[1])
     preview = d.path / d.outputs.get("preview", "-")
     if preview.exists():
         st.image(str(preview), width="stretch")
@@ -736,6 +739,79 @@ def run_revision(p: Project, d: Document, spec: dict, cat: Catalog, request: str
     return rev
 
 
+def _agent_send_body() -> None:
+    """Short request when the revision field is empty. Sends only; nothing is applied."""
+    from sketch2cad.bridge import BridgeError, export_to_outbox
+    text = st.text_area(T("agent_request_title"), key="agent_send_text")
+    if st.button(T("agent_request_send"), type="primary", key="agent_send_go"):
+        try:
+            path = export_to_outbox(ss.agent_doc, request=text)
+        except BridgeError as exc:
+            st.error(str(exc))
+            return
+        ss.agent_dialog = None
+        ss.agent_notice = ("success", T("agent_sent").format(path=path))
+        ss.rev_open = True
+        st.rerun()
+
+
+def _agent_receive_body() -> None:
+    """Show the trial report. The spec changes only when the user presses Apply."""
+    from sketch2cad.bridge import import_reply
+    report = ss.agent_report
+    st.caption(T("agent_trial"))
+    if not report.get("ok"):
+        for error in report.get("errors") or []:
+            st.error(error)
+        return
+    st.markdown(T("agent_elements").format(n=report.get("element_count", 0)))
+    dwg = report.get("dwg") or {}
+    if dwg.get("produced"):
+        st.success(T("agent_dwg_ok").format(name=dwg.get("file", "trial.dwg")))
+    else:
+        st.warning(T("agent_dwg_skip").format(reason=dwg.get("reason", "")))
+    for warning in list(report.get("warnings") or []) + list(report.get("render_warnings") or []):
+        if str(warning).startswith("DWG skipped"):
+            continue
+        st.warning(warning)
+    for finding in report.get("checks") or []:
+        text = finding.get(L) or finding.get("en", "")
+        line = f"{finding.get('severity', '')} {finding.get('code', '')}: {text}"
+        if finding.get("severity") == "error":
+            st.error(line)
+        else:
+            st.warning(line)
+    if st.button(T("agent_apply"), type="primary", key="agent_apply_go"):
+        applied = import_reply(ss.agent_reply, ss.agent_doc, apply=True)
+        if not (applied.get("ok") and applied.get("applied")):
+            for error in applied.get("errors") or [T("agent_failed")]:
+                st.error(error)
+            return
+        p = current_project()
+        d = Document.load(ss.agent_doc)
+        try:
+            warnings = render_document(p, d, load_spec(d), load_catalog(p), last_formats(d))
+        except Exception as exc:  # noqa: BLE001 - a spec that does not render is rolled back
+            restore_last_spec(d)
+            st.error(f"{T('revise_failed')}: {exc}")
+            return
+        ss.agent_dialog = None
+        ss.agent_notice = ("success", T("agent_applied"))
+        ss.rev_msgs = [("warning", w) for w in warnings]
+        ss.rev_open = True
+        st.rerun()
+
+
+def _dismiss_agent_dialog() -> None:
+    ss.agent_dialog = None
+
+
+def _open_agent_dialog(kind: str) -> None:
+    title = T("agent_send") if kind == "send" else T("agent_recv")
+    body = _agent_send_body if kind == "send" else _agent_receive_body
+    st.dialog(title, on_dismiss=_dismiss_agent_dialog)(body)()
+
+
 def revise_panel(p: Project, d: Document, spec: dict, cat: Catalog, preview: Path, lang_mode: str) -> None:
     """Mark up the rendered sheet (free pen / straight lines), ask for a change, and re-render in place."""
     from datetime import datetime
@@ -759,6 +835,10 @@ def revise_panel(p: Project, d: Document, spec: dict, cat: Catalog, preview: Pat
         # swallow the first click; an empty request is reported instead
         go = c1.button(f"🛠️ {T('revise_go')}", type="primary", key="rev_go", disabled=not has_key)
         undo = c2.button(f"↶ {T('revise_undo')}", key="rev_undo", disabled=not history)
+        st.caption(T("agent_help"))
+        a1, a2 = st.columns(2)
+        send = a1.button(T("agent_send"), key="agent_send")
+        recv = a2.button(T("agent_recv"), key="agent_recv")
         review = d.path / "ai_revision.json"
         if review.exists():
             data = json.loads(review.read_text(encoding="utf-8"))
@@ -801,6 +881,36 @@ def revise_panel(p: Project, d: Document, spec: dict, cat: Catalog, preview: Pat
             return
         ss.rev_msgs = [("success", T("revise_undone"))] + [("warning", w) for w in warnings]
         st.rerun()
+    if send:
+        ss.rev_open = True
+        if request.strip():
+            from sketch2cad.bridge import BridgeError, export_to_outbox
+            try:
+                path = export_to_outbox(d.path, request=request)
+            except BridgeError as exc:
+                st.error(str(exc))
+            else:
+                st.success(T("agent_sent").format(path=path))
+        else:
+            ss.agent_doc = str(d.path)
+            ss.agent_dialog = "send"
+            st.rerun()
+    if recv:
+        ss.rev_open = True
+        from sketch2cad.bridge import BridgeError, import_reply, latest_inbox_reply
+        try:
+            reply = latest_inbox_reply(p.path)
+            report = import_reply(reply, d.path, apply=False)
+        except BridgeError as exc:
+            st.error(str(exc))
+        else:
+            ss.agent_doc = str(d.path)
+            ss.agent_reply = str(reply)
+            ss.agent_report = report
+            ss.agent_dialog = "receive"
+            st.rerun()
+    if ss.get("agent_dialog") in ("send", "receive") and ss.get("agent_doc") == str(d.path):
+        _open_agent_dialog(ss.agent_dialog)
 
 
 def restore_last_spec(d: Document) -> None:
