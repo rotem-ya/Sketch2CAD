@@ -12,7 +12,7 @@ import pymupdf
 MODEL = "claude-opus-5-5"
 FORMATS_DOC = Path(__file__).resolve().parents[2] / "docs" / "FORMATS.md"
 ELEMENT_TYPES = ("pipe", "bend", "flange", "gate_valve", "connector", "manhole", "trench_drain", "rect",
-                 "polyline", "text", "flow_arrow", "north_arrow", "weld", "break")
+                 "polyline", "text", "flow_arrow", "north_arrow", "weld", "break", "circle")
 IMAGE_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif",
                ".webp": "image/webp"}
 MAX_IMAGE_BYTES = 3_500_000

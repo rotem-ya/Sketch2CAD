@@ -189,9 +189,8 @@ def test_import_example_renders_without_touching_the_spec(tmp_path):
     assert not list(doc.path.glob("*.dxf")) and not (doc.path / "spec_history").exists()
     for fmt in ("dxf", "pdf", "png"):
         assert (trial / report["outputs"][fmt]).stat().st_size > 1000
-    assert any("circle" in warning for warning in report["warnings"])
-    kept = sum(1 for el in example["elements"] if el.get("type") != "circle")
-    assert report["element_count"] == kept and kept == len(example["elements"]) - 1
+    assert not any("Dropped" in warning and "circle" in warning for warning in report["warnings"])
+    assert report["element_count"] == len(example["elements"])
     assert report["changes"][0]["he"] == "נטענה דוגמת הגמל"
     assert "פפיס" in report["precision_source"]["he"]
     assert "Change only what" in report["precision_rules"][0]
