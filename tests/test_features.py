@@ -1,13 +1,12 @@
-"""Catalog, checks, BOM, typical details, submittal package, print set and the AI draft (fake client)."""
+"""Catalog, checks, BOM, typical details, submittal package, print set and markup."""
 import json
-from types import SimpleNamespace
 
 import pymupdf
 import pytest
 
 from sketch2cad import bom, checks, typical
-from sketch2cad.ai import sketch
 from sketch2cad.catalog import Catalog, load_catalog, save_item
+from sketch2cad.spec import ELEMENT_TYPES
 from sketch2cad.documents import create_document
 from sketch2cad.package import build_package
 from sketch2cad.printset import build_print_set
@@ -107,7 +106,7 @@ def test_typicals_generate_valid_specs(cat):
     for name in names:
         spec = typical.generate(name, catalog=cat)
         types = {e["type"] for e in spec["elements"]}
-        assert types <= set(sketch.ELEMENT_TYPES)
+        assert types <= set(ELEMENT_TYPES)
         assert all(l["he"] and l["en"] for l in spec["legend"])
         assert len({e["id"] for e in spec["elements"]}) == len(spec["elements"])
 
@@ -151,79 +150,6 @@ def test_print_set(project_with_doc, tmp_path):
     assert "20117-W-CAMEL-01" in text and "no PDF" in text
     assert "DRAWING SHEET" in pdf[1].get_text()
     assert [t[1].split(" ")[0] for t in pdf.get_toc()] == ["Sheet", "20117-W-CAMEL-01"]
-
-
-# ---------------------------------------------------------------- AI draft (no network)
-class FakeStream:
-    def __init__(self, text, captured, kwargs):
-        captured.update(kwargs)
-        self.message = SimpleNamespace(stop_reason="end_turn", model=sketch.MODEL,
-                                       content=[SimpleNamespace(type="thinking"), SimpleNamespace(type="text", text=text)])
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        return False
-
-    def get_final_message(self):
-        return self.message
-
-
-def fake_client(text, captured):
-    return SimpleNamespace(beta=SimpleNamespace(messages=SimpleNamespace(
-        stream=lambda **kw: FakeStream(text, captured, kw))))
-
-
-def test_ai_draft_parses_and_normalizes(tmp_path, cat):
-    img = tmp_path / "sketch.png"
-    pix = pymupdf.Pixmap(pymupdf.csRGB, pymupdf.IRect(0, 0, 40, 30), False)
-    pix.clear_with(255)
-    pix.save(img)
-    reply = {"spec": {"units": "mm", "elements": [
-        {"type": "pipe", "points": [[0, 0], [1000, 0]], "item": "steel_pipe_6in_sch40"},
-        {"type": "spaceship"}]},
-        "assumptions": [{"en": "Valve height estimated", "he": "גובה המגוף משוער"}], "questions": []}
-    captured = {}
-    draft = sketch.draft_spec_from_images([img], "branch from the left leg", catalog=cat,
-                                          client=fake_client("```json\n" + json.dumps(reply) + "\n```", captured))
-    assert [e["type"] for e in draft.spec["elements"]] == ["pipe"]
-    assert draft.spec["elements"][0]["id"] == "pipe_0"
-    assert draft.warnings and "spaceship" in draft.warnings[0]
-    assert draft.assumptions[0]["he"] == "גובה המגוף משוער"
-    assert captured["model"] == "claude-opus-5-5"
-    assert "avk_0661_dn150" in captured["system"] and "trench_drain" in captured["system"]
-    blocks = captured["messages"][0]["content"]
-    assert blocks[0]["type"] == "image" and "left leg" in blocks[-1]["text"]
-
-
-# ---------------------------------------------------------------- project details from a document
-def test_project_info_from_docx_and_pdf(tmp_path):
-    import zipfile
-    from sketch2cad.ai import project_info
-    docx = tmp_path / "contract.docx"
-    with zipfile.ZipFile(docx, "w") as z:
-        z.writestr("word/document.xml", "<w:document><w:p><w:t>Contract W912 - Hatzerim 20117</w:t></w:p>"
-                                        "<w:p><w:t>חצרים</w:t></w:p></w:document>")
-    pdf = tmp_path / "title.pdf"
-    d = pymupdf.open()
-    d.new_page().insert_text((72, 72), "SITE 20117")
-    d.save(pdf)
-    answer = {"code": "20117 ", "name_he": "חצרים", "name_en": "Hatzerim", "client": "USACE",
-              "contractor": "", "location": "", "contract_no": "W912"}
-    captured = {}
-
-    def create(**kw):
-        captured.update(kw)
-        return SimpleNamespace(stop_reason="end_turn", content=[SimpleNamespace(type="text", text=json.dumps(answer))])
-
-    client = SimpleNamespace(beta=SimpleNamespace(messages=SimpleNamespace(create=create)))
-    info = project_info.extract_project_info([docx, pdf], client=client)
-    assert info["code"] == "20117" and info["name_he"] == "חצרים" and info["contract_no"] == "W912"
-    blocks = captured["messages"][0]["content"]
-    assert blocks[0]["type"] == "document"                                  # the PDF goes as a document
-    assert any("Contract W912" in b.get("text", "") and "חצרים" in b.get("text", "") for b in blocks)
-    assert captured["output_config"]["format"]["schema"]["required"] == list(project_info.FIELDS)
 
 
 def test_pick_folder_without_desktop(monkeypatch):
@@ -270,91 +196,6 @@ def test_updater_latest_and_apply(tmp_path, monkeypatch):
     assert calls and calls[0][1:4] == ["-m", "pip", "install"]
 
 
-# ---------------------------------------------------------------- large PDFs fit the API request limit
-def _noisy_pdf(path, pages):
-    """A PDF whose pages carry large, poorly compressible images (like a scanned plan set)."""
-    import os
-    doc = pymupdf.open()
-    for i in range(pages):
-        page = doc.new_page(width=842, height=595)
-        pix = pymupdf.Pixmap(pymupdf.csRGB, pymupdf.IRect(0, 0, 1200, 850), False)
-        pix.set_rect(pix.irect, (255, 255, 255))
-        raw = bytearray(pix.samples)
-        raw[: len(raw) // 2] = os.urandom(len(raw) // 2)            # noise does not compress
-        page.insert_image(page.rect, pixmap=pymupdf.Pixmap(pymupdf.csRGB, 1200, 850, bytes(raw), False))
-        page.insert_text((40, 40), f"SHEET {i + 1}")
-    doc.save(path)
-    return path
-
-
-def test_small_pdf_is_sent_unchanged(tmp_path):
-    pdf = tmp_path / "small.pdf"
-    d = pymupdf.open()
-    d.new_page().insert_text((72, 72), "SITE 20117")
-    d.save(pdf)
-    notes = []
-    blocks = sketch._content_blocks([pdf], notes)
-    assert blocks[0]["type"] == "document" and notes == []
-    import base64
-    assert base64.standard_b64decode(blocks[0]["source"]["data"]) == pdf.read_bytes()
-
-
-def test_large_pdf_is_compressed_then_page_limited(tmp_path, monkeypatch):
-    pdf = _noisy_pdf(tmp_path / "plans.pdf", 4)
-    size = pdf.stat().st_size
-    monkeypatch.setattr(sketch, "FILES_BUDGET", size - 1)            # the original no longer fits
-    notes = []
-    blocks = sketch._content_blocks([pdf], notes, max_pdf_pages=2)
-    assert blocks[0]["type"] == "document"
-    import base64
-    sent = pymupdf.open(stream=base64.standard_b64decode(blocks[0]["source"]["data"]), filetype="pdf")
-    assert sent.page_count == 2 and "SHEET 1" in sent[0].get_text()
-    assert "pages 1-2 of 4" in blocks[1]["text"]                       # the model is told, too
-    assert notes and "compressed copy" in notes[0] and "pages 1-2 of 4" in notes[0]
-
-
-def test_huge_pdf_falls_back_to_page_images(tmp_path, monkeypatch):
-    pdf = _noisy_pdf(tmp_path / "huge.pdf", 3)
-    doc = pymupdf.open(pdf)
-    one_page = len(sketch._page_jpeg(doc[0]))
-    small = pymupdf.open()
-    small.insert_pdf(doc)
-    small.rewrite_images(dpi_threshold=160, dpi_target=150, quality=70)
-    budget = one_page + one_page // 4                                 # one page image fits, two do not
-    assert len(small.tobytes(garbage=4, deflate=True, clean=True)) > budget   # nor does a compressed copy
-    monkeypatch.setattr(sketch, "FILES_BUDGET", budget)
-    notes = []
-    blocks = sketch._content_blocks([pdf], notes)
-    assert blocks[0]["type"] == "text" and "pages 1-1 of 3" in blocks[0]["text"]
-    images = [b for b in blocks if b["type"] == "image"]
-    assert len(images) == 1 and images[0]["source"]["media_type"] == "image/jpeg"
-    assert notes and "pages 1-1 of 3 were sent as images" in notes[0]
-
-
-def test_pdf_too_large_for_any_form_raises_clear_error(tmp_path, monkeypatch):
-    pdf = _noisy_pdf(tmp_path / "plans.pdf", 1)
-    monkeypatch.setattr(sketch, "FILES_BUDGET", 1000)
-    with pytest.raises(ValueError, match="too large to send"):
-        sketch._content_blocks([pdf])
-
-
-def test_project_info_reports_reduced_pdf(tmp_path, monkeypatch):
-    from sketch2cad.ai import project_info
-    pdf = _noisy_pdf(tmp_path / "contract.pdf", 3)
-    monkeypatch.setattr(sketch, "FILES_BUDGET", pdf.stat().st_size - 1)
-    answer = {k: "" for k in project_info.FIELDS} | {"code": "20117"}
-    captured = {}
-
-    def create(**kw):
-        captured.update(kw)
-        return SimpleNamespace(stop_reason="end_turn", content=[SimpleNamespace(type="text", text=json.dumps(answer))])
-
-    notes = []
-    info = project_info.extract_project_info([pdf], client=SimpleNamespace(
-        beta=SimpleNamespace(messages=SimpleNamespace(create=create))), notes=notes)
-    assert info["code"] == "20117" and notes and "contract.pdf" in notes[0]
-    assert captured["messages"][0]["content"][0]["type"] == "document"
-
 
 # ---------------------------------------------------------------- markup + revise on request (no network)
 def _white_png(path, w=400, h=300):
@@ -384,20 +225,3 @@ def test_markup_clean_and_compose(tmp_path):
         assert img.getpixel((20, 280)) == (255, 255, 255)                      # untouched
     assert markup.canvas_image(tmp_path / "p.png").startswith("data:image/jpeg;base64,")
 
-
-def test_revise_spec_sends_marked_sheet_spec_and_request(tmp_path, cat):
-    from sketch2cad.ai import revise
-    spec = {"units": "mm", "scale": 20, "elements": [{"id": "v1", "type": "gate_valve", "at": [0, 0]}]}
-    reply = {"spec": {**spec, "elements": [{"id": "v1", "type": "gate_valve", "at": [-500, 0]}]},
-             "changes": [{"en": "Valve moved 500 mm left", "he": "המגוף הוזז 500 מ\"מ שמאלה"}], "questions": []}
-    captured = {}
-    rev = revise.revise_spec(spec, "move the valve 500 mm left", image=_white_png(tmp_path / "m.png"),
-                             marked=True, catalog=cat, client=fake_client(json.dumps(reply), captured))
-    assert rev.spec["elements"][0]["at"] == [-500, 0]
-    assert rev.changes[0]["he"].startswith("המגוף")
-    blocks = captured["messages"][0]["content"]
-    assert blocks[0]["type"] == "image" and "markings" in blocks[1]["text"]
-    assert '"gate_valve"' in blocks[2]["text"] and "500 mm left" in blocks[3]["text"]
-    assert captured["model"] == "claude-opus-5-5" and "Change only what" in captured["system"]
-    with pytest.raises(ValueError):
-        revise.revise_spec(spec, "  ", client=fake_client("{}", {}))

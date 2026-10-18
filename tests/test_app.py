@@ -108,12 +108,13 @@ def test_typical_render_checks_bom_package(tmp_path):
 
 
 def test_new_project_validation(tmp_path):
-    """Missing code / parent folder give clear Hebrew errors; the folder-picker and AI-fill buttons render."""
+    """Missing code / parent folder give clear Hebrew errors; the folder picker renders, without an API fill."""
     from sketch2cad.config import Settings
     from sketch2cad.i18n import t
     Settings(ui_language="he", default_projects_root="").save()
     at = AppTest.from_file(APP, default_timeout=30).run()
-    assert any(b.key == "np_parent_browse" for b in at.button) and any(b.key == "np_fill" for b in at.button)
+    assert any(b.key == "np_parent_browse" for b in at.button)
+    assert not any(b.key == "np_fill" for b in at.button)
     next(b for b in at.button if b.label == t("create", "he")).click().run()
     assert any(t("code_required", "he") in e.value for e in at.error)
     _by_label(at.text_input, t("project_code", "he")).input("20117")
@@ -172,27 +173,18 @@ def test_settings_rejects_folder_in_oda_field(tmp_path):
     assert not at.exception
     assert any(t("oda_not_exe", "he") in e.value for e in at.error)
     assert Settings.load().oda_converter_path == "" and Settings.load().default_projects_root == ""
+    assert all("Claude" not in (w.label or "") for w in at.text_input)
 
 
-def test_revise_on_request_and_undo(tmp_path, monkeypatch):
-    """Render a typical detail, revise it on request (fake AI), then undo the revision."""
+def test_agent_revision_and_undo(tmp_path):
+    """Render a typical detail, send it to the agent, apply a reply, then undo. No API key."""
     import json
-    from sketch2cad.ai import revise
     from sketch2cad.config import Settings
     from sketch2cad.i18n import t
     lang = "he"
-    Settings(ui_language=lang, default_projects_root=str(tmp_path / "projects"), anthropic_api_key="test").save()
-    calls = {}
-
-    def fake_revise(spec, request, api_key=None, *, image=None, marked=False, catalog=None, language="both",
-                    client=None):
-        calls.update(request=request, image=image, marked=marked)
-        new = json.loads(json.dumps(spec))
-        new["legend"][0]["en"] = "REVISED ITEM"
-        return revise.Revision(spec=new, changes=[{"en": "Legend 1 renamed", "he": "שם פריט 1 שונה"}])
-
-    monkeypatch.setattr(revise, "revise_spec", fake_revise)
+    Settings(ui_language=lang, default_projects_root=str(tmp_path / "projects")).save()
     at = AppTest.from_file(APP, default_timeout=60).run()
+    assert not any(b.label == t("fill_go", lang) for b in at.button)
     _by_label(at.text_input, t("project_code", lang)).input("20117")
     _by_label(at.text_input, t("name_en", lang)).input("Hatzerim")
     next(b for b in at.button if b.label == t("create", lang)).click().run()
@@ -204,24 +196,35 @@ def test_revise_on_request_and_undo(tmp_path, monkeypatch):
     assert not at.exception
     doc_dir = next(f.parent for f in (tmp_path / "projects").rglob("document.json"))
     original = json.loads((doc_dir / "spec.json").read_text(encoding="utf-8"))
+    assert not any(b.label.endswith(t("revise_go", lang)) for b in at.button)
 
-    # an empty request is reported, nothing changes
-    next(b for b in at.button if b.label.endswith(t("revise_go", lang))).click().run()
-    assert any(w.value == t("revise_empty", lang) for w in at.warning) and not calls
-
-    # revise on request
     _by_label(at.text_area, t("revise_request", lang)).input("לשנות את שם פריט 1")
-    next(b for b in at.button if b.label.endswith(t("revise_go", lang))).click().run()
+    next(b for b in at.button if b.label == t("agent_send", lang)).click().run()
     assert not at.exception, at.exception
-    assert calls["request"] == "לשנות את שם פריט 1" and calls["image"].exists() and calls["marked"] is False
-    revised = json.loads((doc_dir / "spec.json").read_text(encoding="utf-8"))
-    assert revised["legend"][0]["en"] == "REVISED ITEM"
+    project_dir = next(f.parent for f in (tmp_path / "projects").rglob("project.json"))
+    packages = list((project_dir / "agent_exchange" / "outbox").iterdir())
+    assert len(packages) == 1
+    assert (packages[0] / "request.txt").read_text(encoding="utf-8").startswith("לשנות את שם פריט 1")
+    assert json.loads((doc_dir / "spec.json").read_text(encoding="utf-8")) == original
+
+    revised = json.loads(json.dumps(original))
+    revised["legend"][0]["en"] = "REVISED ITEM"
+    inbox = project_dir / "agent_exchange" / "inbox"
+    (inbox / "reply.json").write_text(json.dumps({
+        "spec": revised,
+        "changes": [{"en": "Legend 1 renamed", "he": "שם פריט 1 שונה"}],
+        "assumptions": [], "questions": [],
+    }, ensure_ascii=False), encoding="utf-8")
+    next(b for b in at.button if b.label == t("agent_recv", lang)).click().run()
+    assert not at.exception, at.exception
+    next(b for b in at.button if b.label == t("agent_apply", lang)).click().run()
+    assert not at.exception, at.exception
+    saved = json.loads((doc_dir / "spec.json").read_text(encoding="utf-8"))
+    assert saved["legend"][0]["en"] == "REVISED ITEM"
     assert len(list((doc_dir / "spec_history").glob("spec_*.json"))) == 1
-    assert any(s.value == t("revise_done", lang) for s in at.success)
-    assert any("שם פריט 1 שונה" in m.value for m in at.markdown)
+    assert any(s.value == t("agent_applied", lang) for s in at.success)
     assert (doc_dir / "20117-W-CAMEL-01_RevA.png").exists()
 
-    # undo
     next(b for b in at.button if b.label.endswith(t("revise_undo", lang))).click().run()
     assert not at.exception, at.exception
     assert json.loads((doc_dir / "spec.json").read_text(encoding="utf-8")) == original

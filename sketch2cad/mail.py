@@ -1,10 +1,9 @@
 """Incoming e-mails (Outlook .msg, .eml): read them, find the document they are about, file them.
 
-A reviewer's mail carries the request in its text ("replace the trench drain with the approved product...")
-and the evidence in its attachments: a marked-up copy of the drawing, the original design, datasheets.
-This module reads both, scores every document of every project against the mail, and files the mail and
-its attachments under the chosen document. The API call itself is ai.revise: the app hands it the request
-text from here (request_text) and the filed attachments.
+A reviewer's mail carries comments in its text and evidence in its attachments: a marked-up copy of
+the drawing, the original design, datasheets. This module reads both, scores every document of every
+project against the mail, and files the mail and its attachments under the chosen document. The drawing
+is changed afterwards from the drawing screen, through the work-package bridge.
 """
 from __future__ import annotations
 
@@ -23,7 +22,6 @@ from .projects import Project
 
 MAIL_EXT = {".msg", ".eml"}
 IMAGE_EXT = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"}
-SEND_EXT = IMAGE_EXT | {".pdf", ".tif", ".tiff"}          # attachments the model can look at
 # A line that starts the quoted, older part of a thread (Outlook and Gmail, English and Hebrew).
 QUOTE_START = re.compile(r"^[ \t>]*(From:|-----Original Message-----|On .{3,160} wrote:|מאת:|_{6,}|-{6,})", re.M)
 POINT = re.compile(r"^\s*(?:\d{1,2}[.)]|[-•*–])[ \t]+(\S.*)$")
@@ -247,7 +245,7 @@ def review_points(text: str) -> list[str]:
 
 
 def request_text(mail: Mail) -> str:
-    """The revision request for the model: who asked, when, and the newest message of the thread."""
+    """Who asked, when, and the newest message — the text to send with a work package."""
     who = " ".join(x for x in (mail.sender, f"<{mail.sender_email}>" if mail.sender_email else "") if x)
     head = f"Review comments received by e-mail from {who or 'the reviewer'}"
     if mail.date:

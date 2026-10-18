@@ -46,15 +46,6 @@ STRINGS: dict[str, dict[str, str]] = {
     "browse": {"en": "Browse", "he": "בחר"},
     "code_required": {"en": "Enter a project code", "he": "יש להזין קוד פרויקט"},
     "parent_required": {"en": "Choose the parent folder", "he": "יש לבחור תיקיית אב"},
-    "fill_from_doc": {"en": "Fill in from a document (AI)", "he": "מילוי פרטים מתוך מסמך (AI)"},
-    "fill_files": {"en": "Contract, title page, drawing, letter... (PDF, image, DOCX, DWG/DXF)",
-                   "he": "חוזה, דף שער, שרטוט, מכתב... (PDF, תמונה, DOCX, DWG/DXF)"},
-    "fill_go": {"en": "Read the details", "he": "קרא פרטים"},
-    "fill_working": {"en": "Reading the document...", "he": "קורא את המסמך..."},
-    "fill_done": {"en": "Details filled in - check them before creating the project.",
-                  "he": "הפרטים מולאו - יש לבדוק אותם לפני יצירת הפרויקט."},
-    "fill_nothing": {"en": "No project details were found in the document.",
-                     "he": "לא נמצאו פרטי פרויקט במסמך."},
     "created_ok": {"en": "Created", "he": "נוצר"},
     "add_existing": {"en": "Add an existing project folder", "he": "הוסף תיקיית פרויקט קיימת"},
     "folder_path": {"en": "Folder path", "he": "נתיב תיקייה"},
@@ -127,17 +118,16 @@ STRINGS: dict[str, dict[str, str]] = {
                              "תיקייה שכבר יש בה נתונים שומרת אותם."},
     "data_home_changed": {"en": "Data folder changed", "he": "תיקיית הנתונים שונתה"},
     "revise": {"en": "Mark up and revise on request", "he": "סימון ותיקון לפי בקשה"},
-    "revise_help": {"en": "Mark on the drawing with the free pen or straight lines, write what to change and "
-                          "press Revise. The drawing is updated and rendered again; the previous version can be "
-                          "restored.",
-                    "he": "סמנו על השרטוט בעט חופשי או בקווים ישרים, כתבו מה לשנות ולחצו \"תקן שרטוט\". "
-                          "השרטוט יתוקן ויופק מחדש, ואפשר לחזור לגרסה הקודמת."},
+    "revise_help": {"en": "Mark on the drawing with the free pen or straight lines, write what to change, and "
+                          "send it to the agent. The drawing changes only after you receive the reply and apply "
+                          "it. The previous version can be restored.",
+                    "he": "סמנו על השרטוט בעט חופשי או בקווים ישרים, כתבו מה לשנות, ושלחו לסוכן. "
+                          "השרטוט משתנה רק אחרי שמקבלים את התשובה ומחילים אותה. אפשר לחזור לגרסה הקודמת."},
     "revise_request": {"en": "What to change", "he": "מה לשנות"},
     "revise_placeholder": {"en": "e.g. move the valve marked in red 500 mm to the left; add a manhole where the "
                                  "blue line ends",
                            "he": "לדוגמה: להזיז את המגוף המסומן באדום 500 מ\"מ שמאלה; להוסיף שוחה בקצה הקו הכחול"},
     "revise_empty": {"en": "Write what to change first.", "he": "כתבו קודם מה לשנות."},
-    "revise_go": {"en": "Revise drawing", "he": "תקן שרטוט"},
     "revise_undo": {"en": "Undo last revision", "he": "בטל תיקון אחרון"},
     "revise_done": {"en": "The drawing was revised and rendered again", "he": "השרטוט תוקן והופק מחדש"},
     "revise_undone": {"en": "The previous version was restored", "he": "הגרסה הקודמת שוחזרה"},
@@ -146,10 +136,10 @@ STRINGS: dict[str, dict[str, str]] = {
     "revise_last": {"en": "Last request", "he": "הבקשה האחרונה"},
     "agent_send": {"en": "Send to agent", "he": "שלח לסוכן"},
     "agent_recv": {"en": "Receive from agent", "he": "קבל מהסוכן"},
-    "agent_help": {"en": "These two buttons do not use the API key. The package is written to the project outbox; "
-                         "a reply is read from the inbox and applied only after you confirm.",
-                   "he": "שני הכפתורים האלה לא משתמשים במפתח API. החבילה נכתבת לתיקיית השליחה של הפרויקט, "
-                         "והתשובה נקראת מתיקיית הקבלה ומוחלת רק אחרי אישור."},
+    "agent_help": {"en": "Send writes a work package to the project's outbox. Receive reads the newest reply "
+                         "in the inbox and changes the drawing only after you confirm.",
+                   "he": "«שלח לסוכן» כותב חבילת עבודה לתיקיית השליחה של הפרויקט. «קבל מהסוכן» קורא את "
+                         "התשובה החדשה בתיקיית הקבלה, והשרטוט משתנה רק אחרי אישור."},
     "agent_sent": {"en": "Work package written to {path}", "he": "החבילה נכתבה אל {path}"},
     "agent_request_title": {"en": "What should the agent change?", "he": "מה לבקש מהסוכן?"},
     "agent_request_send": {"en": "Send", "he": "שלח"},
@@ -178,7 +168,6 @@ STRINGS: dict[str, dict[str, str]] = {
                           "תיקייה לפרויקטים נכנסת לשדה \"תיקיית ברירת מחדל לפרויקטים חדשים\"."},
     "oda_path": {"en": "ODA File Converter path (DWG) - optional when AutoCAD is installed",
                  "he": "נתיב ODA File Converter (DWG) - לא חובה אם מותקן AutoCAD"},
-    "api_key": {"en": "Claude API key (sketch to drawing)", "he": "מפתח Claude API (סקיצה לשרטוט)"},
     "rebuild_index": {"en": "Rebuild search index", "he": "בנה מחדש את אינדקס החיפוש"},
     "indexed": {"en": "documents indexed", "he": "מסמכים נוספו לאינדקס"},
     "error": {"en": "Error", "he": "שגיאה"},
@@ -190,23 +179,21 @@ STRINGS: dict[str, dict[str, str]] = {
     "drawing": {"en": "Drawing", "he": "שרטוט"},
     "spec_source": {"en": "Build the drawing from", "he": "בניית השרטוט מתוך"},
     "src_typical": {"en": "Typical detail", "he": "פרט טיפוסי"},
-    "src_ai": {"en": "Sketch / photo (AI)", "he": "סקיצה / צילום (AI)"},
+    "src_sketch": {"en": "Sketch / photo", "he": "סקיצה / צילום"},
     "src_json": {"en": "Edit spec (JSON)", "he": "עריכת מפרט (JSON)"},
     "typical": {"en": "Typical detail", "he": "פרט טיפוסי"},
     "generate": {"en": "Generate spec", "he": "צור מפרט"},
     "spec_saved": {"en": "Spec saved - render the drawing below.", "he": "המפרט נשמר - הפק את השרטוט למטה."},
-    "no_spec": {"en": "No spec yet - choose a typical detail, a sketch (AI) or paste JSON.",
-                "he": "אין עדיין מפרט - בחר פרט טיפוסי, סקיצה (AI) או הדבק JSON."},
-    "ai_inputs": {"en": "Sources to send (images / PDF)", "he": "מקורות לשליחה (תמונות / PDF)"},
-    "ai_notes": {"en": "Notes for the drawing (what to draw, known sizes...)",
-                 "he": "הערות לשרטוט (מה לשרטט, מידות ידועות...)"},
-    "ai_draft": {"en": "Draft the spec with AI", "he": "טיוטת מפרט באמצעות AI"},
-    "ai_working": {"en": "Reading the sketch... (can take a minute or two)",
-                   "he": "קורא את הסקיצה... (עשוי לקחת דקה-שתיים)"},
-    "ai_no_key": {"en": "Set the Claude API key in Settings first.", "he": "יש להגדיר קודם מפתח Claude API בהגדרות."},
-    "ai_no_sources": {"en": "Add sketches or photos in the Sources tab first.",
-                      "he": "יש להוסיף קודם סקיצות או צילומים בלשונית המקורות."},
-    "ai_review": {"en": "Review before rendering", "he": "לבדיקה לפני הפקה"},
+    "no_spec": {"en": "No spec yet - choose a typical detail, send a sketch to the agent, or paste JSON.",
+                "he": "אין עדיין מפרט - בחרו פרט טיפוסי, שלחו סקיצה לסוכן, או הדביקו JSON."},
+    "sketch_sources": {"en": "These sources go into the package: {names}",
+                       "he": "המקורות האלה נכנסים לחבילה: {names}"},
+    "sketch_no_sources": {"en": "No sketch or photo in Sources yet. A package can still be sent.",
+                          "he": "אין עדיין סקיצה או צילום במקורות. אפשר בכל זאת לשלוח חבילה."},
+    "sketch_notes": {"en": "What to draw or change (sent with the package)",
+                     "he": "מה לשרטט או לשנות (נשלח עם החבילה)"},
+    "sketch_placeholder": {"en": "e.g. a plan of the trench from the sketch, with the sizes written on it",
+                           "he": "לדוגמה: תוכנית של התעלה לפי הסקיצה, עם המידות שכתובות עליה"},
     "assumptions": {"en": "Assumptions (estimated values)", "he": "הנחות (ערכים משוערים)"},
     "questions": {"en": "Open questions", "he": "שאלות פתוחות"},
     "spec_json": {"en": "spec.json", "he": "spec.json"},
@@ -289,54 +276,32 @@ STRINGS: dict[str, dict[str, str]] = {
     "nav_mail": {"en": "Mail", "he": "מייל"},
     "mail_help": {"en": "Save the reviewer's e-mail from Outlook as a .msg file (drag it to the desktop) and drop it "
                         "here. The program reads the comments and the attachments, finds the document they are "
-                        "about, files everything under its sources and revises the drawing.",
+                        "about, and files everything under its sources.",
                   "he": "שומרים את המייל של הבודק מ-Outlook כקובץ msg (גוררים אותו לשולחן העבודה) ומעלים אותו כאן. "
-                        "התוכנה קוראת את ההערות ואת הקבצים המצורפים, מוצאת לאיזה מסמך הם שייכים, שומרת הכול "
-                        "במקורות שלו ומתקנת את השרטוט."},
+                        "התוכנה קוראת את ההערות ואת הקבצים המצורפים, מוצאת לאיזה מסמך הם שייכים, ושומרת הכול "
+                        "במקורות שלו."},
     "mail_file": {"en": "E-mail file (.msg from Outlook, or .eml)", "he": "קובץ מייל (msg. מ-Outlook, או eml.)"},
     "mail_from": {"en": "From", "he": "מאת"},
     "mail_subject": {"en": "Subject", "he": "נושא"},
     "mail_attachments": {"en": "Attached files", "he": "קבצים מצורפים"},
     "mail_text": {"en": "Message text (the newest reply)", "he": "טקסט ההודעה (התשובה האחרונה)"},
     "mail_points": {"en": "Comments found in the mail", "he": "הערות שזוהו במייל"},
-    "mail_send_files": {"en": "Attachments to send to the AI with the request (marked-up drawing, original "
-                              "design, datasheets)",
-                        "he": "קבצים מצורפים שיישלחו ל-AI עם הבקשה (שרטוט מסומן, תכנון מקורי, דפי קטלוג)"},
     "mail_target": {"en": "File under document", "he": "לשייך למסמך"},
     "mail_why": {"en": "Why this document", "he": "למה המסמך הזה"},
     "mail_no_match": {"en": "No document matched the mail - choose one from the list.",
                       "he": "אף מסמך לא תאם למייל - בחרו מהרשימה."},
     "mail_no_documents": {"en": "There are no documents yet - create a project and a document first.",
                           "he": "אין עדיין מסמכים - צרו קודם פרויקט ומסמך."},
-    "mail_no_drawing": {"en": "This document has no rendered drawing yet, so the mail can only be filed.",
-                        "he": "למסמך הזה אין עדיין שרטוט מופק, ולכן אפשר רק לשמור את המייל."},
-    "mail_file_only": {"en": "File the mail only", "he": "רק לשמור את המייל"},
-    "mail_revise": {"en": "File and revise the drawing", "he": "לשמור ולתקן את השרטוט"},
+    "mail_file_only": {"en": "File the mail", "he": "שמור את המייל"},
+    "mail_then_agent": {"en": "Filing saves the mail under the document. To change the drawing, open it and use "
+                              "Send to agent / Receive from agent. The mail text is the request.",
+                        "he": "השמירה שמה את המייל במסמך. כדי לשנות את השרטוט פותחים אותו ומשתמשים "
+                              "ב«שלח לסוכן» / «קבל מהסוכן». טקסט המייל הוא הבקשה."},
     "mail_filed": {"en": "The mail and {n} attached files were filed under {doc}",
                    "he": "המייל ו-{n} קבצים מצורפים נשמרו במסמך {doc}"},
-    "mail_import_hint": {"en": "E-mail files are handled in the Mail page: it finds the document and revises "
-                               "the drawing.",
-                         "he": "קבצי מייל מטופלים במסך המייל: הוא מוצא את המסמך ומתקן את השרטוט."},
+    "mail_import_hint": {"en": "E-mail files are handled in the Mail page: it finds the document and files the mail.",
+                         "he": "קבצי מייל מטופלים במסך המייל: הוא מוצא את המסמך ושומר את המייל."},
     "open_document": {"en": "Open the document", "he": "פתח את המסמך"},
-    # Claude API errors, explained
-    "api_no_credit": {"en": "The office Anthropic account has no credit left, so the AI cannot run. Load credit "
-                            "at console.anthropic.com (Plans & Billing) and try again.",
-                      "he": "נגמר הקרדיט בחשבון Anthropic של המשרד, ולכן ה-AI לא יכול לפעול. טוענים קרדיט "
-                            "ב-console.anthropic.com (תחת Plans & Billing) ומנסים שוב."},
-    "api_bad_key": {"en": "The Anthropic API key is wrong or was revoked - check it in Settings.",
-                    "he": "מפתח ה-API של Anthropic שגוי או בוטל - בדקו אותו במסך ההגדרות."},
-    "api_no_permission": {"en": "This API key may not use the model - check its permissions in the Anthropic "
-                                "console.",
-                          "he": "למפתח ה-API הזה אין הרשאה למודל - בדקו את ההרשאות שלו בקונסולת Anthropic."},
-    "api_rate_limit": {"en": "Anthropic is limiting requests right now (rate limit) - wait a minute and try again.",
-                       "he": "Anthropic מגבילה כרגע את הבקשות (rate limit) - חכו דקה ונסו שוב."},
-    "api_server": {"en": "Temporary fault at Anthropic's servers - try again in a few minutes.",
-                   "he": "תקלה זמנית בשרתי Anthropic - נסו שוב בעוד כמה דקות."},
-    "api_offline": {"en": "No connection to Anthropic - check the internet connection (and the proxy / firewall).",
-                    "he": "אין חיבור ל-Anthropic - בדקו את חיבור האינטרנט (ואת ה-proxy / חומת האש)."},
-    "api_timeout": {"en": "Anthropic did not answer in time - try again; a smaller request may help.",
-                    "he": "Anthropic לא ענתה בזמן - נסו שוב; בקשה קטנה יותר עשויה לעזור."},
-    "api_rejected": {"en": "Anthropic rejected the request.", "he": "Anthropic דחתה את הבקשה."},
 }
 
 
