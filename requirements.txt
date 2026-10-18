@@ -7,4 +7,5 @@ PyYAML>=6.0
 openpyxl>=3.1
 ifcopenshell>=0.8
 anthropic>=1.0
+olefile>=0.47
 pytest>=8

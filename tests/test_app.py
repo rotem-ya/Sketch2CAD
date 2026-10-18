@@ -227,3 +227,13 @@ def test_revise_on_request_and_undo(tmp_path, monkeypatch):
     assert json.loads((doc_dir / "spec.json").read_text(encoding="utf-8")) == original
     assert not list((doc_dir / "spec_history").glob("spec_*.json"))
     assert any(s.value == t("revise_undone", lang) for s in at.success)
+
+
+def test_mail_page_opens(tmp_path):
+    from sketch2cad.config import Settings
+    from sketch2cad.i18n import t
+    Settings(ui_language="he", default_projects_root=str(tmp_path / "projects")).save()
+    at = AppTest.from_file(APP, default_timeout=30).run()
+    next(b for b in at.button if b.label.endswith(t("nav_mail", "he"))).click().run()
+    assert not at.exception
+    assert any(h.value.endswith(t("nav_mail", "he")) for h in at.header)

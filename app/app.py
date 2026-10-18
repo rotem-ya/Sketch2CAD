@@ -2,6 +2,7 @@
 """Sketch2CAD - local UI (Streamlit). Run:  streamlit run app/app.py"""
 from __future__ import annotations
 
+import html
 import json
 import os
 import shutil
@@ -64,6 +65,11 @@ def go(page: str, project: str | None = None, doc: str | None = None) -> None:
         ss.project_folder = project
     if doc is not None:
         ss.doc_folder = doc
+
+
+def isolate(text: str) -> str:
+    """Keep a code left-to-right inside plain RTL text where HTML is not rendered (buttons, st.success)."""
+    return f"\u2066{text}\u2069"
 
 
 def ltr(text: str) -> str:
@@ -149,6 +155,16 @@ def has_api_key() -> bool:
     return bool(settings.anthropic_api_key or os.environ.get("ANTHROPIC_API_KEY"))
 
 
+def ai_error(e: Exception) -> str:
+    """Message for a failed AI call: what to do about an API error (no credit, bad key...), else the error."""
+    from sketch2cad.ai.errors import explain
+    found = explain(e)
+    if not found:
+        return f"{T('error')}: {e}"
+    key, detail = found
+    return f"{T(key)}\n\n`{detail}`" if detail else T(key)
+
+
 def _browse(key: str, title: str) -> None:
     from sketch2cad.native import pick_folder
     path = pick_folder(ss.get(key, ""), title)
@@ -179,7 +195,7 @@ def fill_project_from_docs(files) -> None:
     try:
         info = extract_project_info(paths, settings.anthropic_api_key, notes=notes)
     except Exception as e:  # noqa: BLE001 - API / file errors are shown to the user
-        ss.np_fill_msg = ("error", f"{T('error')}: {e}")
+        ss.np_fill_msg = ("error", ai_error(e))
         return
     filled = {f"np_{k}": v for k, v in info.items() if v}
     ss.update(filled)
@@ -248,6 +264,7 @@ with st.sidebar:
     st.button(T("nav_projects"), on_click=go, args=("projects",), width="stretch")
     st.button(T("nav_search"), on_click=go, args=("search",), width="stretch")
     st.button(T("nav_import"), on_click=go, args=("import",), width="stretch")
+    st.button(f"📧 {T('nav_mail')}", on_click=go, args=("mail",), width="stretch")
     st.button(T("nav_templates"), on_click=go, args=("templates",), width="stretch")
     st.button(T("nav_catalog"), on_click=go, args=("catalog",), width="stretch")
     st.button(T("nav_settings"), on_click=go, args=("settings",), width="stretch")
@@ -628,7 +645,7 @@ def tab_drawing(p: Project, d: Document, cat: Catalog) -> None:
                 spec = draft.spec
                 st.success(T("spec_saved"))
             except Exception as e:  # noqa: BLE001 - API / parsing errors are shown to the user
-                st.error(f"{T('error')}: {e}")
+                st.error(ai_error(e))
         review = d.path / "ai_review.json"
         if review.exists():
             data = json.loads(review.read_text(encoding="utf-8"))
@@ -690,6 +707,34 @@ def tab_drawing(p: Project, d: Document, cat: Catalog) -> None:
         revise_panel(p, d, spec, cat, preview, lang_mode)
 
 
+class RevisionNotRendered(RuntimeError):
+    """The revised spec was rejected by the renderer; the previous spec is back in place."""
+
+
+def run_revision(p: Project, d: Document, spec: dict, cat: Catalog, request: str, image: Path, marked: bool,
+                 lang_mode: str, *, stamp: str, attachments: list[Path] | None = None, markup_rel: str = ""):
+    """Ask for the revision, back up and save the spec, render it and record the answer in ai_revision.json.
+
+    A revised spec that does not render is rolled back (RevisionNotRendered); API errors propagate.
+    """
+    from sketch2cad.ai.revise import revise_spec
+    extra = {"attachments": attachments} if attachments else {}
+    rev = revise_spec(spec, request, settings.anthropic_api_key, image=image, marked=marked, catalog=cat,
+                      language=lang_mode, **extra)
+    backup_spec(d)
+    save_spec(d, rev.spec)
+    try:
+        warnings = render_document(p, d, rev.spec, cat, last_formats(d))
+    except Exception as e:  # noqa: BLE001 - a revised spec that does not render is rolled back
+        restore_last_spec(d)
+        raise RevisionNotRendered(str(e)) from e
+    (d.path / "ai_revision.json").write_text(json.dumps({
+        "request": request.strip(), "markup": markup_rel, "attachments": [Path(a).name for a in attachments or []],
+        "changes": rev.changes, "assumptions": rev.assumptions, "questions": rev.questions,
+        "warnings": rev.warnings + warnings, "date": stamp}, ensure_ascii=False, indent=1), encoding="utf-8")
+    return rev
+
+
 def revise_panel(p: Project, d: Document, spec: dict, cat: Catalog, preview: Path, lang_mode: str) -> None:
     """Mark up the rendered sheet (free pen / straight lines), ask for a change, and re-render in place."""
     from datetime import datetime
@@ -728,29 +773,19 @@ def revise_panel(p: Project, d: Document, spec: dict, cat: Catalog, preview: Pat
         ss.rev_open = True
         st.warning(T("revise_empty"))
     elif go:
-        from sketch2cad.ai.revise import revise_spec
         ss.rev_open = True
         stamp = f"{datetime.now():%Y%m%d_%H%M%S}"
         image = compose(preview, strokes, d.path / "markups" / f"markup_{stamp}.png")
         try:
             with st.spinner(T("ai_working")):
-                rev = revise_spec(spec, request, settings.anthropic_api_key, image=image, marked=bool(strokes),
-                                  catalog=cat, language=lang_mode)
-        except Exception as e:  # noqa: BLE001 - API / parsing errors are shown to the user
-            st.error(f"{T('error')}: {e}")
-            return
-        backup_spec(d)
-        save_spec(d, rev.spec)
-        try:
-            warnings = render_document(p, d, rev.spec, cat, last_formats(d))
-        except Exception as e:  # noqa: BLE001 - a revised spec that does not render is rolled back
-            restore_last_spec(d)
+                run_revision(p, d, spec, cat, request, image, bool(strokes), lang_mode, stamp=stamp,
+                             markup_rel=f"markups/{image.name}" if strokes else "")
+        except RevisionNotRendered as e:
             st.error(f"{T('revise_failed')}: {e}")
             return
-        review.write_text(json.dumps({
-            "request": request.strip(), "markup": f"markups/{image.name}" if strokes else "",
-            "changes": rev.changes, "assumptions": rev.assumptions, "questions": rev.questions,
-            "warnings": rev.warnings + warnings, "date": stamp}, ensure_ascii=False, indent=1), encoding="utf-8")
+        except Exception as e:  # noqa: BLE001 - API / parsing errors are shown to the user
+            st.error(ai_error(e))
+            return
         ss.rev_msgs = [("success", T("revise_done"))]
         ss.pop(f"rev_req_{Path(d.folder).name}", None)
         st.rerun()
@@ -824,6 +859,8 @@ def page_import() -> None:
         st.info(T("rvt_help"))
     if info.kind == "image":
         st.info(T("image_help"))
+    if info.kind == "mail":
+        st.info(T("mail_import_hint"))
     if info.preview_png and Path(info.preview_png).exists():
         st.image(str(info.preview_png), width="stretch")
     if info.text:
@@ -890,6 +927,118 @@ def page_import() -> None:
             reindex(p, d)
             go("document", None, d.folder)
             st.rerun()
+
+
+def page_mail() -> None:
+    """A reviewer's e-mail (.msg / .eml): read it, find the document it is about, file it, revise the drawing."""
+    from datetime import datetime
+
+    from sketch2cad import mail as mailmod
+    st.header(f"📧 {T('nav_mail')}")
+    st.caption(T("mail_help"))
+    up = st.file_uploader(T("mail_file"), type=["msg", "eml"], key="mail_file")
+    for kind, msg in ss.pop("mail_msgs", []):
+        getattr(st, kind)(msg)
+    done = ss.get("mail_done")
+    if done and Path(done["doc"], "document.json").exists():
+        if st.button(f"📄 {T('open_document')}: {isolate(done['code'])}", key="mail_open"):
+            ss.pop("mail_done", None)
+            go("document", done["project"], done["doc"])
+            st.rerun()
+    if not up:
+        return
+    key = f"mail_{up.name}_{up.size}"
+    if key not in ss:                                    # a new mail: read it once, forget the previous result
+        ss.pop("mail_done", None)
+        work = app_home() / "imports" / "mail"
+        work.mkdir(parents=True, exist_ok=True)
+        src = work / up.name
+        src.write_bytes(up.getvalue())
+        try:
+            ss[key] = mailmod.read_mail(src)
+        except Exception as e:  # noqa: BLE001 - a file that is not a readable mail is reported
+            st.error(f"{T('error')}: {e}")
+            return
+    m = ss[key]
+    c1, c2, c3 = st.columns([2, 1, 1])
+    c1.markdown(f"**{T('mail_from')}:** {m.sender} {ltr(m.sender_email)}", unsafe_allow_html=True)
+    c2.markdown(f"**{T('date')}:** {ltr(m.date)}", unsafe_allow_html=True)
+    c3.markdown(f"**{T('mail_attachments')}:** {len(m.files)}")
+    st.markdown(f"**{T('mail_subject')}:** {m.subject}")
+    for w in m.warnings:
+        st.warning(w)
+    points = mailmod.review_points(m.latest)
+    if points:
+        st.markdown(f"**{T('mail_points')}**")
+        for i, pt in enumerate(points, 1):          # dir=auto: English comments read left-to-right
+            st.markdown(f'<div dir="auto">{i}. {html.escape(pt)}</div>', unsafe_allow_html=True)
+    with st.expander(T("mail_text")):
+        st.markdown(f'<div dir="auto" style="white-space: pre-wrap">{html.escape(m.latest[:20000])}</div>',
+                    unsafe_allow_html=True)
+    request = st.text_area(T("revise_request"), value=mailmod.request_text(m), height=220, key=f"{key}_req")
+    sendable = [a.name for a in m.files if a.suffix in mailmod.SEND_EXT]
+    chosen = st.multiselect(T("mail_send_files"), [a.name for a in m.files], default=sendable, key=f"{key}_files")
+
+    projects = [Project.load(f) for f in settings.projects if is_project_folder(f)]
+    matches = mailmod.match_document(m, projects, prefer=ss.project_folder)
+    if not matches:
+        st.info(T("mail_no_documents"))
+        return
+    labels = {i: f"{mt.project.code} | {mt.document.code} | {mt.document.display_title(L)}"
+              for i, mt in enumerate(matches)}
+    idx = st.selectbox(T("mail_target"), list(labels), format_func=lambda i: labels[i], key=f"{key}_target")
+    if matches[0].reasons:
+        why = "; ".join(r.get(L) or r.get("en", "") for r in matches[0].reasons)
+        st.caption(f"{T('mail_why')} ({ltr(matches[0].document.code)}): {why}", unsafe_allow_html=True)
+    else:
+        st.caption(T("mail_no_match"))
+    p, d = matches[idx].project, matches[idx].document
+    spec = load_spec(d)
+    preview = d.path / d.outputs.get("preview", "-")
+    can_revise = spec is not None and preview.exists()
+    has_key = has_api_key()
+    if not has_key:
+        st.warning(T("ai_no_key"))
+    if not can_revise:
+        st.info(T("mail_no_drawing"))
+    c1, c2 = st.columns(2)
+    file_only = c1.button(f"📎 {T('mail_file_only')}", key="mail_file_only")
+    revise = c2.button(f"🛠️ {T('mail_revise')}", type="primary", key="mail_revise",
+                       disabled=not (can_revise and has_key))
+    if not (file_only or revise):
+        return
+    if revise and not request.strip():
+        st.warning(T("revise_empty"))
+        return
+    filed = mailmod.file_mail(d, m, up.getvalue(), up.name)
+    warnings = []
+    for rel in filed.attachments:
+        warnings += index_source(d, d.path / rel)
+    reindex(p, d)
+    msgs = [("success", T("mail_filed").format(doc=isolate(d.code), n=len(filed.attachments)))]
+    msgs += [("warning", w) for w in warnings]
+    if revise:
+        attachments = [d.path / rel for a, rel in zip(m.files, filed.attachments, strict=True) if a.name in chosen]
+        try:
+            with st.spinner(T("ai_working")):
+                rev = run_revision(p, d, spec, load_catalog(p), request, preview, False,
+                                   d.language_mode or p.language_mode,
+                                   stamp=f"{datetime.now():%Y%m%d_%H%M%S}", attachments=attachments)
+        except RevisionNotRendered as e:
+            msgs.append(("error", f"{T('revise_failed')}: {e}"))
+        except Exception as e:  # noqa: BLE001 - API / parsing errors are shown to the user
+            msgs.append(("error", ai_error(e)))
+        else:
+            msgs.append(("success", T("revise_done")))
+            for name in ("changes", "assumptions", "questions"):
+                items = getattr(rev, name)
+                if items:
+                    text = "\n".join(f"- {a.get(L) or a.get('en', '') if isinstance(a, dict) else a}" for a in items)
+                    msgs.append(("info", f"**{T(name)}**\n\n{text}"))
+            msgs += [("warning", w) for w in rev.warnings]
+    ss.mail_msgs = msgs
+    ss.mail_done = {"project": p.folder, "doc": d.folder, "code": d.code}
+    st.rerun()
 
 
 def page_templates() -> None:
@@ -1015,4 +1164,5 @@ def page_settings() -> None:
 
 
 {"projects": page_projects, "project": page_project, "document": page_document, "search": page_search,
- "import": page_import, "templates": page_templates, "catalog": page_catalog, "settings": page_settings}[ss.page]()
+ "import": page_import, "mail": page_mail, "templates": page_templates, "catalog": page_catalog,
+ "settings": page_settings}[ss.page]()

@@ -267,6 +267,58 @@ STRINGS: dict[str, dict[str, str]] = {
     "save_to": {"en": "Save to", "he": "שמירה אל"},
     "project_catalog": {"en": "Current project catalog", "he": "קטלוג הפרויקט הנוכחי"},
     "user_catalog": {"en": "My catalog (all projects)", "he": "הקטלוג שלי (כל הפרויקטים)"},
+    # mail page
+    "nav_mail": {"en": "Mail", "he": "מייל"},
+    "mail_help": {"en": "Save the reviewer's e-mail from Outlook as a .msg file (drag it to the desktop) and drop it "
+                        "here. The program reads the comments and the attachments, finds the document they are "
+                        "about, files everything under its sources and revises the drawing.",
+                  "he": "שומרים את המייל של הבודק מ-Outlook כקובץ msg (גוררים אותו לשולחן העבודה) ומעלים אותו כאן. "
+                        "התוכנה קוראת את ההערות ואת הקבצים המצורפים, מוצאת לאיזה מסמך הם שייכים, שומרת הכול "
+                        "במקורות שלו ומתקנת את השרטוט."},
+    "mail_file": {"en": "E-mail file (.msg from Outlook, or .eml)", "he": "קובץ מייל (msg. מ-Outlook, או eml.)"},
+    "mail_from": {"en": "From", "he": "מאת"},
+    "mail_subject": {"en": "Subject", "he": "נושא"},
+    "mail_attachments": {"en": "Attached files", "he": "קבצים מצורפים"},
+    "mail_text": {"en": "Message text (the newest reply)", "he": "טקסט ההודעה (התשובה האחרונה)"},
+    "mail_points": {"en": "Comments found in the mail", "he": "הערות שזוהו במייל"},
+    "mail_send_files": {"en": "Attachments to send to the AI with the request (marked-up drawing, original "
+                              "design, datasheets)",
+                        "he": "קבצים מצורפים שיישלחו ל-AI עם הבקשה (שרטוט מסומן, תכנון מקורי, דפי קטלוג)"},
+    "mail_target": {"en": "File under document", "he": "לשייך למסמך"},
+    "mail_why": {"en": "Why this document", "he": "למה המסמך הזה"},
+    "mail_no_match": {"en": "No document matched the mail - choose one from the list.",
+                      "he": "אף מסמך לא תאם למייל - בחרו מהרשימה."},
+    "mail_no_documents": {"en": "There are no documents yet - create a project and a document first.",
+                          "he": "אין עדיין מסמכים - צרו קודם פרויקט ומסמך."},
+    "mail_no_drawing": {"en": "This document has no rendered drawing yet, so the mail can only be filed.",
+                        "he": "למסמך הזה אין עדיין שרטוט מופק, ולכן אפשר רק לשמור את המייל."},
+    "mail_file_only": {"en": "File the mail only", "he": "רק לשמור את המייל"},
+    "mail_revise": {"en": "File and revise the drawing", "he": "לשמור ולתקן את השרטוט"},
+    "mail_filed": {"en": "The mail and {n} attached files were filed under {doc}",
+                   "he": "המייל ו-{n} קבצים מצורפים נשמרו במסמך {doc}"},
+    "mail_import_hint": {"en": "E-mail files are handled in the Mail page: it finds the document and revises "
+                               "the drawing.",
+                         "he": "קבצי מייל מטופלים במסך המייל: הוא מוצא את המסמך ומתקן את השרטוט."},
+    "open_document": {"en": "Open the document", "he": "פתח את המסמך"},
+    # Claude API errors, explained
+    "api_no_credit": {"en": "The office Anthropic account has no credit left, so the AI cannot run. Load credit "
+                            "at console.anthropic.com (Plans & Billing) and try again.",
+                      "he": "נגמר הקרדיט בחשבון Anthropic של המשרד, ולכן ה-AI לא יכול לפעול. טוענים קרדיט "
+                            "ב-console.anthropic.com (תחת Plans & Billing) ומנסים שוב."},
+    "api_bad_key": {"en": "The Anthropic API key is wrong or was revoked - check it in Settings.",
+                    "he": "מפתח ה-API של Anthropic שגוי או בוטל - בדקו אותו במסך ההגדרות."},
+    "api_no_permission": {"en": "This API key may not use the model - check its permissions in the Anthropic "
+                                "console.",
+                          "he": "למפתח ה-API הזה אין הרשאה למודל - בדקו את ההרשאות שלו בקונסולת Anthropic."},
+    "api_rate_limit": {"en": "Anthropic is limiting requests right now (rate limit) - wait a minute and try again.",
+                       "he": "Anthropic מגבילה כרגע את הבקשות (rate limit) - חכו דקה ונסו שוב."},
+    "api_server": {"en": "Temporary fault at Anthropic's servers - try again in a few minutes.",
+                   "he": "תקלה זמנית בשרתי Anthropic - נסו שוב בעוד כמה דקות."},
+    "api_offline": {"en": "No connection to Anthropic - check the internet connection (and the proxy / firewall).",
+                    "he": "אין חיבור ל-Anthropic - בדקו את חיבור האינטרנט (ואת ה-proxy / חומת האש)."},
+    "api_timeout": {"en": "Anthropic did not answer in time - try again; a smaller request may help.",
+                    "he": "Anthropic לא ענתה בזמן - נסו שוב; בקשה קטנה יותר עשויה לעזור."},
+    "api_rejected": {"en": "Anthropic rejected the request.", "he": "Anthropic דחתה את הבקשה."},
 }
 
 

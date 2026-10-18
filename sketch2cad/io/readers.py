@@ -23,7 +23,8 @@ from .pdf2dxf import has_hebrew, text_lines
 PREVIEW_DPI = 150
 MAX_PX = 2000
 IMAGE_EXT = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp", ".heic", ".heif", ".gif"}
-KINDS = {".dxf": "dxf", ".dwg": "dwg", ".pdf": "pdf", ".ifc": "ifc", ".rvt": "rvt", ".rfa": "rvt"}
+KINDS = {".dxf": "dxf", ".dwg": "dwg", ".pdf": "pdf", ".ifc": "ifc", ".rvt": "rvt", ".rfa": "rvt",
+         ".msg": "mail", ".eml": "mail"}
 RVT_WARNING = ("Revit files (RVT) cannot be read locally: there is no free reader. Ask the designer "
                "for IFC or DWG (standard deliverables), or export IFC from Revit. Alternative: "
                "Autodesk APS Model Derivative (free monthly quota, needs an Autodesk account).")
@@ -31,7 +32,7 @@ RVT_WARNING = ("Revit files (RVT) cannot be read locally: there is no free reade
 
 @dataclass
 class FileInfo:
-    kind: str                          # dxf | dwg | pdf | image | ifc | rvt | other
+    kind: str                          # dxf | dwg | pdf | image | ifc | rvt | mail | other
     pages: int = 0
     text: str = ""
     preview_png: Path | None = None
@@ -66,6 +67,8 @@ def read_any(path: Path | str, out_dir: Path | str) -> FileInfo:
         return _read_ifc(path, out_dir, preview)
     if kind == "rvt":
         return FileInfo("rvt", warnings=[RVT_WARNING])
+    if kind == "mail":
+        return _read_mail(path)
     return FileInfo("other", warnings=[f"Unsupported file type: {ext or '(none)'}"])
 
 
@@ -209,3 +212,13 @@ def _read_ifc(path: Path, out_dir: Path, preview: Path) -> FileInfo:
     except Exception as exc:                                     # geometry is best effort
         info.warnings.append(f"No plan preview: {exc}")
     return info
+
+
+def _read_mail(path: Path) -> FileInfo:
+    """An e-mail (.msg / .eml): headers and text for the index; `pages` = number of attached files."""
+    from ..mail import mail_text, read_mail
+    try:
+        m = read_mail(path)
+    except Exception as exc:  # noqa: BLE001 - a broken mail file is reported, never fatal
+        return FileInfo("mail", warnings=[f"{path.name}: {exc}"])
+    return FileInfo("mail", pages=len(m.files), text=mail_text(m), warnings=list(m.warnings))
