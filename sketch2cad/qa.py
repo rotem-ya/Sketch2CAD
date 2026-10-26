@@ -151,6 +151,7 @@ def review(spec: dict, catalog=None, project=None) -> Review:
         findings += _text_standards(scene, cfg)
         findings += _lineweights(scene, cfg)
         findings += _submission(scene.doc, cfg)
+    findings += _omitted_strings(spec, catalog, project)
     return Review(cfg, scene, findings)
 
 
@@ -259,6 +260,51 @@ def _hygiene(spec, catalog) -> list[Finding]:
         for i, line in enumerate(notes.get(lang) or []):
             out += _unknown_refs(str(line), f"note:{lang}:{i + 1}", known, catalog)
     return out
+
+
+def _omitted_strings(spec, catalog, project) -> list[Finding]:
+    """Note strings that a multi-view sheet did not draw.
+
+    Single-view sheets are checked by the model-space layout. A multi-view sheet draws notes in
+    paper space, so this reads that sheet and reports every spec note that is absent.
+    """
+    if not any(isinstance(view, dict) for view in (spec.get("views") or [])):
+        return []
+    notes = spec.get("notes") or {}
+    lines = []
+    if isinstance(notes, dict):
+        for lang in ("en", "he"):
+            for line in notes.get(lang) or []:
+                text = str(line).strip()
+                if text:
+                    lines.append(text)
+    if not lines:
+        return []
+    import tempfile
+
+    import ezdxf
+
+    from .drawing import render
+
+    with tempfile.TemporaryDirectory() as tmp:
+        res = render(spec, tmp, "qa_notes", formats=("dxf",), catalog=catalog, project=project)
+        doc = ezdxf.readfile(res["dxf"])
+    chunks = []
+    layouts = [doc.modelspace()]
+    sheet = doc.layouts.get("SHEET") if "SHEET" in doc.layouts else None
+    if sheet is not None:
+        layouts.append(sheet)
+    for layout in layouts:
+        for entity in layout.query("TEXT MTEXT"):
+            chunks.append(entity.text if entity.dxftype() == "MTEXT" else entity.dxf.text)
+    blob = "\n".join(chunks).replace("\\P", " ")
+    missing = [line for line in lines if line not in blob]
+    if not missing:
+        return []
+    shown = "; ".join(missing[:8])
+    return [Finding("error", "omitted_strings",
+                     f"Notes omitted from the sheet: {shown}",
+                     f"הערות חסרות בגיליון: {shown}", "notes")]
 
 
 def _blob(value) -> str:

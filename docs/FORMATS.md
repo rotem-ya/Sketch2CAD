@@ -135,9 +135,12 @@ adds further views on the same sheet. A spec with no `views` key is unchanged.
 `scale: "auto"` keeps a readable floor: a detail is 1:50 or larger, a section (also an elevation or a
 profile) is 1:100 or larger, and a plan is 1:500 or larger. The main view is scaled first, into the paper
 left after those floors. A side view then grows finer if the sheet still packs. A callout or a label that
-sits far from that view's geometry does not set its size, and `fit_mm` is only for `"NTS"`. When the floors
-do not all fit, the sheet says so and names a larger sheet; a view is still given a viewport, in the notes
-column when that is the room that is left. A view is not left out of every viewport.
+sits far from that view's geometry does not set its size, and `fit_mm` is only for `"NTS"`. Every viewport
+uses a standard scale. An auto view that does not fit steps to the next coarser standard scale and the
+viewport is shrunk to match; a fixed scale is kept exactly. When the floors and the notes do not all fit,
+the sheet says so and names a larger sheet (A2/A1). The notes column is reserved before the views are
+packed and is never given to a view. Notes try 2.0 mm, then English and Hebrew side by side, then a free
+strip, and are reported as omitted only when none of those fit.
 
 The sheet `scale` is the primary view. When another view uses a different scale, including `"auto"` or `"NTS"`,
 the title block reads `AS SHOWN / כמצוין` instead of `SCALE 1:n`. A bare primary title such as `plan` is drawn

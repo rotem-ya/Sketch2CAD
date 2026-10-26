@@ -19,7 +19,7 @@ from ezdxf.math import Matrix44, Vec2
 from .. import templates
 from . import components, dims, legend, place
 from .context import LTSCALE_FACTOR, DrawContext
-from .layout import content_extents
+from .layout import STANDARD_SCALES, content_extents
 from .text import LINE_SPACING, put_text, text_width
 
 ELEMENT_ERRORS = (KeyError, ValueError, TypeError, IndexError, ZeroDivisionError)
@@ -820,57 +820,42 @@ def _reserve_side(area: dict, template: dict, needed: bool) -> dict:
     return shrunk
 
 
-def _area_with_column(area: dict) -> dict:
-    """The packing area plus the notes column, when that column was held back."""
-    box = area.get("legend_box")
-    if not isinstance(box, dict):
-        return area
-    widened = dict(area)
-    widened["w"] = float(area["w"]) + float(box["w"])
-    widened.pop("legend_box", None)
-    return widened
-
-
 def _assign_auto_scales(auto_specs, primary_item, fixed_items, auto_item, area, frame_size,
                         unit: float, language: str) -> tuple[dict, dict]:
     """Readable floor per auto view, then a finer scale when the sheet still packs.
 
     The primary scale is already the largest that fits the space these floors leave. Each side
-    view starts at its own floor and grows (a smaller denominator) only while every view still
-    packs. Nothing is made coarser than its floor. When the floors do not pack, the notes
-    column is opened and tried.
+    view starts at its floor and grows only while every view still packs. The notes column is
+    not used for a view. A view that still does not fit is snapped later, to the next coarser
+    standard scale, without taking the notes column.
     """
     if not auto_specs:
         return {}, area
     fw, fh = frame_size["w"], frame_size["h"]
     scales = {str(view.get("id")): _view_floor(view) for view in auto_specs}
 
-    def fits(scale_map: dict, pack_area: dict) -> bool:
+    def fits(scale_map: dict) -> bool:
         items = [primary_item(), *fixed_items()]
         for view in auto_specs:
             vid = str(view.get("id"))
             items.append(auto_item(view, scale_map[vid]))
-        _pack(pack_area, items, fw, fh)
+        _pack(area, items, fw, fh)
         return not any(item.get("skip") for item in items)
 
-    pack_area = area
-    if not fits(scales, pack_area):
-        widened = _area_with_column(area)
-        if widened is not area:
-            pack_area = widened
-    for view in auto_specs:
-        vid = str(view.get("id"))
-        floor = scales[vid]
-        for candidate in FIT_SCALES:
-            if candidate > floor + 1e-6:
-                break
-            if candidate + 1e-6 >= floor:
-                break
-            trial = {**scales, vid: float(candidate)}
-            if fits(trial, pack_area):
-                scales[vid] = float(candidate)
-                break
-    return scales, pack_area
+    if fits(scales):
+        for view in auto_specs:
+            vid = str(view.get("id"))
+            floor = scales[vid]
+            for candidate in FIT_SCALES:
+                if candidate > floor + 1e-6:
+                    break
+                if candidate + 1e-6 >= floor:
+                    break
+                trial = {**scales, vid: float(candidate)}
+                if fits(trial):
+                    scales[vid] = float(candidate)
+                    break
+    return scales, area
 
 
 def _scale_advice(item: dict, free_w: float, free_h: float) -> float | None:
@@ -954,9 +939,6 @@ def _fit_into(area: dict, item: dict, occupied: list, template: dict):
     hole = _largest_hole(area, occupied, 0.0)
     if hole:
         holes.append(hole)
-    legend = area.get("legend_box")
-    if isinstance(legend, dict):
-        holes.append((float(legend["x"]), float(legend["y"]), float(legend["w"]), float(legend["h"])))
     x0, y0, x1, y1 = item["bbox"]
     model_w = max(x1 - x0, 1e-6)
     model_h = max(y1 - y0, 1e-6)
@@ -1064,7 +1046,8 @@ def compose(ctx: DrawContext, spec: dict, template: dict, values: dict, language
         auto_specs, primary_item, fixed_items, auto_item, area, frame_size, ctx.u, language)
     for view in auto_specs:
         content = _auto_view_content(view, ctx.u)
-        draw_at({**content, "scale": chosen.get(str(view.get("id")), _view_floor(view))}, auto=True)
+        scale = chosen.get(str(view.get("id")), _view_floor(view))
+        draw_at({**content, "scale": scale}, auto=True)
 
     ctx.doc.header["$PSLTSCALE"] = 1
     ctx.doc.header["$LTSCALE"] = LTSCALE_FACTOR          # paper mm; viewport scale equalises dashes
@@ -1107,40 +1090,69 @@ def compose(ctx: DrawContext, spec: dict, template: dict, values: dict, language
         return True
 
     rects = templates.draw_titleblock(psp, template, values, 1, "mm", origin=frame, language=language)
-    column_taken = False
+
+    def place_fitted(item, scale: float):
+        """A viewport at exactly `scale`, shrunk to that scale, or None when the slot does not fit."""
+        pw, ph, world_h = _paper_at(item, scale)
+        band = _caption_band()
+        slot_w = max(pw, float(item.get("caption_w") or 0.0))
+        slot_h = ph + band
+        hole = _largest_hole(pack_area, occupied, 0.0)
+        if hole is None:
+            return None
+        hx, hy, fw, fh = hole
+        if slot_w > fw + 1e-6 or slot_h > fh + 1e-6:
+            return None
+        x = hx + max(0.0, (fw - slot_w) / 2.0)
+        y = hy + max(0.0, (fh - slot_h) / 2.0)
+        vp_x = x + max(0.0, slot_w - pw) / 2.0
+        if _hits_titleblock(vp_x, y, pw, ph, template):
+            return None
+        left, bottom = frame.x + vp_x, frame.y + y
+        if (left < -1e-4 or bottom < -1e-4 or left + pw > float(paper["w"]) + 1e-4
+                or bottom + ph > float(paper["h"]) + 1e-4):
+            return None
+        return vp_x, y, pw, ph, slot_w, slot_h, world_h
+
     for index, item in enumerate(items):
+        if not item.get("nts"):
+            note = _readability_warning(item["key"], item.get("title"), float(item["numeric"]))
+            if note and not item.get("auto"):
+                ctx.warnings.append(note)
         if item.get("skip"):
             ctx.warnings.append(_view_fit_warning(item, area))
-            fitted = _fit_into(pack_area, item, occupied, template)
-            if fitted is None:
-                ctx.warnings.append(
-                    f"ERROR: view {item['key']!r} could not be placed in any free rectangle. "
-                    f"Use a larger sheet")
-                continue
-            vp_x, y, pw, ph, slot_w, slot_h = fitted
-            legend = pack_area.get("legend_box")
-            if isinstance(legend, dict) and vp_x >= float(legend["x"]) - 1e-6:
-                column_taken = True
-            x0, y0, x1, y1 = item["bbox"]
-            model_w = max(x1 - x0, 0.0)
-            model_h = max(y1 - y0, 0.0)
-            world_h = max(model_h, model_w * ph / pw) if pw > 1e-9 else ph * item["k"]
+            fitted = None
             label = item["scale_label"]
-            if not item.get("nts") and ph > 1e-9 and item["numeric"] and item["k"]:
-                unit = item["k"] / float(item["numeric"])
-                if unit > 1e-12 and world_h > 1e-9:
-                    shown = world_h / ph / unit
-                    label = _scale_label(shown, False)
-                    floor = _role_floor(f"{item.get('key') or ''} {item.get('title') or ''}")
-                    readable = item.get("auto") or (item.get("key") == "primary" and spec.get("_s2c_auto_scale"))
-                    if readable and shown > floor + 0.5:
-                        ctx.warnings.append(
-                            f"ERROR: view {item['key']!r} is at 1:{shown:.0f}, coarser than the readable "
-                            f"1:{floor:g}. Use a larger sheet")
-            left, bottom = frame.x + vp_x, frame.y + y
-            if (left < -1e-4 or bottom < -1e-4 or left + pw > float(paper["w"]) + 1e-4
-                    or bottom + ph > float(paper["h"]) + 1e-4):
+            if item.get("nts"):
+                raw = _fit_into(pack_area, item, occupied, template)
+                if raw:
+                    vp_x, y, pw, ph, slot_w, slot_h = raw
+                    x0, y0, x1, y1 = item["bbox"]
+                    world_h = max(y1 - y0, (x1 - x0) * ph / pw) if pw > 1e-9 else ph * item["k"]
+                    fitted = (vp_x, y, pw, ph, slot_w, slot_h, world_h)
+            elif item.get("auto"):
+                # Next coarser standard whose exact paper size fits the hole. The viewport is
+                # shrunk to that scale, so the label is never 1:84.1671.
+                coarser = [float(scale) for scale in FIT_SCALES if scale + 1e-6 >= float(item["numeric"])]
+                coarser += [float(scale) for scale in STANDARD_SCALES if scale > (coarser[-1] if coarser else 0) + 1e-6]
+                for scale in coarser:
+                    fitted = place_fitted(item, scale)
+                    if fitted:
+                        label = _scale_label(scale, False)
+                        note = _readability_warning(item["key"], item.get("title"), scale)
+                        if note:
+                            ctx.warnings.append(note)
+                        break
+            else:
+                fitted = place_fitted(item, float(item["numeric"]))
+                label = item["scale_label"]
+            if fitted is None:
+                if not item.get("nts"):
+                    ctx.warnings.append(
+                        f"ERROR: view {item['key']!r} keeps 1:{float(item['numeric']):g} and does not fit. "
+                        f"Use a larger sheet (A2/A1)")
                 continue
+            vp_x, y, pw, ph, slot_w, slot_h, world_h = fitted
             if add_viewport(item, vp_x, y, pw, ph, index, world_h, label):
                 occupied.append((vp_x - max(0.0, slot_w - pw) / 2, y,
                                  vp_x - max(0.0, slot_w - pw) / 2 + slot_w, y + slot_h))
@@ -1154,18 +1166,14 @@ def compose(ctx: DrawContext, spec: dict, template: dict, values: dict, language
         if _hits_titleblock(vp_x, y, pw, ph, template):
             ctx.warnings.append(
                 f"ERROR: view {item['key']!r} would overlap the title block - "
-                f"not placed off the sheet. Use a larger sheet")
+                f"not placed off the sheet. Use a larger sheet (A2/A1)")
             continue
-        x0, y0, x1, y1 = item["bbox"]
         k = item["k"]
-        pad = VIEW_PAD_MM * k
-        world_h = max(y1 - y0, 0.0) + 2 * pad
+        # ph already includes the minimum model height, so view_height / ph is exactly this scale.
+        world_h = ph * k
         add_viewport(item, vp_x, y, pw, ph, index, world_h, item["scale_label"])
 
-    notes_area = dict(area)
-    if column_taken:
-        notes_area.pop("legend_box", None)
-    _place_sheet_notes(ctx, spec, template, psp, frame, notes_area)
+    _place_sheet_notes(ctx, spec, template, psp, frame, pack_area, occupied)
     return rects, psp.name
 
 
@@ -1177,8 +1185,8 @@ def _view_fit_warning(item: dict, area: dict) -> str:
             f"not placed off the sheet.")
     better = _scale_advice(item, free_w, free_h)
     if better is None:
-        return f"{base} Use a larger sheet"
-    return f"{base} Consider 1:{better:g} or a larger sheet"
+        return f"{base} Use a larger sheet (A2/A1)"
+    return f"{base} Consider 1:{better:g} or a larger sheet (A2/A1)"
 
 
 def _has_notes(notes) -> bool:
@@ -1186,28 +1194,116 @@ def _has_notes(notes) -> bool:
     return bool(notes.get("en") or notes.get("he"))
 
 
-def _place_sheet_notes(ctx, spec, template, psp, frame: Vec2, area: dict) -> None:
-    """Legend and notes are paper-space text. `legend_at` / `notes_at` are frame millimetres."""
+def _readability_warning(key: str, title, scale: float) -> str | None:
+    """An error when `scale` is coarser than the role's readable floor."""
+    if isinstance(title, dict):
+        title = f"{title.get('en') or ''} {title.get('he') or ''}"
+    floor = _role_floor(f"{key} {title or ''}")
+    if scale > floor + 0.5:
+        return (f"ERROR: view {key!r} is at 1:{scale:g}, coarser than the readable "
+                f"1:{floor:g}. Use a larger sheet (A2/A1)")
+    return None
+
+
+def _paper_at(item: dict, scale: float) -> tuple[float, float, float]:
+    """Paper width, paper height and model view height of `item` at exactly `scale`."""
+    numeric = float(item["numeric"])
+    unit = float(item["k"]) / numeric if numeric else 1.0
+    k = max(scale, 1e-9) * unit
+    x0, y0, x1, y1 = item["bbox"]
+    pad = VIEW_PAD_MM * k
+    world_w = max(x1 - x0, k) + 2 * pad
+    world_h = max(y1 - y0, k) + 2 * pad
+    return world_w / k, world_h / k, world_h
+
+
+def _note_strings(notes) -> list[str]:
+    notes = notes or {}
+    found = []
+    for lang in ("en", "he"):
+        for line in notes.get(lang) or []:
+            text = str(line).strip()
+            if text:
+                found.append(text)
+    return found
+
+
+def _note_candidates(paper, notes, width: float) -> list:
+    """Stacked, then 2.0 mm, then English and Hebrew side by side, then both at 2.0 mm."""
+    half = max(40.0, (float(width) - 6.0) / 2.0)
+    options = (
+        {"width": width},
+        {"width": width, "height": 2.0},
+        {"width": half, "columns": True},
+        {"width": half, "height": 2.0, "columns": True},
+    )
+    blocks = []
+    for option in options:
+        block = legend.notes_block(paper, notes, **option)
+        if block is not None:
+            blocks.append(block)
+    return blocks
+
+
+def _block_fits(block, box: dict) -> bool:
+    return block.width <= float(box["w"]) + 1e-6 and block.height <= float(box["h"]) + 1e-6
+
+
+def _place_sheet_notes(ctx, spec, template, psp, frame: Vec2, area: dict, occupied: list) -> None:
+    """Legend and notes are paper-space text. The notes column is never given to a view.
+
+    Notes try the reserved column at the style height, then 2.0 mm, then English and Hebrew
+    side by side, then a free strip. They are not dropped while one of those fits. When none
+    fits, the sheet reports the strings and QA can flag them as omitted.
+    """
     paper = ctx.for_paper(psp)
     column = template.get("legend_area") or area.get("legend_box")
-    max_w = column["w"] if column else None
-    pending = []
-    table = legend.legend_table(paper, spec.get("legend") or [], max_w)
-    notes = legend.notes_block(paper, spec.get("notes"), max_w)
-    if table:
-        pending.append((table, spec.get("legend_at")))
-    if notes:
-        pending.append((notes, spec.get("notes_at")))
-    if not pending:
-        return
-    if column is None and any(at is None for _, at in pending):
-        ctx.warnings.append("legend / notes have no paper position on this multi-view sheet")
-    y_top = (column["y"] + column["h"]) if column else 0.0
-    for block, at in pending:
-        if at:
-            block.draw(frame + Vec2(at))
-            continue
-        if column is None:
-            continue
-        block.draw(frame + Vec2(column["x"], y_top))
-        y_top -= block.height + 4.0
+    strings = _note_strings(spec.get("notes"))
+    table = legend.legend_table(paper, spec.get("legend") or [], column["w"] if column else None)
+    if table and spec.get("legend_at"):
+        table.draw(frame + Vec2(spec.get("legend_at")))
+        table = None
+    if strings and spec.get("notes_at"):
+        block = legend.notes_block(paper, spec.get("notes"), column["w"] if column else None)
+        if block:
+            block.draw(frame + Vec2(spec.get("notes_at")))
+        strings = []
+
+    slots = []
+    if isinstance(column, dict):
+        slots.append(column)
+    hole = _largest_hole(area, occupied, 0.0)
+    if hole and hole[2] >= 40 and hole[3] >= 12:
+        slots.append({"x": hole[0], "y": hole[1], "w": hole[2], "h": hole[3]})
+
+    legend_drawn = table is None or bool(spec.get("legend_at"))
+    if strings:
+        chosen = slot = None
+        for box in slots:
+            room = dict(box)
+            if table and not legend_drawn and box is column:
+                room["h"] = float(box["h"]) - table.height - 4.0
+            if room["h"] < 8:
+                continue
+            for block in _note_candidates(paper, spec.get("notes"), room["w"]):
+                if _block_fits(block, room):
+                    chosen, slot = block, box
+                    break
+            if chosen:
+                break
+        if chosen is None:
+            ctx.warnings.append(
+                "ERROR: notes do not fit on this multi-view sheet. Use a larger sheet (A2/A1). "
+                "Omitted: " + "; ".join(strings))
+        else:
+            y_top = float(slot["y"]) + float(slot["h"])
+            if table and not legend_drawn and slot is column:
+                table.draw(frame + Vec2(slot["x"], y_top))
+                y_top -= table.height + 4.0
+                legend_drawn = True
+            chosen.draw(frame + Vec2(slot["x"], y_top))
+    if table and not legend_drawn:
+        if isinstance(column, dict):
+            table.draw(frame + Vec2(column["x"], float(column["y"]) + float(column["h"])))
+        else:
+            ctx.warnings.append("legend / notes have no paper position on this multi-view sheet")

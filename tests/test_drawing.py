@@ -756,8 +756,10 @@ def test_oversized_view_is_not_placed_off_the_sheet(tmp_path):
                                      "corners": [[0, 0], [30, 20]]}]}]}
     res = render(spec, tmp_path, "huge", formats=("dxf",))
     assert any(w.startswith("ERROR:") and "huge" in w and "not placed off the sheet" in w
-               and "larger sheet" in w for w in res["warnings"]), res["warnings"]
+               and "larger sheet" in w and "A2/A1" in w for w in res["warnings"]), res["warnings"]
     doc = ezdxf.readfile(res["dxf"])
+    from sketch2cad.drawing.layout import STANDARD_SCALES
+    assert all(scale in STANDARD_SCALES for scale in _viewport_scales(doc, "m"))
     psp = doc.layouts.get("SHEET")
     for vp in psp.query("VIEWPORT"):
         if vp.dxf.status <= 1:
@@ -1311,6 +1313,23 @@ def _side_views():
     ]
 
 
+def _assert_standard_scales(doc, units: str) -> list[float]:
+    from sketch2cad.drawing.layout import STANDARD_SCALES
+
+    scales = _viewport_scales(doc, units)
+    assert scales and all(scale in STANDARD_SCALES for scale in scales), scales
+    return scales
+
+
+def _sheet_blob(doc) -> str:
+    layouts = [doc.modelspace(), doc.layouts.get("SHEET")]
+    chunks = []
+    for layout in layouts:
+        for entity in layout.query("TEXT MTEXT"):
+            chunks.append(entity.text if entity.dxftype() == "MTEXT" else entity.dxf.text)
+    return "\n".join(chunks).replace("\\P", " ")
+
+
 def test_auto_multiview_places_every_view(tmp_path):
     """The plan is scaled into the space the side views' readable floors leave, and every view is placed."""
     from ezdxf import bbox as ezbbox
@@ -1319,6 +1338,7 @@ def test_auto_multiview_places_every_view(tmp_path):
     spec = {
         "units": "m", "scale": "auto", "paper": "A3", "language": "both", "view": "plan",
         "sheet": {"template": "a3_simple"},
+        "notes": {"en": ["Keep the trench clear."], "he": ["השאר את התעלה נקייה."]},
         "elements": [{"id": "site", "type": "rect", "status": "existing",
                       "corners": [[0, 0], [90, 50]]}],
         "views": _side_views(),
@@ -1336,6 +1356,10 @@ def test_auto_multiview_places_every_view(tmp_path):
     assert sides and max(sides) <= 100 and min(sides) <= 50, windows
     assert overlapping_text(doc.modelspace()) == []
     assert _outside_viewports(doc, windows) == []
+    assert _assert_standard_scales(doc, "m")
+    blob = _sheet_blob(doc)
+    assert "Keep the trench clear." in blob and "השאר את התעלה נקייה." in blob
+    assert "no paper position" not in " ".join(res["warnings"])
     texts = [e.text if e.dxftype() == "MTEXT" else e.dxf.text for e in doc.modelspace().query("TEXT MTEXT")]
     assert not any("SITE NOTE" in text for text in texts)
     psp = doc.layouts.get("SHEET")
@@ -1353,6 +1377,7 @@ def test_fixed_plan_auto_views_are_placed(tmp_path):
     spec = {
         "units": "m", "scale": 500, "paper": "A3", "language": "both", "view": "plan",
         "sheet": {"template": "a3_simple"},
+        "notes": {"en": ["Keep the trench clear."], "he": ["השאר את התעלה נקייה."]},
         "elements": [{"id": "site", "type": "rect", "status": "existing",
                       "corners": [[0, 0], [80, 40]]}],
         "views": _side_views(),
@@ -1368,8 +1393,39 @@ def test_fixed_plan_auto_views_are_placed(tmp_path):
              if not (window[0] <= 40 <= window[2] and window[1] <= 20 <= window[3])]
     assert primary == pytest.approx(500, abs=1), windows
     assert sides and max(sides) <= 100 and min(sides) <= 50, windows
+    assert _assert_standard_scales(doc, "m")
+    blob = _sheet_blob(doc)
+    assert "Keep the trench clear." in blob and "השאר את התעלה נקייה." in blob
     assert overlapping_text(doc.modelspace()) == []
     assert _outside_viewports(doc, windows) == []
+
+
+def test_multiview_keeps_notes_and_fixed_scales(tmp_path):
+    """A fixed 1:50 and 1:25 stay exactly those scales, and the notes stay on the sheet."""
+    from sketch2cad.qa import review
+
+    spec = {
+        "units": "m", "scale": 400, "paper": "A3", "language": "both", "view": "plan",
+        "sheet": {"template": "a3_simple"},
+        "notes": {"en": ["Keep the trench clear."], "he": ["השאר את התעלה נקייה."]},
+        "elements": [{"id": "site", "type": "rect", "status": "existing",
+                      "corners": [[0, 0], [40, 20]]}],
+        "views": [
+            {"id": "section-a", "title": "SECTION A-A", "scale": 50,
+             "elements": [{"id": "ground", "type": "polyline", "status": "existing",
+                           "points": [[0, 0], [2, 0]]}]},
+            {"id": "detail-1", "title": "DETAIL 1", "scale": 25,
+             "elements": [{"id": "box", "type": "rect", "status": "new",
+                           "corners": [[0, 0], [1, 0.6]]}]},
+        ],
+    }
+    res = render(spec, tmp_path, "mv_fixed", formats=("dxf",))
+    assert not any("Omitted" in w or "no paper position" in w for w in res["warnings"]), res["warnings"]
+    doc = ezdxf.readfile(res["dxf"])
+    assert _viewport_scales(doc, "m") == [25.0, 50.0, 400.0]
+    blob = _sheet_blob(doc)
+    assert "Keep the trench clear." in blob and "השאר את התעלה נקייה." in blob
+    assert not any(finding.code == "omitted_strings" for finding in review(spec).findings)
 
 
 def test_nudged_dimension_text_is_stored_above_the_line(tmp_path):
