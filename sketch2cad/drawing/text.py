@@ -61,12 +61,27 @@ def plain(s: str) -> str:
     return s
 
 
-def _pin_measurement_font() -> None:
-    """Measure the ARIAL style with one bundled face on every operating system.
+# Names ezdxf uses when a style is missing ("txt") or when it picks a default face.
+# Each one is pointed at the bundled file so bbox never opens a system font.
+_PINNED_FONT_NAMES = (
+    FONT,
+    "txt",
+    "ArialUni.ttf",
+    "Arial Unicode.ttf",
+    "Arial.ttf",
+    "DejaVuSansCondensed.ttf",
+    "DejaVuSans.ttf",
+    "OpenSans-Regular.ttf",
+    "LiberationSans-Regular.ttf",
+)
 
-    The DXF style stays ``arial.ttf``. On Windows that name is the installed Arial, whose
-    advances differ from the Liberation Sans Linux already uses, and those differences move
-    labels onto views. The bundled file is that same Liberation Sans.
+
+def _pin_measurement_font() -> None:
+    """Measure every text lookup with the bundled Liberation Sans.
+
+    The DXF style name stays ``arial.ttf``. A document that never created that style is measured
+    as ``txt``, and ezdxf then opens its default face (DejaVu on Linux, Arial Unicode on Windows).
+    Those names, and the font manager's fallback, all resolve to the bundled file.
     """
     manager = fonts.font_manager
     manager.scan_folder(_BUNDLED_FONT.parent)
@@ -74,15 +89,18 @@ def _pin_measurement_font() -> None:
     entry = cache.get(_BUNDLED_FONT.name, manager.fallback_font_name())
     if Path(entry.file_path).resolve() != _BUNDLED_FONT.resolve():
         raise FileNotFoundError(_BUNDLED_FONT)
-    cache[FONT] = entry
+    for name in _PINNED_FONT_NAMES:
+        cache[name] = entry
+    manager._fallback_font_name = _BUNDLED_FONT.name
+    match_cache = getattr(manager, "_match_cache", None)
+    if isinstance(match_cache, dict):
+        match_cache.clear()
     loaded = getattr(manager, "_loaded_ttf_fonts", None)
     if isinstance(loaded, dict):
-        loaded.pop(FONT, None)
-        loaded.pop(_BUNDLED_FONT.name, None)
+        loaded.clear()
     glyphs = getattr(fonts.TrueTypeFont, "_glyph_caches", None)
     if isinstance(glyphs, dict):
-        glyphs.pop(FONT.lower(), None)
-        glyphs.pop(_BUNDLED_FONT.name.lower(), None)
+        glyphs.clear()
 
 
 _pin_measurement_font()

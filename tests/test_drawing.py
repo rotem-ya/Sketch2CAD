@@ -707,8 +707,76 @@ def test_text_is_measured_with_the_bundled_face():
     from sketch2cad.drawing import text as drawing_text
 
     manager = ezfonts.font_manager
-    entry = manager._font_cache.get(drawing_text.FONT, manager.fallback_font_name())
-    assert Path(entry.file_path).resolve() == drawing_text._BUNDLED_FONT.resolve()
+    bundled = drawing_text._BUNDLED_FONT.resolve()
+    for name in ("arial.ttf", "txt", manager.fallback_font_name()):
+        entry = manager._font_cache.get(name, manager.fallback_font_name())
+        assert Path(entry.file_path).resolve() == bundled
+
+
+def test_bundled_face_contains_hebrew():
+    from fontTools.ttLib import TTFont
+    from sketch2cad.drawing.text import _BUNDLED_FONT
+
+    face = TTFont(_BUNDLED_FONT)
+    version = " ".join(
+        rec.toUnicode() for rec in face["name"].names if rec.nameID == 5
+    )
+    assert "2.1.5" in version
+    cmap = face.getBestCmap()
+    missing = [ch for ch in "אבגדהוזחטיכלמנסעפצקרשת" if ord(ch) not in cmap]
+    assert missing == []
+
+
+def test_measurement_ignores_system_fonts(monkeypatch):
+    """Empty font search paths still measure with the bundled face, including a missing style."""
+    import ezdxf
+    from ezdxf.fonts import font_manager as fm_mod
+    from ezdxf.fonts import fonts as ezfonts
+    from sketch2cad.drawing import text as drawing_text
+    from sketch2cad.drawing.place import _entity_box, _overlaps
+    from sketch2cad.templates import draw_titleblock, load_template
+
+    sample = "תוכנית ניקוז כללית"
+    before = drawing_text.text_width(sample, 3.5)
+    manager = ezfonts.font_manager
+    try:
+        manager.clear()
+        monkeypatch.setattr(fm_mod, "WIN_FONT_DIRS", [])
+        monkeypatch.setattr(fm_mod, "LINUX_FONT_DIRS", [])
+        monkeypatch.setattr(fm_mod, "MACOS_FONT_DIRS", [])
+        monkeypatch.setattr(fm_mod, "FONT_DIRECTORIES", {"Linux": [], "Windows": [], "Darwin": []})
+        manager.build(support_dirs=False)
+        assert manager.has_font("DejaVuSans.ttf") is False
+        assert manager.has_font("ArialUni.ttf") is False
+        drawing_text.font.cache_clear()
+        drawing_text._pin_measurement_font()
+        drawing_text.font.cache_clear()
+        assert drawing_text.text_width(sample, 3.5) == before
+        bundled = drawing_text._BUNDLED_FONT.resolve()
+        for name in ("txt", "arial.ttf", "ArialUni.ttf", "DejaVuSans.ttf"):
+            entry = manager._font_cache.get(name, manager.fallback_font_name())
+            assert Path(entry.file_path).resolve() == bundled
+        doc = ezdxf.new()
+        assert "ARIAL" not in {style.dxf.name for style in doc.styles}
+        narrow = load_template("a3_simple")
+        narrow["fields"] = [{**field, "h": 3.5, "w": 80} if field["key"] == "title" else field
+                            for field in narrow["fields"]]
+        draw_titleblock(doc.modelspace(), narrow, {
+            "title_en": "DRAINAGE GENERAL ARRANGEMENT", "title_he": sample,
+            "scale": "400", "view": "PLAN"}, 1, "mm", language="both")
+        en_box = he_box = None
+        for entity in doc.modelspace().query("TEXT MTEXT"):
+            text = entity.text if entity.dxftype() == "MTEXT" else entity.dxf.text
+            if "DRAINAGE" in text:
+                en_box = _entity_box(entity)
+            if "ניקוז" in text:
+                he_box = _entity_box(entity)
+        assert en_box and he_box
+        assert not _overlaps(en_box, he_box, 1.0)
+    finally:
+        ezfonts.load()
+        drawing_text._pin_measurement_font()
+        drawing_text.font.cache_clear()
 
 
 def test_title_height_rounds_up_and_is_not_shrunk():

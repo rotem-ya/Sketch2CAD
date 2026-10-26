@@ -133,9 +133,42 @@ def test_stop_terminates_the_supervisor_from_the_pid_file(monkeypatch, capsys):
     monkeypatch.setattr(launcher, "terminate_pid", killed.append)
     monkeypatch.setattr(launcher, "pid_alive", lambda pid: True)
     monkeypatch.setattr(launcher, "_process_is_python", lambda pid: True)
+    monkeypatch.setattr(launcher, "_image_basename", lambda pid: "pythonw.exe" if pid == 4242 else None)
+    monkeypatch.setattr(launcher, "_child_pids", lambda pid: [])
     _alive(monkeypatch, [True, False])
     assert launcher.main(["--stop"]) == 0 and killed == [4242] and not launcher.pid_file().exists()
     assert "stopped" in capsys.readouterr().out
+
+
+def test_stop_kills_the_server_tree_only_after_the_image_matches(monkeypatch, capsys):
+    """The supervisor's child server is stopped too. A reused pid with another image is not."""
+    launcher.pid_file().write_text("4242", encoding="utf-8")
+    images = {4242: "pythonw.exe", 5001: "python.exe", 5002: "notepad.exe"}
+    children = {4242: [5001, 5002], 5001: [], 5002: []}
+    killed = []
+    monkeypatch.setattr(launcher, "terminate_pid", killed.append)
+    monkeypatch.setattr(launcher, "pid_alive", lambda pid: True)
+    monkeypatch.setattr(launcher, "_process_is_python", lambda pid: True)
+    monkeypatch.setattr(launcher, "_image_basename", lambda pid: images.get(pid))
+    monkeypatch.setattr(launcher, "_child_pids", lambda pid: list(children.get(pid, [])))
+    _alive(monkeypatch, [True, False])
+    assert launcher.main(["--stop"]) == 0
+    assert killed == [5001, 4242]
+    assert 5002 not in killed
+    assert not launcher.pid_file().exists()
+    assert "stopped" in capsys.readouterr().out
+
+
+def test_stop_does_not_kill_when_the_image_cannot_be_read(monkeypatch):
+    launcher.pid_file().write_text("4242", encoding="utf-8")
+    monkeypatch.setattr(launcher, "terminate_pid", lambda pid: pytest.fail("unverified pid must not be killed"))
+    monkeypatch.setattr(launcher, "pid_alive", lambda pid: True)
+    monkeypatch.setattr(launcher, "_process_is_python", lambda pid: True)
+    monkeypatch.setattr(launcher, "_image_basename", lambda pid: None)
+    monkeypatch.setattr(launcher, "_child_pids", lambda pid: [])
+    _alive(monkeypatch, [False])
+    assert launcher.main(["--stop"]) == 0
+    assert launcher.pid_file().read_text(encoding="utf-8").strip() == "4242"
 
 
 def test_stop_removes_a_stale_pid_without_killing(monkeypatch, capsys):
