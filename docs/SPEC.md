@@ -46,7 +46,7 @@ Sketch2CAD/
 | שפה | Python 3.12 | |
 | ממשק | Streamlit | מוכר לך, מהיר לפיתוח. המנוע לא תלוי בו, אז אפשר להחליף אותו בעתיד |
 | DXF | ezdxf | נבדק בסשן הזה |
-| DWG | ODA File Converter, מותקן בנפרד | חינם לשימוש פנימי. הנתיב אליו מוגדר בהגדרות |
+| DWG | ODA File Converter, או accoreconsole של AutoCAD / AutoCAD LT | ODA מוגדר בהגדרות. accoreconsole נמצא אוטומטית כשהוא מותקן |
 | PDF | PyMuPDF | תצוגה, טקסט וגרפיקה וקטורית. ⚠️ רישיון AGPL: תקין לשימוש פנימי |
 | עברית | python-bidi | רק ליצירת PDF ותמונות. ב-DXF ו-DWG העברית נשמרת בסדר רגיל (נבדק ב-AutoCAD) |
 | חיפוש | SQLite FTS5 | מובנה, ללא שרת |

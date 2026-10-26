@@ -1,5 +1,6 @@
 """DWG <-> DXF through the ODA File Converter (free, installed separately), or - when ODA is not
-installed - through AutoCAD itself (accoreconsole.exe, the AutoCAD Core Console; not in AutoCAD LT).
+installed - through AutoCAD (accoreconsole.exe). Some AutoCAD LT installs ship that console too;
+it is used when it is on disk.
 
 Both converters run on a private temp copy of the source; the result is copied to the target folder.
 """
@@ -14,6 +15,7 @@ import tempfile
 from pathlib import Path
 
 from ..config import Settings
+from ..procutil import run as hidden_run
 
 TIMEOUT_S = 180
 WINDOWS_GLOBS = (r"C:\Program Files\ODA\ODAFileConverter*\ODAFileConverter.exe",
@@ -88,14 +90,13 @@ def convert(src: Path | str, fmt: str, out_dir: Path | str | None = None, *,
     if acad:
         return _convert_autocad(acad, src, fmt, dest)
     raise ConverterNotFound(
-        "No DWG converter found. Install ODA File Converter (free, opendesign.com) and set its path in "
-        "Settings, or install full AutoCAD (its accoreconsole.exe is used automatically).")
+        "No DWG converter found. Set the ODA File Converter path in Settings.")
 
 
 def _run(cmd: list[str], name: str) -> subprocess.CompletedProcess:
-    flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+    """ODA and accoreconsole, with no console and no window on Windows."""
     try:
-        return subprocess.run(cmd, capture_output=True, timeout=TIMEOUT_S, creationflags=flags)
+        return hidden_run(cmd, capture_output=True, timeout=TIMEOUT_S)
     except subprocess.TimeoutExpired as exc:
         raise RuntimeError(f"Conversion of {name} timed out after {TIMEOUT_S} s") from exc
 

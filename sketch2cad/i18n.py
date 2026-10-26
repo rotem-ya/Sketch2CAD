@@ -11,7 +11,7 @@ STRINGS: dict[str, dict[str, str]] = {
     "none": {"en": "(none)", "he": "(ללא)"},
     # projects
     "projects": {"en": "Projects", "he": "פרויקטים"},
-    "no_projects": {"en": "No projects yet - create one below.", "he": "אין עדיין פרויקטים - צור פרויקט חדש למטה."},
+    "no_projects": {"en": "No projects yet. Create one below.", "he": "אין עדיין פרויקטים. צרו פרויקט למטה."},
     "open": {"en": "Open", "he": "פתח"},
     "new_project": {"en": "New project", "he": "פרויקט חדש"},
     "project_code": {"en": "Project code", "he": "קוד פרויקט"},
@@ -20,13 +20,13 @@ STRINGS: dict[str, dict[str, str]] = {
     "client": {"en": "Client", "he": "מזמין"},
     "parent_folder": {"en": "Parent folder (the project folder is created inside)",
                       "he": "תיקיית אב (תיקיית הפרויקט תיווצר בתוכה)"},
-    "code_pattern": {"en": "Document code pattern", "he": "תבנית קוד מסמך"},
-    "code_pattern_help": {"en": "Tokens: {PRJ} {DISC} {SUBJ} {TYPE} {YYYY} {SEQ:02}",
-                          "he": "אסימונים: {PRJ} {DISC} {SUBJ} {TYPE} {YYYY} {SEQ:02}"},
-    "drawing_language": {"en": "Drawing text language", "he": "שפת הטקסט בשרטוטים"},
+    "code_pattern": {"en": "Drawing code pattern", "he": "תבנית קוד שרטוט"},
+    "code_pattern_help": {"en": "Fields: {PRJ} {DISC} {SUBJ} {TYPE} {YYYY} {SEQ:02}",
+                          "he": "שדות: {PRJ} {DISC} {SUBJ} {TYPE} {YYYY} {SEQ:02}"},
+    "drawing_language": {"en": "Drawing language", "he": "שפת השרטוט"},
     "lang_en": {"en": "English", "he": "אנגלית"},
     "lang_he": {"en": "Hebrew", "he": "עברית"},
-    "lang_both": {"en": "Both (bilingual)", "he": "שתיהן (דו-לשוני)"},
+    "lang_both": {"en": "Hebrew and English", "he": "עברית ואנגלית"},
     "create": {"en": "Create", "he": "צור"},
     "contractor": {"en": "Contractor", "he": "קבלן"},
     "location": {"en": "Location", "he": "מיקום"},
@@ -37,12 +37,12 @@ STRINGS: dict[str, dict[str, str]] = {
     "update_available": {"en": "A new version is available", "he": "יש גרסה חדשה"},
     "update_now": {"en": "Update now", "he": "עדכן עכשיו"},
     "up_to_date": {"en": "You have the latest version", "he": "הגרסה מעודכנת"},
-    "updating": {"en": "Updating - the program will close and reopen in a minute.",
-                 "he": "מעדכן - התוכנה תיסגר ותיפתח מחדש בעוד כדקה."},
-    "update_check_failed": {"en": "Could not check for updates (no internet?)",
-                            "he": "לא ניתן לבדוק עדכונים (אין אינטרנט?)"},
-    "update_manual": {"en": "To update: close the program and double-click update.bat.",
-                      "he": "לעדכון: סגור את התוכנה והפעל את update.bat."},
+    "updating": {"en": "Updating. The program will close and open again.",
+                 "he": "מתבצע עדכון. התוכנה תיסגר ותיפתח שוב."},
+    "update_check_failed": {"en": "Could not check for updates.",
+                            "he": "לא ניתן לבדוק עדכונים."},
+    "update_manual": {"en": "To update, close the program and run update.bat.",
+                      "he": "לעדכון, סגרו את התוכנה והפעילו את update.bat."},
     "browse": {"en": "Browse", "he": "בחר"},
     "code_required": {"en": "Enter a project code", "he": "יש להזין קוד פרויקט"},
     "parent_required": {"en": "Choose the parent folder", "he": "יש לבחור תיקיית אב"},
@@ -54,7 +54,7 @@ STRINGS: dict[str, dict[str, str]] = {
     "missing_folder": {"en": "Folder not found", "he": "התיקייה לא נמצאה"},
     "remove_from_list": {"en": "Remove from list", "he": "הסר מהרשימה"},
     # project page
-    "documents": {"en": "Documents", "he": "מסמכים"},
+    "documents": {"en": "Drawings", "he": "שרטוטים"},
     "project_settings": {"en": "Project settings", "he": "הגדרות פרויקט"},
     "folder": {"en": "Folder", "he": "תיקייה"},
     "filter_text": {"en": "Search in project (code, title, description, tags)",
@@ -71,28 +71,30 @@ STRINGS: dict[str, dict[str, str]] = {
     "subject": {"en": "Subject (short, for the code)", "he": "נושא (קצר, לקוד)"},
     "description": {"en": "Description", "he": "תיאור"},
     "tags": {"en": "Tags (comma separated)", "he": "תגיות (מופרדות בפסיק)"},
-    "new_document": {"en": "New document", "he": "מסמך חדש"},
+    "new_document": {"en": "New drawing", "he": "שרטוט חדש"},
     "code_preview": {"en": "Code will be", "he": "הקוד יהיה"},
-    "no_documents": {"en": "No documents.", "he": "אין מסמכים."},
+    "no_documents": {"en": "No drawings yet.", "he": "אין עדיין שרטוטים."},
     "save": {"en": "Save", "he": "שמור"},
     "saved": {"en": "Saved", "he": "נשמר"},
     "relocate": {"en": "Change project folder", "he": "שינוי תיקיית הפרויקט"},
     "relocate_move": {"en": "Move the project folder into this parent folder",
                       "he": "העבר את תיקיית הפרויקט לתוך תיקיית האב הזו"},
-    "relocate_link": {"en": "I already moved it - point to this folder",
-                      "he": "כבר העברתי אותה - קשר לתיקייה הזו"},
+    "relocate_link": {"en": "I already moved it. Point to this folder.",
+                      "he": "כבר העברתי אותה. קשרו לתיקייה הזו."},
     "new_location": {"en": "New location", "he": "מיקום חדש"},
     "apply": {"en": "Apply", "he": "בצע"},
     "disciplines_json": {"en": "Disciplines (JSON)", "he": "תחומים (JSON)"},
     # document page
     "back_to_project": {"en": "Back to project", "he": "חזרה לפרויקט"},
     "details": {"en": "Details", "he": "פרטים"},
-    "sources": {"en": "Sources (sketches, photos, PDF, DWG...)", "he": "מקורות (סקיצות, תמונות, PDF, DWG...)"},
+    "sources": {"en": "Sources", "he": "מקורות"},
+    "sources_help": {"en": "Sketches, photos, PDF and DWG. Their text is included in search.",
+                     "he": "סקיצות, תמונות, PDF ו-DWG. הטקסט שלהם נכנס לחיפוש."},
     "upload": {"en": "Add files", "he": "הוספת קבצים"},
     "uploaded": {"en": "Files added", "he": "הקבצים נוספו"},
     "outputs": {"en": "Outputs", "he": "תוצרים"},
-    "no_outputs": {"en": "No outputs yet - render the drawing in the Drawing tab.",
-                   "he": "אין עדיין תוצרים - הפק את השרטוט בלשונית שרטוט."},
+    "no_outputs": {"en": "No outputs yet. Render the drawing in the Drawing tab.",
+                   "he": "אין עדיין תוצרים. הפק את השרטוט בלשונית שרטוט."},
     "revisions": {"en": "Revisions", "he": "מהדורות"},
     "new_revision": {"en": "New revision", "he": "מהדורה חדשה"},
     "rev_note": {"en": "What changed", "he": "מה השתנה"},
@@ -117,31 +119,31 @@ STRINGS: dict[str, dict[str, str]] = {
                              "פרויקט (ברירת המחדל למטה). שינוי תיקיית הנתונים מעתיק אליה את הנתונים הנוכחיים; "
                              "תיקייה שכבר יש בה נתונים שומרת אותם."},
     "data_home_changed": {"en": "Data folder changed", "he": "תיקיית הנתונים שונתה"},
-    "revise": {"en": "Mark up and revise on request", "he": "סימון ותיקון לפי בקשה"},
-    "revise_help": {"en": "Mark on the drawing with the free pen or straight lines, write what to change, and "
-                          "send it to the agent. The drawing changes only after you receive the reply and apply "
-                          "it. The previous version can be restored.",
-                    "he": "סמנו על השרטוט בעט חופשי או בקווים ישרים, כתבו מה לשנות, ושלחו לסוכן. "
-                          "השרטוט משתנה רק אחרי שמקבלים את התשובה ומחילים אותה. אפשר לחזור לגרסה הקודמת."},
-    "revise_request": {"en": "What to change", "he": "מה לשנות"},
-    "revise_placeholder": {"en": "e.g. move the valve marked in red 500 mm to the left; add a manhole where the "
-                                 "blue line ends",
-                           "he": "לדוגמה: להזיז את המגוף המסומן באדום 500 מ\"מ שמאלה; להוסיף שוחה בקצה הקו הכחול"},
-    "revise_empty": {"en": "Write what to change first.", "he": "כתבו קודם מה לשנות."},
+    "revise": {"en": "Mark the sheet", "he": "סימון על הגיליון"},
+    "revise_help": {"en": "Mark the sheet with the pen or a straight line. The marks go out with the next package. "
+                          "The drawing changes only after you apply the reply.",
+                    "he": "סמנו על הגיליון בעט או בקו ישר. הסימונים יוצאים עם החבילה הבאה. "
+                          "השרטוט משתנה רק אחרי שמחילים את התשובה."},
+    "revise_request": {"en": "Request", "he": "בקשה"},
+    "revise_placeholder": {"en": "For example: move the valve marked in red 500 mm to the left",
+                           "he": "לדוגמה: להזיז את המגוף המסומן באדום 500 מ\"מ שמאלה"},
+    "revise_empty": {"en": "Write a request, or choose one of the items below.",
+                     "he": "כתבו בקשה, או סמנו אחת מהאפשרויות למטה."},
     "revise_undo": {"en": "Undo last revision", "he": "בטל תיקון אחרון"},
     "revise_done": {"en": "The drawing was revised and rendered again", "he": "השרטוט תוקן והופק מחדש"},
     "revise_undone": {"en": "The previous version was restored", "he": "הגרסה הקודמת שוחזרה"},
-    "revise_failed": {"en": "The revised drawing could not be rendered - the previous version was kept",
-                      "he": "לא ניתן היה להפיק את השרטוט המתוקן - הגרסה הקודמת נשמרה"},
+    "revise_failed": {"en": "The revised drawing could not be rendered. The previous version was kept.",
+                      "he": "לא ניתן היה להפיק את השרטוט המתוקן. הגרסה הקודמת נשמרה."},
     "revise_last": {"en": "Last request", "he": "הבקשה האחרונה"},
+    "agent_panel": {"en": "Agent", "he": "סוכן"},
     "agent_send": {"en": "Send to agent", "he": "שלח לסוכן"},
     "agent_recv": {"en": "Receive from agent", "he": "קבל מהסוכן"},
-    "agent_help": {"en": "Send writes a work package to the project's outbox. Receive reads the newest reply "
-                         "in the inbox and changes the drawing only after you confirm.",
-                   "he": "«שלח לסוכן» כותב חבילת עבודה לתיקיית השליחה של הפרויקט. «קבל מהסוכן» קורא את "
-                         "התשובה החדשה בתיקיית הקבלה, והשרטוט משתנה רק אחרי אישור."},
-    "agent_sent": {"en": "Work package written to {path}", "he": "החבילה נכתבה אל {path}"},
-    "agent_request_title": {"en": "What should the agent change?", "he": "מה לבקש מהסוכן?"},
+    "agent_help": {"en": "Send writes a work package to the project outbox. Receive reads the newest reply. "
+                         "The drawing changes only when you apply it.",
+                   "he": "השליחה כותבת חבילה לתיקיית השליחה. הקבלה קוראת את התשובה החדשה. "
+                         "השרטוט משתנה רק ב«החל על השרטוט»."},
+    "agent_sent": {"en": "Package written to {path}", "he": "החבילה נכתבה אל {path}"},
+    "agent_request_title": {"en": "Request", "he": "בקשה"},
     "agent_request_send": {"en": "Send", "he": "שלח"},
     "agent_apply": {"en": "Apply to the drawing", "he": "החל על השרטוט"},
     "agent_blocked": {"en": "QA errors block applying this drawing until you explicitly override them.",
@@ -156,15 +158,62 @@ STRINGS: dict[str, dict[str, str]] = {
                                "Empty keeps the built-in defaults.",
                          "he": "גובהי טקסט לפי ISO 3098, עובי קו לפי ISO 128, כללי הגשה לתאגיד מים, "
                                "שיפועי ניקוז וכיסוי לפי דרג SN. ריק משאיר את ברירת המחדל."},
-    "agent_applied": {"en": "The spec was replaced. The previous one is in spec_history.",
-                      "he": "ה-spec הוחלף. הקודם נשמר ב-spec_history."},
-    "agent_trial": {"en": "Trial only — the drawing was not changed yet.",
-                    "he": "ניסיון בלבד — השרטוט עוד לא שונה."},
+    "agent_applied": {"en": "The drawing was updated. The previous version was saved.",
+                      "he": "השרטוט עודכן. הגרסה הקודמת נשמרה."},
+    "agent_trial": {"en": "Trial only. The drawing was not changed yet.",
+                    "he": "ניסיון בלבד. השרטוט עוד לא שונה."},
     "agent_dwg_ok": {"en": "DWG written: {name}", "he": "DWG הופק: {name}"},
     "agent_dwg_skip": {"en": "DWG was not written: {reason}", "he": "DWG לא הופק: {reason}"},
-    "agent_elements": {"en": "{n} elements kept", "he": "{n} אלמנטים נשמרו"},
+    "agent_dwg_none": {"en": "DWG was not written.", "he": "DWG לא הופק."},
+    "agent_dwg_timeout": {"en": "DWG conversion timed out.", "he": "ההמרה ל-DWG נקטעה."},
+    "agent_dwg_failed": {"en": "DWG conversion failed.", "he": "ההמרה ל-DWG נכשלה."},
+    "agent_no_reply": {"en": "No reply in the inbox.", "he": "אין תשובה בתיבת הקבלה."},
+    "agent_secret": {"en": "A file contains a secret marker and was refused.",
+                     "he": "קובץ מכיל סימון סודי ולא נשלח."},
+    "agent_render_failed": {"en": "The trial drawing was not produced.", "he": "הפקת הניסיון נכשלה."},
+    "agent_elements": {"en": "{n} elements on the drawing", "he": "{n} רכיבים בשרטוט"},
     "agent_failed": {"en": "The reply was not applied.", "he": "התשובה לא הוחלה."},
-    "changes": {"en": "What changed", "he": "מה שונה"},
+    "agent_status_none": {"en": "No package sent", "he": "לא נשלחה חבילה"},
+    "agent_status_awaiting": {"en": "Package sent. Waiting for a reply.",
+                              "he": "החבילה נשלחה. ממתינים לתשובה."},
+    "agent_status_reply": {"en": "A reply is waiting in the inbox.",
+                           "he": "תשובה ממתינה בתיבת הקבלה."},
+    "agent_status_applied": {"en": "The last reply was applied to the drawing.",
+                             "he": "התשובה האחרונה הוחלה על השרטוט."},
+    "agent_last_sent": {"en": "Last package", "he": "חבילה אחרונה"},
+    "agent_no_package": {"en": "Nothing sent yet", "he": "עדיין לא נשלח"},
+    "agent_no_request": {"en": "No request text", "he": "בלי טקסט בקשה"},
+    "agent_inbox": {"en": "Inbox", "he": "תיבת קבלה"},
+    "agent_inbox_empty": {"en": "No reply", "he": "אין תשובה"},
+    "agent_inbox_waiting": {"en": "Reply waiting", "he": "תשובה ממתינה"},
+    "agent_last_applied": {"en": "Last applied", "he": "הוחל לאחרונה"},
+    "agent_never_applied": {"en": "Nothing applied yet", "he": "עדיין לא הוחל שינוי"},
+    "agent_before": {"en": "Current drawing", "he": "השרטוט הנוכחי"},
+    "agent_after": {"en": "Trial", "he": "ניסיון"},
+    "agent_no_preview": {"en": "No preview", "he": "אין תצוגה"},
+    "agent_questions_need": {"en": "These questions need your decision before you apply the trial.",
+                             "he": "השאלות האלה דורשות החלטה לפני שמחילים את הניסיון."},
+    "agent_no_questions": {"en": "No open questions.", "he": "אין שאלות פתוחות."},
+    "agent_none_listed": {"en": "None.", "he": "אין."},
+    "agent_sev_error": {"en": "Errors", "he": "שגיאות"},
+    "agent_sev_warning": {"en": "Warnings", "he": "אזהרות"},
+    "agent_sev_info": {"en": "Notes", "he": "הערות"},
+    "agent_history": {"en": "Saved versions", "he": "גרסאות שמורות"},
+    "agent_history_empty": {"en": "No saved versions yet.", "he": "אין עדיין גרסאות שמורות."},
+    "agent_rollback": {"en": "Restore", "he": "שחזר"},
+    "agent_rolled_back": {"en": "The drawing was restored from {name}.",
+                          "he": "השרטוט שוחזר מהגיבוי {name}."},
+    "agent_compose_title": {"en": "Request to the agent", "he": "בקשה לסוכן"},
+    "agent_compose_note": {"en": "Checked items are added to the request.",
+                           "he": "הפריטים המסומנים מתווספים לבקשה."},
+    "agent_opt_scale": {"en": "Keep the scale", "he": "שמור על קנה המידה"},
+    "agent_opt_units": {"en": "Keep the units", "he": "שמור על היחידות"},
+    "agent_opt_section": {"en": "Add a section", "he": "הוסף חתך"},
+    "agent_opt_detail": {"en": "Add an enlarged detail", "he": "הוסף הגדלה"},
+    "agent_opt_inv": {"en": "Add invert levels (INV)", "he": "הוסף רום תחתית (INV)"},
+    "agent_extra": {"en": "Extra sources (PDF, DWG, images)", "he": "מקורות נוספים (PDF, DWG, תמונות)"},
+    "agent_extra_added": {"en": "{n} extra files included", "he": "צורפו {n} קבצים"},
+    "changes": {"en": "Changes", "he": "שינויים"},
     "mk_pen": {"en": "Free pen", "he": "עט חופשי"},
     "mk_line": {"en": "Straight line", "he": "קו ישר"},
     "mk_undo": {"en": "Undo", "he": "בטל"},
@@ -178,10 +227,10 @@ STRINGS: dict[str, dict[str, str]] = {
                           "A folder for projects goes in \"Default folder for new projects\".",
                     "he": "בשדה ODA צריך להיות קובץ התוכנה ODAFileConverter.exe ולא תיקייה. "
                           "תיקייה לפרויקטים נכנסת לשדה \"תיקיית ברירת מחדל לפרויקטים חדשים\"."},
-    "oda_path": {"en": "ODA File Converter path (DWG) - optional when AutoCAD is installed",
-                 "he": "נתיב ODA File Converter (DWG) - לא חובה אם מותקן AutoCAD"},
+    "oda_path": {"en": "ODA File Converter path (DWG). Optional when AutoCAD or AutoCAD LT is installed.",
+                 "he": "נתיב ODA File Converter (DWG). לא חובה כשמותקן AutoCAD או AutoCAD LT."},
     "rebuild_index": {"en": "Rebuild search index", "he": "בנה מחדש את אינדקס החיפוש"},
-    "indexed": {"en": "documents indexed", "he": "מסמכים נוספו לאינדקס"},
+    "indexed": {"en": "drawings indexed", "he": "שרטוטים נוספו לאינדקס"},
     "error": {"en": "Error", "he": "שגיאה"},
     # navigation (tools)
     "nav_import": {"en": "Import & convert", "he": "ייבוא והמרה"},
@@ -191,46 +240,49 @@ STRINGS: dict[str, dict[str, str]] = {
     "drawing": {"en": "Drawing", "he": "שרטוט"},
     "spec_source": {"en": "Build the drawing from", "he": "בניית השרטוט מתוך"},
     "src_typical": {"en": "Typical detail", "he": "פרט טיפוסי"},
-    "src_sketch": {"en": "Sketch / photo", "he": "סקיצה / צילום"},
-    "src_json": {"en": "Edit spec (JSON)", "he": "עריכת מפרט (JSON)"},
+    "src_sketch": {"en": "Sketch or photo", "he": "סקיצה או צילום"},
+    "src_json": {"en": "Edit the spec (JSON)", "he": "עריכת המפרט (JSON)"},
+    "spec_advanced": {"en": "Advanced editing", "he": "עריכה מתקדמת"},
     "typical": {"en": "Typical detail", "he": "פרט טיפוסי"},
-    "generate": {"en": "Generate spec", "he": "צור מפרט"},
-    "spec_saved": {"en": "Spec saved - render the drawing below.", "he": "המפרט נשמר - הפק את השרטוט למטה."},
-    "no_spec": {"en": "No spec yet - choose a typical detail, send a sketch to the agent, or paste JSON.",
-                "he": "אין עדיין מפרט - בחרו פרט טיפוסי, שלחו סקיצה לסוכן, או הדביקו JSON."},
+    "generate": {"en": "Prepare the spec", "he": "הכן מפרט"},
+    "spec_saved": {"en": "Spec saved. Render the drawing below.", "he": "המפרט נשמר. הפק את השרטוט למטה."},
+    "no_spec": {"en": "No spec yet. Choose a typical detail, send a sketch to the agent, or paste JSON.",
+                "he": "אין עדיין מפרט. בחרו פרט טיפוסי, שלחו סקיצה לסוכן, או הדביקו JSON."},
     "sketch_sources": {"en": "These sources go into the package: {names}",
                        "he": "המקורות האלה נכנסים לחבילה: {names}"},
-    "sketch_no_sources": {"en": "No sketch or photo in Sources yet. A package can still be sent.",
+    "sketch_no_sources": {"en": "No sketch or photo in Sources yet. You can still send a package.",
                           "he": "אין עדיין סקיצה או צילום במקורות. אפשר בכל זאת לשלוח חבילה."},
-    "sketch_notes": {"en": "What to draw or change (sent with the package)",
-                     "he": "מה לשרטט או לשנות (נשלח עם החבילה)"},
-    "sketch_placeholder": {"en": "e.g. a plan of the trench from the sketch, with the sizes written on it",
+    "sketch_notes": {"en": "What to draw or change", "he": "מה לשרטט או לשנות"},
+    "sketch_placeholder": {"en": "For example: a plan of the trench from the sketch, with the sizes written on it",
                            "he": "לדוגמה: תוכנית של התעלה לפי הסקיצה, עם המידות שכתובות עליה"},
-    "assumptions": {"en": "Assumptions (estimated values)", "he": "הנחות (ערכים משוערים)"},
-    "questions": {"en": "Open questions", "he": "שאלות פתוחות"},
+    "sketch_use_panel": {"en": "Write the request in the panel below, then send it to the agent.",
+                         "he": "כתבו את הבקשה בלוח למטה, ושלחו לסוכן."},
+    "assumptions": {"en": "Assumptions", "he": "הנחות"},
+    "questions": {"en": "Questions for you", "he": "שאלות להחלטה"},
     "spec_json": {"en": "spec.json", "he": "spec.json"},
     "invalid_json": {"en": "Invalid JSON", "he": "JSON לא תקין"},
-    "sheet": {"en": "Sheet and title", "he": "גיליון וכותרת"},
+    "sheet": {"en": "Sheet", "he": "גיליון"},
     "titleblock": {"en": "Title-block template", "he": "תבנית כותרת"},
-    "title_override_en": {"en": "Title on the sheet (English) - empty = document title",
-                          "he": "כותרת בגיליון (אנגלית) - ריק = כותרת המסמך"},
-    "title_override_he": {"en": "Title on the sheet (Hebrew) - empty = document title",
-                          "he": "כותרת בגיליון (עברית) - ריק = כותרת המסמך"},
+    "title_override_en": {"en": "Title on the sheet (English). Empty uses the drawing title.",
+                          "he": "כותרת בגיליון (אנגלית). ריק משאיר את כותרת השרטוט."},
+    "title_override_he": {"en": "Title on the sheet (Hebrew). Empty uses the drawing title.",
+                          "he": "כותרת בגיליון (עברית). ריק משאיר את כותרת השרטוט."},
     "formats": {"en": "Output formats", "he": "פורמטים להפקה"},
     "render": {"en": "Render drawing", "he": "הפק שרטוט"},
     "rendered": {"en": "Drawing rendered", "he": "השרטוט הופק"},
     # checks / BOM / package / compare
     "checks": {"en": "Checks", "he": "בדיקות"},
     "no_findings": {"en": "No findings.", "he": "אין ממצאים."},
-    "bom": {"en": "Bill of materials", "he": "כתב כמויות"},
+    "bom": {"en": "BOM", "he": "כמויות"},
+    "bom_title": {"en": "Bill of materials", "he": "כתב כמויות"},
     "qty": {"en": "Qty", "he": "כמות"},
     "open_in_cad": {"en": "Open in AutoCAD", "he": "פתח באוטוקד"},
     "excel": {"en": "Download Excel", "he": "הורדת Excel"},
-    "package": {"en": "Submittal package", "he": "תיק הגשה"},
-    "package_help": {"en": "Transmittal, compliance matrix, checks, BOM, drawing and the datasheets found in the "
-                             "project folder - one PDF.",
-                     "he": "מכתב העברה, טבלת התאמה, בדיקות, כתב כמויות, שרטוט ודפי הקטלוג שנמצאו בתיקיית "
-                           "הפרויקט - PDF אחד."},
+    "package": {"en": "Package", "he": "תיק"},
+    "package_help": {"en": "One PDF: transmittal, compliance matrix, checks, bill of materials, "
+                           "the drawing, and catalog sheets found in the project.",
+                     "he": "PDF אחד: מכתב העברה, טבלת התאמה, בדיקות, כתב כמויות, "
+                           "השרטוט ודפי הקטלוג שנמצאו בפרויקט."},
     "build": {"en": "Build", "he": "הפק"},
     "compare": {"en": "Compare", "he": "השוואה"},
     "compare_help": {"en": "Red = removed, green = added, grey = unchanged.",
@@ -238,11 +290,11 @@ STRINGS: dict[str, dict[str, str]] = {
     "compare_a": {"en": "Old version", "he": "גרסה ישנה"},
     "compare_b": {"en": "New version", "he": "גרסה חדשה"},
     "changed": {"en": "changed", "he": "שינוי"},
-    "need_two": {"en": "Need at least two files (outputs, archived revisions or sources).",
-                 "he": "צריך לפחות שני קבצים (תוצרים, מהדורות בארכיון או מקורות)."},
+    "need_two": {"en": "At least two files are needed: outputs, archived revisions, or sources.",
+                 "he": "צריך לפחות שני קבצים: תוצרים, מהדורות בארכיון, או מקורות."},
     "print_set": {"en": "Print set", "he": "סט הדפסה"},
-    "print_set_help": {"en": "Sheet index + the latest PDF of every document, with bookmarks.",
-                       "he": "רשימת גיליונות + ה-PDF האחרון של כל מסמך, עם סימניות."},
+    "print_set_help": {"en": "A sheet index and the latest PDF of every drawing, with bookmarks.",
+                       "he": "רשימת גיליונות וה-PDF האחרון של כל שרטוט, עם סימניות."},
     "statuses": {"en": "Statuses to include", "he": "סטטוסים לכלול"},
     "doc_language": {"en": "Language", "he": "שפה"},
     # import page
@@ -254,22 +306,20 @@ STRINGS: dict[str, dict[str, str]] = {
     "pdf_page": {"en": "Page", "he": "עמוד"},
     "pdf_scale": {"en": "Drawing scale 1:", "he": "קנה מידה של השרטוט 1:"},
     "units": {"en": "Units", "he": "יחידות"},
-    "cut_height": {"en": "Plan cut height (m)", "he": "גובה חתך תוכנית (מ')"},
+    "cut_height": {"en": "Plan section height (m)", "he": "גובה חתך התוכנית (מ')"},
     "to_dwg": {"en": "Convert to DWG", "he": "המר ל-DWG"},
     "rvt_help": {"en": "There is no free local Revit reader. In Revit: File > Export > IFC, then import the IFC "
                        "here (or use Autodesk APS Model Derivative - free tier).",
                  "he": "אין קורא Revit מקומי וחינמי. ב-Revit: File > Export > IFC ואז לייבא כאן את ה-IFC "
                        "(או שירות Autodesk APS Model Derivative - שכבה חינמית)."},
-    "image_help": {"en": "Images are used as sketches: save into a document and draft the drawing with AI.",
-                   "he": "תמונות משמשות כסקיצות: שמור למסמך והפק שרטוט באמצעות AI."},
-    "save_to_project": {"en": "Save into the current project as a new imported document",
-                        "he": "שמור בפרויקט הנוכחי כמסמך מיובא חדש"},
+    "image_help": {"en": "An image is kept as a sketch. Send it to the agent to produce the drawing.",
+                   "he": "תמונה נשמרת כסקיצה. שולחים אותה לסוכן ומפיקים ממנה שרטוט."},
+    "save_to_project": {"en": "Save into the current project as a new drawing",
+                        "he": "שמור בפרויקט הנוכחי כשרטוט חדש"},
     "no_current_project": {"en": "Open a project to save imports into it.",
                            "he": "פתח פרויקט כדי לשמור אליו את הייבוא."},
-    "no_converter": {"en": "No DWG converter found - install ODA File Converter (free) or full AutoCAD "
-                           "(its Core Console is used automatically). DXF files open in AutoCAD directly.",
-                     "he": "לא נמצא ממיר DWG - יש להתקין ODA File Converter (חינמי) או AutoCAD מלא "
-                           "(התוכנה משתמשת בו אוטומטית). קבצי DXF נפתחים ישירות באוטוקד."},
+    "no_converter": {"en": "No DWG converter found. Set the ODA File Converter path in Settings.",
+                     "he": "לא נמצא ממיר DWG — הגדר את ODA File Converter בהגדרות."},
     # templates / catalog pages
     "template_yaml": {"en": "Template (YAML)", "he": "תבנית (YAML)"},
     "save_as_user": {"en": "Save as my template", "he": "שמור כתבנית שלי"},
@@ -286,34 +336,33 @@ STRINGS: dict[str, dict[str, str]] = {
     "user_catalog": {"en": "My catalog (all projects)", "he": "הקטלוג שלי (כל הפרויקטים)"},
     # mail page
     "nav_mail": {"en": "Mail", "he": "מייל"},
-    "mail_help": {"en": "Save the reviewer's e-mail from Outlook as a .msg file (drag it to the desktop) and drop it "
-                        "here. The program reads the comments and the attachments, finds the document they are "
-                        "about, and files everything under its sources.",
-                  "he": "שומרים את המייל של הבודק מ-Outlook כקובץ msg (גוררים אותו לשולחן העבודה) ומעלים אותו כאן. "
-                        "התוכנה קוראת את ההערות ואת הקבצים המצורפים, מוצאת לאיזה מסמך הם שייכים, ושומרת הכול "
-                        "במקורות שלו."},
-    "mail_file": {"en": "E-mail file (.msg from Outlook, or .eml)", "he": "קובץ מייל (msg. מ-Outlook, או eml.)"},
+    "mail_help": {"en": "Save the reviewer's mail from Outlook as a .msg file and drop it here. "
+                        "The program reads the comments and the attachments, finds the drawing, and files them "
+                        "under its sources.",
+                  "he": "שומרים את מייל הבודק מ-Outlook כקובץ msg ומעלים אותו כאן. "
+                        "התוכנה קוראת את ההערות ואת הקבצים המצורפים, מוצאת את השרטוט, ושומרת אותם במקורות."},
+    "mail_file": {"en": "Mail file (.msg from Outlook, or .eml)", "he": "קובץ מייל (msg מ-Outlook, או eml)"},
     "mail_from": {"en": "From", "he": "מאת"},
     "mail_subject": {"en": "Subject", "he": "נושא"},
     "mail_attachments": {"en": "Attached files", "he": "קבצים מצורפים"},
-    "mail_text": {"en": "Message text (the newest reply)", "he": "טקסט ההודעה (התשובה האחרונה)"},
+    "mail_text": {"en": "Message text", "he": "טקסט ההודעה"},
     "mail_points": {"en": "Comments found in the mail", "he": "הערות שזוהו במייל"},
-    "mail_target": {"en": "File under document", "he": "לשייך למסמך"},
-    "mail_why": {"en": "Why this document", "he": "למה המסמך הזה"},
-    "mail_no_match": {"en": "No document matched the mail - choose one from the list.",
-                      "he": "אף מסמך לא תאם למייל - בחרו מהרשימה."},
-    "mail_no_documents": {"en": "There are no documents yet - create a project and a document first.",
-                          "he": "אין עדיין מסמכים - צרו קודם פרויקט ומסמך."},
+    "mail_target": {"en": "File under drawing", "he": "לשייך לשרטוט"},
+    "mail_why": {"en": "Why this drawing", "he": "למה השרטוט הזה"},
+    "mail_no_match": {"en": "No drawing matched the mail. Choose one from the list.",
+                      "he": "אף שרטוט לא תאם למייל. בחרו מהרשימה."},
+    "mail_no_documents": {"en": "There are no drawings yet. Create a project and a drawing first.",
+                          "he": "אין עדיין שרטוטים. צרו קודם פרויקט ושרטוט."},
     "mail_file_only": {"en": "File the mail", "he": "שמור את המייל"},
-    "mail_then_agent": {"en": "Filing saves the mail under the document. To change the drawing, open it and use "
-                              "Send to agent / Receive from agent. The mail text is the request.",
-                        "he": "השמירה שמה את המייל במסמך. כדי לשנות את השרטוט פותחים אותו ומשתמשים "
-                              "ב«שלח לסוכן» / «קבל מהסוכן». טקסט המייל הוא הבקשה."},
-    "mail_filed": {"en": "The mail and {n} attached files were filed under {doc}",
-                   "he": "המייל ו-{n} קבצים מצורפים נשמרו במסמך {doc}"},
-    "mail_import_hint": {"en": "E-mail files are handled in the Mail page: it finds the document and files the mail.",
-                         "he": "קבצי מייל מטופלים במסך המייל: הוא מוצא את המסמך ושומר את המייל."},
-    "open_document": {"en": "Open the document", "he": "פתח את המסמך"},
+    "mail_then_agent": {"en": "Filing saves the mail on the drawing. To change the drawing, open it and use "
+                              "Send to agent and Receive from agent. The mail text is the request.",
+                        "he": "השמירה שמה את המייל על השרטוט. כדי לשנות את השרטוט פותחים אותו ומשתמשים "
+                              "ב«שלח לסוכן» וב«קבל מהסוכן». טקסט המייל הוא הבקשה."},
+    "mail_filed": {"en": "The mail and {n} attached files were filed on drawing {doc}",
+                   "he": "המייל ו-{n} קבצים מצורפים נשמרו בשרטוט {doc}"},
+    "mail_import_hint": {"en": "Mail files are handled on the Mail page. It finds the drawing and files the mail.",
+                         "he": "קבצי מייל מטופלים במסך המייל. הוא מוצא את השרטוט ושומר את המייל."},
+    "open_document": {"en": "Open the drawing", "he": "פתח את השרטוט"},
 }
 
 
@@ -322,3 +371,39 @@ def t(key: str, lang: str) -> str:
     if not entry:
         return key
     return entry.get(lang) or entry.get("en") or key
+
+
+_CONVERTER_MARKERS = ("no dwg converter", "oda file converter not found", "converter not found",
+                      "no converter found")
+
+
+def _missing_converter(text: str) -> bool:
+    return any(marker in text for marker in _CONVERTER_MARKERS)
+
+
+def notice(text: str, lang: str) -> str:
+    """Short UI text for a converter or bridge message. Logs keep the English original."""
+    raw = " ".join(str(text or "").split())
+    low = raw.lower()
+    detail = raw.split(":", 1)[1].strip() if low.startswith("dwg skipped:") else raw
+    folded = detail.lower()
+    if _missing_converter(folded):
+        return t("no_converter", lang)
+    if folded.startswith("no reply"):
+        return t("agent_no_reply", lang)
+    if "secret marker" in folded or folded.startswith("refusing to"):
+        return t("agent_secret", lang)
+    if folded.startswith("render failed"):
+        inner = detail.split(":", 1)[1].strip() if ":" in detail else ""
+        if inner and _missing_converter(inner.lower()):
+            return t("no_converter", lang)
+        return t("agent_render_failed", lang)
+    if "timed out" in folded:
+        return t("agent_dwg_timeout", lang)
+    if "conversion" in folded and "fail" in folded:
+        return t("agent_dwg_failed", lang)
+    if folded.startswith("dwg was not written") or folded in ("", "dwg skipped"):
+        return t("agent_dwg_none", lang)
+    if low.startswith("dwg skipped:"):
+        return t("agent_dwg_none", lang)
+    return raw

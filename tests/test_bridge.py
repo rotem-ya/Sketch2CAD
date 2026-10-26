@@ -3,13 +3,13 @@ import hashlib
 import json
 import os
 import socket
-import subprocess
 import sys
 from pathlib import Path
 
 import pytest
 
 from sketch2cad import bridge
+from sketch2cad.procutil import run as hidden_run
 from sketch2cad.bridge import BridgeError, export_package, import_reply, main
 from sketch2cad.documents import add_source, create_document
 from sketch2cad.projects import create_project
@@ -133,6 +133,31 @@ def test_export_skips_a_source_that_escapes_the_drawing(tmp_path):
     assert any(item["reason"] == "outside the drawing folder" for item in manifest["excluded"])
 
 
+def test_export_copies_extra_pdf_and_dwg_into_sources(tmp_path):
+    _project, doc = _drawing(tmp_path, ELBOW)
+    pdf = tmp_path / "section.pdf"
+    pdf.write_bytes(b"%PDF-1.4\nsection\n")
+    dwg = tmp_path / "ref.dwg"
+    dwg.write_bytes(b"AC1018 reference")
+    skipped = tmp_path / "note.txt"
+    skipped.write_text("not a drawing", encoding="utf-8")
+    leaked = tmp_path / "leak.pdf"
+    leaked.write_bytes(b"%PDF-1.4\nsk-ant-LEAKED\n")
+    out = tmp_path / "pkg"
+    export_package(doc.path, out, extra_sources=[pdf, dwg, skipped, leaked])
+    assert (out / "sources" / "section.pdf").read_bytes().startswith(b"%PDF")
+    assert (out / "sources" / "ref.dwg").read_bytes().startswith(b"AC1018")
+    blob = _package_bytes(out)
+    assert b"LEAKED" not in blob and b"not a drawing" not in blob
+    manifest = json.loads((out / "manifest.json").read_text(encoding="utf-8"))
+    roles = {item["name"]: item["role"] for item in manifest["files"]}
+    assert roles["sources/section.pdf"] == "source"
+    assert roles["sources/ref.dwg"] == "source"
+    reasons = {item["reason"] for item in manifest["excluded"]}
+    assert "not a PDF, DWG or image" in reasons
+    assert "secret marker" in reasons
+
+
 def test_export_refuses_a_secret_in_the_request(tmp_path):
     _project, doc = _drawing(tmp_path, ELBOW)
     out = tmp_path / "secret-package"
@@ -160,7 +185,7 @@ def test_module_cli_export(tmp_path):
     env = dict(os.environ)
     env["PYTHONPATH"] = str(ROOT)
     env["SKETCH2CAD_HOME"] = str(tmp_path / "home")
-    proc = subprocess.run(
+    proc = hidden_run(
         [sys.executable, "-m", "sketch2cad.bridge", "export", str(doc.path), "--out", str(out),
          "--request", "leave the pipe where it is"],
         cwd=ROOT, env=env, capture_output=True, text=True, check=False)
@@ -306,7 +331,7 @@ def test_cli_to_outbox_and_from_inbox(tmp_path):
     env = dict(os.environ)
     env["PYTHONPATH"] = str(ROOT)
     env["SKETCH2CAD_HOME"] = str(tmp_path / "home")
-    proc = subprocess.run(
+    proc = hidden_run(
         [sys.executable, "-m", "sketch2cad.bridge", "export", str(doc.path), "--to-outbox", "--request", "note"],
         cwd=ROOT, env=env, capture_output=True, text=True, check=False)
     assert proc.returncode == 0, proc.stderr
@@ -315,7 +340,7 @@ def test_cli_to_outbox_and_from_inbox(tmp_path):
     inbox = project.path / "agent_exchange" / "inbox"
     (inbox / "reply.json").write_text(json.dumps({"spec": PIPE}), encoding="utf-8")
     original = (doc.path / "spec.json").read_bytes()
-    proc = subprocess.run(
+    proc = hidden_run(
         [sys.executable, "-m", "sketch2cad.bridge", "import", "--from-inbox", "--drawing", str(doc.path),
          "--trial", str(tmp_path / "trial")],
         cwd=ROOT, env=env, capture_output=True, text=True, check=False)

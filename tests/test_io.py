@@ -174,6 +174,7 @@ def test_read_rvt_and_other(tmp_path):
 
 def test_read_dwg_without_converter(dxf_file, tmp_path, monkeypatch):
     monkeypatch.setattr(oda, "find_converter", lambda settings=None: None)
+    monkeypatch.setattr(oda, "find_autocad", lambda: None)
     dwg = tmp_path / "plan.dwg"
     dwg.write_bytes(dxf_file.read_bytes())
     info = readers.read_any(dwg, tmp_path / "out")
@@ -261,11 +262,18 @@ def test_compare_pdf_with_png(vector_pdf, png_file, tmp_path):
 
 
 # ------------------------------------------------------------------ ODA
-def test_find_converter_none(monkeypatch):
+def _no_host_converters(monkeypatch):
+    """Hide ODA and accoreconsole, whatever this machine actually has installed."""
     monkeypatch.delenv("ODA_CONVERTER", raising=False)
+    monkeypatch.delenv("AUTOCAD_CORECONSOLE", raising=False)
     monkeypatch.setattr(oda.shutil, "which", lambda name: None)
-    monkeypatch.setattr(oda.os, "name", "posix")
+    monkeypatch.setattr(oda.glob, "glob", lambda pattern: [])
+
+
+def test_find_converter_none(monkeypatch):
+    _no_host_converters(monkeypatch)
     assert oda.find_converter(Settings()) is None
+    assert oda.find_autocad() is None
 
 
 def test_find_converter_from_settings(tmp_path, monkeypatch):
@@ -277,8 +285,26 @@ def test_find_converter_from_settings(tmp_path, monkeypatch):
 
 def test_convert_without_converter(dxf_file, monkeypatch):
     monkeypatch.setattr(oda, "find_converter", lambda settings=None: None)
+    monkeypatch.setattr(oda, "find_autocad", lambda: None)
     with pytest.raises(oda.ConverterNotFound):
         oda.convert(dxf_file, "dwg")
+
+
+def test_converter_process_is_hidden_on_windows(monkeypatch):
+    import subprocess
+
+    from sketch2cad import procutil
+
+    monkeypatch.setattr(procutil.os, "name", "nt")
+    seen = {}
+
+    def fake_run(cmd, **kwargs):
+        seen.update(kwargs)
+        return subprocess.CompletedProcess(cmd, 0, b"", b"")
+
+    monkeypatch.setattr(procutil.subprocess, "run", fake_run)
+    oda._run(["accoreconsole.exe", "/i", "a.dwg"], "a.dwg")
+    assert seen["creationflags"] & procutil.CREATE_NO_WINDOW
 
 
 def test_oda_round_trip(dxf_file, tmp_path):
