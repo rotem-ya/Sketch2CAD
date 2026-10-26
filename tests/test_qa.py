@@ -186,8 +186,15 @@ def test_slope_matches_invert_and_minimum_by_diameter():
     assert _has(_spec([_pipe(slope=0.4, slope_unit="percent", dn=150)]), "min_slope")
     assert not _has(_spec([_pipe(slope=0.01, dn=200)]), "min_slope")
     assert _has(_spec([_pipe(slope=0.005, dn=250)]), "min_slope")
+    assert not _has(_spec([_pipe(slope=0.005, dn=300)]), "min_slope")
+    assert _has(_spec([_pipe(slope=0.004, dn=300)]), "min_slope")
     assert not _has(_spec([_pipe(slope=0.004, dn=400)]), "min_slope")
     assert _has(_spec([_pipe(slope=0.003, dn=400)]), "min_slope")
+    assert not _has(_spec([_pipe(slope=0.003, dn=500)]), "min_slope")
+    assert _has(_spec([_pipe(slope=0.002, dn=500)]), "min_slope")
+    assert not _has(_spec([_pipe(slope=0.0025, dn=600)]), "min_slope")
+    assert not _has(_spec([_pipe(slope=0.0025, dn=800)]), "min_slope")
+    assert _has(_spec([_pipe(slope=0.002, dn=800)]), "min_slope")
     bare = _spec([_pipe(dn=150)])
     assert not _has(bare, "min_slope")
     assert _has(bare, "slope_unchecked")
@@ -256,6 +263,11 @@ def test_lineweights_and_utility_submission():
     assert _has(heavy, "lineweight_ratio") and _has(heavy, "lineweight_range")
     calm = _spec([{"id": "p", "type": "pipe", "points": [[500, 1500], [3000, 1500]], "od": 100}])
     assert not _has(calm, "lineweight_ratio") and not _has(calm, "lineweight_range")
+    from sketch2cad import templates
+    allowed = {1.8, 2.5, 3.5, 5.0, 7.0}
+    for name in ("a3_simple", "a3_legend", "usace_a1"):
+        for field in templates.load_template(name).get("fields") or []:
+            assert float(field["h"]) in allowed, (name, field.get("key"), field["h"])
 
     buried = _spec(
         [{"id": "p", "type": "pipe", "points": [[500, 1500], [3000, 1500]], "od": 100, "below_grade": True}],

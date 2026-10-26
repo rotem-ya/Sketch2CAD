@@ -50,7 +50,7 @@ fields:
   - {key: rev_date, x: 802, y: 553.5, w: 17, h: 1.8, en: "{date}"}
   # client / firm
   - {key: client_label, x: 724, y: 439, w: 94, h: 1.8, en: "DESIGNED FOR", he: "מזמין"}
-  - {key: client, x: 724, y: 420, w: 94, h: 4.5, en: "{client}"}
+  - {key: client, x: 724, y: 420, w: 94, h: 5, en: "{client}"}
   - {key: project_code, x: 724, y: 392, w: 94, h: 2.5, en: "PROJECT No. {project_code}"}
   # drawn / checked, date / scale
   - {key: drawn_label, x: 724, y: 379.5, w: 44, h: 1.8, en: "DRAWN BY", he: "שרטט"}
@@ -67,13 +67,13 @@ fields:
   - {key: project_label, x: 724, y: 283.5, w: 94, h: 1.8, en: "PROJECT", he: "פרויקט"}
   - {key: project, x: 724, y: 268, he_y: 250, w: 94, h: 3.5, en: "{project_name_en}", he: "{project_name_he}"}
   - {key: title_label, x: 724, y: 203.5, w: 94, h: 1.8, en: "SHEET TITLE", he: "שם הגיליון"}
-  - {key: title, x: 724, y: 188, he_y: 158, w: 94, h: 4.5, en: "{title_en}", he: "{title_he}"}
+  - {key: title, x: 724, y: 188, he_y: 158, w: 94, h: 5, en: "{title_en}", he: "{title_he}"}
   - {key: line3, x: 724, y: 120, he_y: 108, w: 94, h: 2.5, en: "{line3}", he: "{line3_he}"}
   # rev / sheet, drawing number
   - {key: rev_label, x: 724, y: 93.5, w: 44, h: 1.8, en: "REV", he: "מהדורה"}
-  - {key: rev, x: 724, y: 74, w: 44, h: 4.0, en: "{rev}"}
+  - {key: rev, x: 724, y: 74, w: 44, h: 3.5, en: "{rev}"}
   - {key: sheet_label, x: 774, y: 93.5, w: 44, h: 1.8, en: "SHEET", he: "גיליון"}
-  - {key: sheet, x: 774, y: 74, w: 44, h: 4.0, en: "{sheet}"}
+  - {key: sheet, x: 774, y: 74, w: 44, h: 3.5, en: "{sheet}"}
   - {key: code_label, x: 724, y: 63.5, w: 94, h: 1.8, en: "DRAWING No.", he: "מס' שרטוט"}
-  - {key: code, x: 724, y: 42, w: 94, h: 6.0, align: center, en: "{code}"}
+  - {key: code, x: 724, y: 42, w: 94, h: 5, align: center, en: "{code}"}
   - {key: view, x: 724, y: 14, w: 94, h: 2.5, align: center, en: "{view}"}
