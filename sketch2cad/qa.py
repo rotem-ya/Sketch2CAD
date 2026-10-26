@@ -972,9 +972,12 @@ SHEET_CODES = frozenset({
     "lineweight_range", "lineweight_ratio", "layer_0", "defpoints",
     "not_bylayer", "block_layer", "qa_layout",
 })
+# Info with no geometry to circle, plus sheet-wide hygiene. A table row only.
+NO_MARKER_CODES = SHEET_CODES | {"slope_unchecked"}
 PAD_MM = 1.5
 MAX_MARKER_MM = 28.0
 MIN_MARKER_MM = 5.0
+MAX_GROUP_MARKERS = 3
 TABLE_HEAD_MM = 12.0
 TABLE_ROW_MM = 11.2
 PANEL_W_MM = 228.0
@@ -1063,24 +1066,37 @@ def write_overlay(spec: dict, path, catalog=None, project=None) -> str | None:
 
 
 def _plan_overlay(result: Review) -> tuple[list[OverlayMarker], list[OverlayRow]]:
+    """One table row per finding. Several elements of one role share that row and its number.
+
+    The first few of the group are marked. `slope_unchecked` and other sheet-wide codes stay in the table.
+    """
     markers: list[OverlayMarker] = []
     rows: list[OverlayRow] = []
     number = 0
     scene = result.scene
     for finding in result.findings:
-        places = _places(finding, scene, result.settings)
-        if places:
-            for element, rect in places:
-                number += 1
-                markers.append(OverlayMarker(number, finding.severity, finding.code, element, *rect))
-                rows.append(OverlayRow(number, finding.severity, finding.code, element,
-                                       finding.he, True))
-        else:
-            number += 1
+        places = [] if finding.code in NO_MARKER_CODES else _places(finding, scene, result.settings)
+        number += 1
+        if not places:
             rows.append(OverlayRow(number, finding.severity, finding.code,
                                    finding.element or "—", finding.he, False))
+            continue
+        ids = list(dict.fromkeys(element for element, _rect in places))
+        rows.append(OverlayRow(number, finding.severity, finding.code, _group_label(ids),
+                               finding.he, True))
+        for element, rect in places[:MAX_GROUP_MARKERS]:
+            markers.append(OverlayMarker(number, finding.severity, finding.code, element, *rect))
     _place_labels(markers)
     return markers, rows
+
+
+def _group_label(ids: list[str]) -> str:
+    """Count plus the ids, so one role does not become a row per cell."""
+    if len(ids) == 1:
+        return ids[0]
+    shown = ids[:8]
+    extra = f" +{len(ids) - len(shown)}" if len(ids) > len(shown) else ""
+    return f"×{len(ids)}: {', '.join(shown)}{extra}"
 
 
 def _places(finding: Finding, scene: Scene | None, cfg) -> list[tuple[str, tuple]]:
@@ -1422,7 +1438,24 @@ def _boxes_from_spans(spans, paper, k) -> list[TextBox]:
                 min(box.x0 for box in group), min(box.y0 for box in group),
                 max(box.x1 for box in group), max(box.y1 for box in group),
                 max(box.height for box in group), len(group), leaders, span["in_notes"]))
+    _split_legend_title(boxes)
     return boxes
+
+
+def _split_legend_title(boxes: list[TextBox]) -> None:
+    """Table cells share one height. The legend title is a different role, so 1.8 mm cells are not
+    'inconsistent' with the title line above them."""
+    legend = [box for box in boxes if box.eid == "legend" and box.role == "table"]
+    if len(legend) < 2:
+        return
+    counts: dict[float, int] = {}
+    for box in legend:
+        key = round(box.height, 2)
+        counts[key] = counts.get(key, 0) + 1
+    cell_h = max(counts, key=counts.get)
+    for box in legend:
+        if abs(box.height - cell_h) > 0.05:
+            box.role = "legend"
 
 
 def build_scene(spec: dict, catalog=None, project=None) -> Scene:

@@ -395,8 +395,13 @@ def test_overlay_marker_labels_do_not_overlap():
         assert marker.x1 - marker.x0 <= MAX_MARKER_MM + 1e-6
         assert marker.y1 - marker.y0 <= MAX_MARKER_MM + 1e-6
     height_marks = [marker for marker in markers if marker.code == "text_height_standard"]
-    assert len(height_marks) >= 2
+    height_rows = [row for row in rows if row.code == "text_height_standard"]
+    assert len(height_rows) == 1
+    assert height_rows[0].element.startswith("×3:")
+    assert all(name in height_rows[0].element for name in ("t1", "t2", "t3"))
+    assert 2 <= len(height_marks) <= 3
     assert len({round(marker.x0, 1) for marker in height_marks}) >= 2
+    assert len({marker.number for marker in height_marks}) == 1
     sheet = [row for row in rows if row.code == "lineweight_range"]
     assert sheet and not sheet[0].on_sheet
     assert not any(marker.code in SHEET_CODES for marker in markers)
@@ -407,6 +412,28 @@ def test_overlay_marker_labels_do_not_overlap():
         for b in rects[i + 1:]:
             separated = a[2] <= b[0] + 0.05 or b[2] <= a[0] + 0.05 or a[3] <= b[1] + 0.05 or b[3] <= a[1] + 0.05
             assert separated, (a, b)
+
+
+def test_valve_typical_collapses_repeated_height_rows():
+    """Legend cells at the table height are not a second height, and one role is one row.
+
+    slope_unchecked stays in the table, at info, with no marker on the sheet.
+    """
+    from sketch2cad.typical import generate
+    spec = generate("valve_in_line")
+    result = review(spec)
+    assert len(result.findings) <= 6
+    assert not any(f.code == "text_height_inconsistent" for f in result.findings)
+    assert sum(f.code == "text_height_standard" for f in result.findings) <= 2
+    markers, rows = overlay_plan(spec)
+    assert len(rows) == len(result.findings)
+    assert len(rows) <= 6
+    assert not any(marker.code == "slope_unchecked" for marker in markers)
+    info = [row for row in rows if row.code == "slope_unchecked"]
+    assert info and all(row.severity == "info" and not row.on_sheet for row in info)
+    dim = next(row for row in rows if row.code == "text_height_standard" and "dim:" in row.element)
+    assert dim.element.startswith("×")
+    assert "dim:0" in dim.element and "dim:1" in dim.element
 
 
 def test_findings_carry_both_languages():
