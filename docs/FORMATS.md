@@ -2,10 +2,12 @@
 
 All geometry is in **drawing units** (`units`: `"mm"` or `"m"`); a sheet is drawn at `1:scale`, so
 one paper-mm = `scale` mm of model space (or `scale/1000` m). `scale` may be `"auto"`: the largest
-standard scale that fits the drawing area (smallest denominator of 1:1, 1:2, 1:5, 1:10, 1:15, 1:20,
-1:25, 1:50, 1:75, 1:100, 1:125, 1:150, 1:200, 1:250, 1:400, 1:500, 1:750, 1:1000, …). A callout or a
-dimension-line offset far from the geometry does not force a smaller scale. `"NTS"` is drawn at that
-same fitted scale and labelled NTS.
+standard scale that passes the same fit test as the render (smallest denominator of 1:1, 1:2, 1:5,
+1:10, 1:15, 1:20, 1:25, 1:50, 1:75, 1:100, 1:125, 1:150, 1:200, 1:250, 1:400, 1:500, 1:750, 1:1000, …).
+Each candidate is drawn and measured with `content_extents` — geometry, labels and dimension text —
+against the space left after the notes block is fitted. The first scale that fits is used. On a
+multi-view sheet the limit is the paper left after the other views. `"NTS"` is drawn at that same
+fitted scale and labelled NTS.
 
 ## 1. Drawing spec – `spec.json` (one per document)
 
@@ -127,11 +129,12 @@ adds further views on the same sheet. A spec with no `views` key is unchanged.
 | `title` | string or `{en, he}`, drawn above the view as one underlined line (`SECTION A-A / חתך א-א` when both languages are on), with `SCALE 1:50` or `SCALE NTS` centred underneath |
 | `scale` | positive number, `"NTS"`, or `"auto"` |
 | `fit_mm` | longer side on paper when `scale` is `NTS` (default 80). `"auto"` does not use it |
-| `origin_on_sheet` | `[x, y]` paper mm from the frame's bottom-left, the bottom-left of the view window. The same key on the spec root fixes the primary view. Omitted: the primary view stays large; the other views share a row under it (titles on one baseline) or, when that does not fit, a column beside it. Auto-placed views stay at least 10 mm inside the frame and clear of the title block. A view that does not fit is not drawn off the sheet. The warning quotes the free rectangle that is left. When a standard scale would actually fit that rectangle, the warning names it — 1:50, 1:100, 1:125, 1:200, 1:250, 1:500 or 1:1000. An NTS view is not given a 1:n suggestion |
+| `origin_on_sheet` | `[x, y]` paper mm from the frame's bottom-left, the bottom-left of the view window. The same key on the spec root fixes the primary view. Omitted: the primary view stays large; the other views share a row under it (titles on one baseline) or, when that does not fit, a column beside it. Auto-placed views stay at least 10 mm inside the frame and clear of the title block. A view that does not fit at its scale is not drawn off the sheet: it is fitted into the free rectangle that is left, so its entities stay inside a viewport. The warning quotes that rectangle. When a standard scale would actually fit that rectangle, the warning names it — 1:50, 1:100, 1:125, 1:200, 1:250, 1:500 or 1:1000. An NTS view is not given a 1:n suggestion |
 | `elements`, `dimensions` | same objects as the root lists, in drawing units |
 
 `scale: "auto"` on a view picks the smallest of those denominators whose window fits in the space left beside
-the views that already have a scale. Each view chooses on its own.
+the views that already have a scale. The primary view, when its sheet scale is `"auto"`, is fitted into
+the paper those side views leave. Each view chooses on its own, and a view is not left out of every viewport.
 
 The sheet `scale` is the primary view. When another view uses a different scale, including `"auto"` or `"NTS"`,
 the title block reads `AS SHOWN / כמצוין` instead of `SCALE 1:n`. A bare primary title such as `plan` is drawn

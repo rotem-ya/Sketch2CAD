@@ -7,7 +7,7 @@ clear of other text, dimension text, drawn linework and existing leaders. A lead
 is rejected when it crosses another text box, another leader, or a dimension line.
 The search stays within about 25 mm of that spot, and a leader we add is rejected
 when it is longer than that. If nothing nearby is clear, the label is drawn at the
-original point with the leader the spec asked for, and an error is reported. A label
+original point with the leader the spec asked for, and a warning is reported. A label
 is never omitted. Label boxes keep GAP_TEXT_MM of
 clear paper between them. `label_pinned` keeps the authored point even when it
 collides. Free `text` is not queued here. Dimension text may only slide along its
@@ -554,7 +554,7 @@ def _place_one(ctx, item, texts, segments, circles, leaders, dim_lines, gap_text
     consider(_options(ctx, at, align, lines, height, explicit, target))
     if chosen is None:
         # Never worse than the input, and never omitted: the point and the leader main would draw.
-        ctx.warnings.append(f"ERROR: label {el.get('id', '?')!r} has no clear position")
+        ctx.warnings.append(f"WARNING: label {el.get('id', '?')!r} has no clear position")
         use_leader = bool(explicit)
         elbow = _elbow_name(at, lines, height, target, ctx.k, "near") if use_leader else None
         home = _box(at, lines, height, align, use_leader, target, ctx.k)
@@ -605,10 +605,19 @@ def _dim_frame(dim):
     return origin, direction, normal, span
 
 
-def nudge_dimensions(ctx: DrawContext, bounds=None) -> None:
-    """Slide dimension text along its dimension line, or flip it to the other side.
+def _store_dim_text(dim, point: Vec2) -> None:
+    """Write a nudged text position onto the DIMENSION so a regen does not put it back."""
+    current = dim.dxf.text_midpoint
+    dim.dxf.text_midpoint = (point.x, point.y, float(current.z))
+    dim.dxf.dimtype = int(dim.dxf.dimtype or 0) | 128
 
-    The text keeps its distance to the line. It is never moved off the line.
+
+def nudge_dimensions(ctx: DrawContext, bounds=None) -> None:
+    """Slide dimension text along its dimension line, staying on the same side of it.
+
+    The text keeps its distance to the line. It is flipped only when no slide on the
+    original side clears other text. A move is stored on the DIMENSION (group 11 and
+    dimtype bit 128) so a regen keeps the text off the label.
     """
     dims = list(ctx.msp.query("DIMENSION"))
     if not dims:
@@ -651,10 +660,10 @@ def nudge_dimensions(ctx: DrawContext, bounds=None) -> None:
             home_ok = acceptable(box) and _hits_geometry(box, segments, circles, gap_line) == 0
             if home_ok:
                 continue
-            moved = None
-            fallback = None
-            for flip in (1.0, -1.0):
-                across = across0 * flip
+
+            def slides(across):
+                """Nearest text-clear slide on one side, and the first one that also misses linework."""
+                touching = None
                 for step in SLIDE_MM:
                     signs = (0,) if step == 0 else (1, -1)
                     for sign in signs:
@@ -664,30 +673,31 @@ def nudge_dimensions(ctx: DrawContext, bounds=None) -> None:
                         delta, candidate = candidate_at(along, across)
                         if not acceptable(candidate):
                             continue
-                        geom = _hits_geometry(candidate, segments, circles, gap_line)
-                        if geom == 0:
-                            moved = (delta, candidate)
-                            break
-                        if fallback is None or geom < fallback[0]:
-                            fallback = (geom, (delta, candidate))
-                    if moved is not None:
-                        break
-                if moved is not None:
-                    break
-            if moved is None and fallback is not None and _hits_text(box, others, gap_text):
-                # The authored spot sits on other text. A slide that misses the text is better,
-                # even when it still meets linework.
-                moved = fallback[1]
-            elif moved is None and _hits_text(box, others, gap_text):
-                ctx.warnings.append(
-                    "ERROR: dimension text has no position along its dimension line and was left in place")
-                continue
-            elif moved is None:
+                        if _hits_geometry(candidate, segments, circles, gap_line) == 0:
+                            return (delta, candidate), touching
+                        if touching is None:
+                            touching = (delta, candidate)
+                return None, touching
+
+            hits_text = _hits_text(box, others, gap_text)
+            same_clear, same_touch = slides(across0)
+            # Stay above the dimension line. A slide that still meets linework beats a flip.
+            moved = same_clear
+            if moved is None and hits_text and same_touch is not None:
+                moved = same_touch
+            if moved is None and hits_text:
+                other_clear, other_touch = slides(across0 * -1.0)
+                moved = other_clear or other_touch
+            if moved is None:
+                if hits_text:
+                    ctx.warnings.append(
+                        "ERROR: dimension text has no position along its dimension line and was left in place")
                 continue
             delta, candidate = moved
             if abs(delta.x) + abs(delta.y) < 1e-9:
                 continue
             entity.translate(delta.x, delta.y, 0)
+            _store_dim_text(dim, center + delta)
             texts = [other for other in texts if not _area_overlap(other, box)]
             texts.append(candidate)
 

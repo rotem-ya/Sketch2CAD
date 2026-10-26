@@ -915,7 +915,8 @@ def test_blocked_label_stays_and_is_drawn(tmp_path):
     res = render(spec, tmp_path, "blocked", formats=("dxf",))
     doc = ezdxf.readfile(res["dxf"])
     assert _inserts_of(doc, "CN1A") == [(40, 40)]
-    assert any(w.startswith("ERROR:") and "mark" in w for w in res["warnings"]), res["warnings"]
+    assert any(w.startswith("WARNING:") and "mark" in w for w in res["warnings"]), res["warnings"]
+    assert not any(w.startswith("ERROR:") and "mark" in w for w in res["warnings"])
 
 
 def test_authored_leader_is_kept(tmp_path):
@@ -1190,7 +1191,21 @@ def test_ground_and_explicit_lineweight_are_kept(tmp_path):
     assert weights[800] == 70
 
 
-def test_auto_scale_is_the_largest_that_fits_and_ignores_a_far_offset(tmp_path):
+def _denominators(text: str) -> list[int]:
+    found = []
+    for part in text.split("1:"):
+        digits = []
+        for ch in part:
+            if ch.isdigit():
+                digits.append(ch)
+            else:
+                break
+        if digits:
+            found.append(int("".join(digits)))
+    return found
+
+
+def test_auto_scale_is_the_largest_that_fits_the_drawn_sheet(tmp_path):
     def title_scale(name, spec):
         doc = ezdxf.readfile(render(spec, tmp_path, name, formats=("dxf",))["dxf"])
         return " ".join(_sheet_texts(doc))
@@ -1202,11 +1217,123 @@ def test_auto_scale_is_the_largest_that_fits_and_ignores_a_far_offset(tmp_path):
     }
     shown = title_scale("detail_auto", detail)
     assert "1:15" in shown
+    # The dimension line is part of the drawn sheet, so a base far from the detail coarsens the scale.
     far = {**detail, "dimensions": [
         {"type": "chain", "axis": "h", "points": [[0, 0], [4, 0]], "base": 500}]}
-    assert "1:15" in title_scale("detail_far", far)
+    far_denoms = _denominators(title_scale("detail_far", far))
+    assert far_denoms and min(far_denoms) > 15
     site = {**detail, "view": "plan", "elements": [
         {"id": "site", "type": "rect", "status": "existing", "corners": [[0, 0], [200, 150]]}]}
     site_text = title_scale("site_auto", site)
     assert "1:750" in site_text
     assert "1:15" not in site_text
+
+
+def test_sheet_auto_fits_notes_labels_and_dimension_text(tmp_path):
+    """Geometry that fits at 1:50 does not, once the notes block and a label are on the sheet."""
+    rect = {"id": "pad", "type": "rect", "status": "existing", "corners": [[0, 0], [18500, 11500]]}
+    bare = {
+        "units": "mm", "scale": "auto", "paper": "A3", "language": "both", "view": "plan",
+        "sheet": {"template": "a3_simple"},
+        "elements": [rect],
+    }
+    notes = {
+        "en": [f"English note {i} about the cover." for i in range(1, 9)],
+        "he": [f"הערה {i} על הכיסוי." for i in range(1, 9)],
+    }
+    full = {
+        **bare,
+        "notes": notes,
+        "elements": [
+            rect,
+            {"id": "call", "type": "text", "at": [9000, 12000], "height": 2.5, "text": "MAIN PLAN"},
+        ],
+    }
+    bare_denoms = _denominators(" ".join(_sheet_texts(
+        ezdxf.readfile(render(bare, tmp_path, "bare", formats=("dxf",))["dxf"]))))
+    res = render(full, tmp_path, "noted", formats=("dxf",))
+    assert not any("does not fit" in w for w in res["warnings"]), res["warnings"]
+    full_denoms = _denominators(" ".join(_sheet_texts(ezdxf.readfile(res["dxf"]))))
+    assert bare_denoms and full_denoms
+    assert min(bare_denoms) == 50
+    assert min(full_denoms) > min(bare_denoms)
+    blob = "\n".join(_sheet_texts(ezdxf.readfile(res["dxf"]))).replace("\\P", " ")
+    assert "MAIN PLAN" in blob and "English note 1" in blob and "הערה 1" in blob
+
+
+def test_auto_multiview_places_every_view(tmp_path):
+    """A plan that fills the sheet on its own is scaled down so the side views can sit with it."""
+    from ezdxf import bbox as ezbbox
+
+    spec = {
+        "units": "m", "scale": "auto", "paper": "A3", "language": "en", "view": "plan",
+        "sheet": {"template": "a3_simple"},
+        "elements": [{"id": "site", "type": "rect", "status": "existing",
+                      "corners": [[0, 0], [90, 50]]}],
+        "views": [
+            {"id": "section-a", "title": "SECTION A-A", "scale": "auto",
+             "elements": [{"id": "ground", "type": "polyline", "status": "existing",
+                           "points": [[0, 0], [2, 0]]}]},
+            {"id": "detail-1", "title": "DETAIL 1", "scale": "auto",
+             "elements": [{"id": "box", "type": "rect", "status": "new",
+                           "corners": [[0, 0], [1, 0.6]]}]},
+        ],
+    }
+    res = render(spec, tmp_path, "mv_auto", formats=("dxf",))
+    assert not any("not placed" in w for w in res["warnings"]), res["warnings"]
+    assert not any("does not fit" in w for w in res["warnings"]), res["warnings"]
+    doc = ezdxf.readfile(res["dxf"])
+    psp = doc.layouts.get("SHEET")
+    windows = []
+    scales = []
+    for vp in psp.query("VIEWPORT"):
+        if vp.dxf.status <= 1 or vp.dxf.height <= 0:
+            continue
+        center = vp.dxf.view_center_point
+        half_h = vp.dxf.view_height / 2
+        half_w = half_h * (vp.dxf.width / vp.dxf.height)
+        windows.append((center[0] - half_w, center[1] - half_h, center[0] + half_w, center[1] + half_h))
+        scales.append((vp.dxf.view_height / vp.dxf.height) / 0.001)
+    assert len(windows) >= 3, scales
+    primary = next(scale for scale, window in zip(scales, windows)
+                   if window[0] <= 45 <= window[2] and window[1] <= 25 <= window[3])
+    assert primary > 250, scales
+    assert all(scale < 1000 for scale in scales), scales
+    outside = []
+    for entity in doc.modelspace():
+        ext = ezbbox.extents([entity], fast=True)
+        if not ext.has_data:
+            continue
+        box = (ext.extmin.x, ext.extmin.y, ext.extmax.x, ext.extmax.y)
+        if not any(box[0] >= w[0] - 1 and box[1] >= w[1] - 1 and box[2] <= w[2] + 1 and box[3] <= w[3] + 1
+                   for w in windows):
+            outside.append(entity.dxftype())
+    assert outside == [], outside[:8]
+
+
+def test_nudged_dimension_text_is_stored_above_the_line(tmp_path):
+    from ezdxf import bbox as ezbbox
+    from sketch2cad.drawing.place import overlapping_text
+
+    spec = {
+        "units": "mm", "scale": 10, "paper": "A3", "language": "en", "view": "plan",
+        "sheet": {"template": "a3_simple"},
+        "elements": [{
+            "id": "mp1", "type": "pipe", "status": "new", "od": 400,
+            "points": [[0, 0], [6000, 0]],
+            "label": "MAIN DRAIN", "label_at": [3000, 220], "label_pinned": True,
+        }],
+        "dimensions": [{"type": "chain", "axis": "h", "points": [[0, 0], [6000, 0]], "base": 200}],
+    }
+    doc = ezdxf.readfile(render(spec, tmp_path, "dimflag", formats=("dxf",))["dxf"])
+    assert overlapping_text(doc.modelspace()) == []
+    dim = next(iter(doc.modelspace().query("DIMENSION")))
+    assert int(dim.dxf.dimtype) & 128
+    block = dim.get_geometry_block()
+    text = next(entity for entity in block if entity.dxftype() in ("TEXT", "MTEXT"))
+    box = ezbbox.extents([text], fast=True)
+    center_x = (box.extmin.x + box.extmax.x) / 2
+    center_y = (box.extmin.y + box.extmax.y) / 2
+    assert dim.dxf.text_midpoint.x == pytest.approx(center_x, abs=1)
+    assert dim.dxf.text_midpoint.y == pytest.approx(center_y, abs=1)
+    assert center_y > 200

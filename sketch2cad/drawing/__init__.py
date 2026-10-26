@@ -75,17 +75,20 @@ def _span(ctx, eid, role, start, spans, in_notes=False, force=False):
     return span
 
 
-def _resolve_sheet_scale(spec: dict, template: dict, warnings: list[str]) -> dict:
+def _resolve_sheet_scale(spec: dict, template: dict, warnings: list[str], *,
+                         catalog=None, language: str = "both", place_labels: bool = True) -> dict:
     """Copy `spec` with a numeric `scale`. `"auto"` is the largest standard scale that fits."""
     spec = dict(spec)
     raw = spec.get("scale", 1)
     if isinstance(raw, (int, float)) and not isinstance(raw, bool) and raw > 0:
         return spec
     if isinstance(raw, str) and raw.strip().lower() == "auto":
-        spec["scale"] = _auto_sheet_denominator(spec, template)
+        spec["scale"] = _auto_sheet_denominator(
+            spec, template, catalog=catalog, language=language, place_labels=place_labels)
         return spec
     if isinstance(raw, str) and "".join(ch for ch in raw.lower() if ch.isalnum()) == "nts":
-        spec["scale"] = _auto_sheet_denominator(spec, template)
+        spec["scale"] = _auto_sheet_denominator(
+            spec, template, catalog=catalog, language=language, place_labels=place_labels)
         spec["nts"] = True
         return spec
     warnings.append(f"ERROR: scale {raw!r} is not a positive number, 'auto' or 'NTS' - using 20")
@@ -95,108 +98,98 @@ def _resolve_sheet_scale(spec: dict, template: dict, warnings: list[str]) -> dic
 
 def sheet_scale_number(spec: dict) -> float:
     """The denominator the sheet is drawn at. ``auto`` and ``NTS`` are resolved before any arithmetic."""
+    token = spec.get("scale") if isinstance(spec, dict) else None
+    cached = getattr(sheet_scale_number, "_cache", None)
+    if cached is not None and cached[0] is spec and cached[1] == token:
+        return cached[2]
     warnings: list[str] = []
-    template_id = (spec.get("sheet") or {}).get("template") or DEFAULT_TEMPLATE
+    template_id = (spec.get("sheet") or {}).get("template") or DEFAULT_TEMPLATE if isinstance(spec, dict) else DEFAULT_TEMPLATE
     template = _load_template(template_id, warnings)
-    return float(_resolve_sheet_scale(spec, template, warnings)["scale"])
+    language = (spec.get("language") if isinstance(spec, dict) else None) or "both"
+    value = float(_resolve_sheet_scale(spec if isinstance(spec, dict) else {}, template, warnings,
+                                        language=language)["scale"])
+    sheet_scale_number._cache = (spec, token, value)
+    return value
 
 
-def _point_xy(point, radius=0.0):
-    if not isinstance(point, (list, tuple)) or len(point) < 2:
-        return None
-    try:
-        x, y = float(point[0]), float(point[1])
-        r = float(radius or 0)
-    except (TypeError, ValueError):
-        return None
-    return x - r, y - r, x + r, y + r
+def _content_box(spec: dict, template: dict, catalog, language: str, place_labels: bool):
+    """The box `plan_sheet` checks, after labels, dimension text and the fitted notes block.
 
+    `spec["scale"]` is already a number. Notes are annexed only on a single-view sheet; on a
+    multi-view sheet they are paper-space text and the caller compares this box with the
+    primary viewport.
+    """
+    from . import place
 
-def _scale_cloud(spec: dict, *, text: bool):
-    """Geometry (and, when `text`, callouts) as two lists of coordinates."""
-    xs, ys = [], []
-
-    def add(point, radius=0.0):
-        box = _point_xy(point, radius)
-        if box is None:
-            return
-        xs.extend((box[0], box[2]))
-        ys.extend((box[1], box[3]))
-
+    warnings: list[str] = []
+    ctx = DrawContext(spec, catalog, language, warnings)
+    ctx.nudge_labels = place_labels
     for el in spec.get("elements") or []:
         if not isinstance(el, dict):
             continue
-        if el.get("type") == "text" and not text:
+        try:
+            components.draw_element(ctx, el)
+        except ELEMENT_ERRORS:
             continue
-        add(el.get("at"), el.get("radius") or 0)
-        add(el.get("center"), el.get("radius") or 0)
-        if el.get("type") != "text":
-            add(el.get("label_at"))
-        for point in list(el.get("points") or []) + list(el.get("corners") or []):
-            add(point)
-    for dim in spec.get("dimensions") or []:
-        if not isinstance(dim, dict):
-            continue
-        for point in dim.get("points") or []:
-            add(point)
-    return xs, ys
+    dims.draw_dimensions(ctx, [d for d in (spec.get("dimensions") or []) if isinstance(d, dict)])
+    legend.draw_balloons(ctx, [e for e in (spec.get("legend") or []) if isinstance(e, dict)])
+    la = template.get("legend_area")
+    max_w = la["w"] if la else None
+    side, roles = [], []
+    multi = any(isinstance(view, dict) for view in (spec.get("views") or []))
+    if not multi:
+        for block, at, role in (
+                (legend.legend_table(ctx, spec.get("legend") or [], max_w), spec.get("legend_at"), "legend"),
+                (legend.notes_block(ctx, spec.get("notes"), max_w), spec.get("notes_at"), "notes")):
+            if block and at:
+                block.draw(Vec2(at))
+            elif block:
+                side.append(block)
+                roles.append(role)
+    place.draw_fixed_text(ctx)
+    if place_labels:
+        place.nudge_dimensions(ctx)
+        place.place_labels(ctx)
+        place.nudge_dimensions(ctx)
+    extents = layout.content_extents(ctx)
+    if multi:
+        return ctx, extents
+    side = layout.refit_notes(ctx, spec.get("notes"), template, side, roles, extents)
+    box = extents
+    for block in side:
+        box = layout._annex(ctx, box, block, template)
+    return ctx, box
 
 
-def _with_nearby_notes(spec: dict, xs: list, ys: list, scale: float, unit: float):
-    """Add callouts and dimension-line offsets that sit next to the geometry at this scale."""
-    xs, ys = list(xs), list(ys)
-    minx, maxx, miny, maxy = min(xs), max(xs), min(ys), max(ys)
-    span = max(maxx - minx, maxy - miny, unit)
-    margin = max(span * 0.5, 40.0 * scale * unit)
-
-    def add(point):
-        box = _point_xy(point)
-        if box is None:
-            return
-        x, y = (box[0] + box[2]) / 2, (box[1] + box[3]) / 2
-        if minx - margin <= x <= maxx + margin and miny - margin <= y <= maxy + margin:
-            xs.extend((box[0], box[2]))
-            ys.extend((box[1], box[3]))
-
-    for el in spec.get("elements") or []:
-        if isinstance(el, dict) and el.get("type") == "text":
-            add(el.get("at"))
-    for dim in spec.get("dimensions") or []:
-        if not isinstance(dim, dict):
-            continue
-        base = dim.get("base")
-        if not isinstance(base, (int, float)) or isinstance(base, bool):
-            continue
-        mid_x, mid_y = (minx + maxx) / 2, (miny + maxy) / 2
-        if str(dim.get("axis")) == "v":
-            add((base, mid_y))
-        else:
-            add((mid_x, base))
-    return xs, ys
+def _fits_area(ctx, box, area: dict) -> bool:
+    """Same comparison as `layout._check_fit`: the box is within `area` at this scale."""
+    return layout._paper_fits((box[2] - box[0], box[3] - box[1]), area, ctx.k)
 
 
-def _auto_sheet_denominator(spec: dict, template: dict) -> float:
-    """Largest standard scale (smallest denominator) whose geometry fits the drawing area.
+def _auto_sheet_denominator(spec: dict, template: dict, *, catalog=None, language: str = "both",
+                            place_labels: bool = True) -> float:
+    """Largest standard scale whose drawn sheet passes the render's own fit test.
 
-    A callout or a dimension-line offset far from the geometry does not zoom the sheet out.
-    The measured points of a dimension do: they are the thing the viewport has to show.
+    Each candidate is drawn (labels, dimension text, and on a single view the notes block)
+    and measured with `content_extents`. The first scale that fits is kept. On a multi-view
+    sheet the limit is the paper left after the other views, not the whole drawing area.
     """
     from .layout import STANDARD_SCALES
+    from .views import primary_free_mm
 
-    unit = 0.001 if spec.get("units") == "m" else 1.0
-    area = template.get("drawing_area") or {"w": 380, "h": 240}
-    free_w, free_h = float(area["w"]), float(area["h"])
-    core_x, core_y = _scale_cloud(spec, text=False)
-    if not core_x:
-        core_x, core_y = _scale_cloud(spec, text=True)
-    if not core_x or free_w <= 1 or free_h <= 1:
+    free = primary_free_mm(spec, template, language)
+    if free is None:
+        area = template.get("drawing_area") or {"w": 380, "h": 240}
+    else:
+        area = {"w": free[0], "h": free[1]}
+    if float(area["w"]) <= 1 or float(area["h"]) <= 1:
         return 50.0
-    pad = 4.0
+    import copy
+    probe = copy.deepcopy(spec)
     for scale in STANDARD_SCALES:
-        xs, ys = _with_nearby_notes(spec, core_x, core_y, float(scale), unit)
-        model_w = (max(xs) - min(xs)) / unit
-        model_h = (max(ys) - min(ys)) / unit
-        if model_w / scale + pad <= free_w and model_h / scale + pad <= free_h:
+        probe["scale"] = float(scale)
+        ctx, box = _content_box(probe, template, catalog, language, place_labels)
+        if _fits_area(ctx, box, area):
             return float(scale)
     return float(STANDARD_SCALES[-1])
 
@@ -219,7 +212,8 @@ def draw_sheet(spec: dict, *, catalog=None, project=None, document=None, warning
     sheet = spec.get("sheet") or {}
     template = _load_template(sheet.get("template") or value_of(document, "titleblock")
                               or value_of(project, "default_titleblock") or DEFAULT_TEMPLATE, warnings)
-    spec = _resolve_sheet_scale(spec, template, warnings)
+    spec = _resolve_sheet_scale(spec, template, warnings, catalog=catalog, language=language,
+                                place_labels=place_labels)
     ctx = DrawContext(spec, catalog, language, warnings)
     ctx.nudge_labels = place_labels
     spans: list = []
@@ -308,7 +302,8 @@ def _draw_views(spec, catalog, project, document, warnings, place_labels):
     sheet = spec.get("sheet") or {}
     template = _load_template(sheet.get("template") or value_of(document, "titleblock")
                               or value_of(project, "default_titleblock") or DEFAULT_TEMPLATE, warnings)
-    spec = _resolve_sheet_scale(spec, template, warnings)
+    spec = _resolve_sheet_scale(spec, template, warnings, catalog=catalog, language=language,
+                                place_labels=place_labels)
     ctx = DrawContext(spec, catalog, language, warnings)
     ctx.nudge_labels = place_labels
     for i, el in enumerate(spec.get("elements", [])):
