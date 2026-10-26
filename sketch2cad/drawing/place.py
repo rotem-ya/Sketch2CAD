@@ -3,11 +3,15 @@
 Text boxes are measured in model space from the real paper text height (already
 multiplied by the view scale) and the font width estimate, including a bilingual
 pair stacked at the MTEXT line pitch. A label keeps `label_at` when that box is
-clear of other text, dimension text, drawn linework and existing leaders. Leaders
-are obstacles too: a candidate is rejected when its pointer crosses another text
-box. Label boxes keep GAP_TEXT_MM of clear paper between them. `label_pinned`
-keeps the authored point even when it collides. The search order is fixed, so the
-same spec always lands on the same sheet.
+clear of other text, dimension text, drawn linework and existing leaders. A leader
+is rejected when it crosses another text box, another leader, or a dimension line.
+If the ring around the anchor has no clear spot, the search continues on a grid
+across the drawing area, still with a leader. A candidate that overlaps other text
+is never drawn. Label boxes keep GAP_TEXT_MM of clear paper between them.
+`label_pinned` keeps the authored point even when it collides. Free `text` is not
+queued here. Dimension text may only slide along its dimension line or flip to the
+other side of it. The search order is fixed, so the same spec always lands on the
+same sheet.
 """
 from __future__ import annotations
 
@@ -25,7 +29,9 @@ GAP_TEXT_MM = 1.5
 GAP_LINE_MM = 0.35
 DESCENDER = 0.25                              # fraction of cap height below the baseline
 LEADER_FROM_MM = 6.0                          # a nudge this far grows or adds a leader
-STEPS_MM = (3.0, 6.0, 10.0, 15.0, 22.0, 32.0, 44.0, 60.0, 80.0, 105.0)
+STEPS_MM = (3.0, 6.0, 10.0, 15.0, 22.0, 32.0, 44.0, 60.0, 80.0, 105.0,
+            140.0, 185.0, 240.0, 310.0, 400.0)
+SLIDE_MM = (0.0, 4.0, 8.0, 14.0, 22.0, 32.0, 46.0, 64.0, 86.0)
 SKIP_LAYERS = {"HATCH", "FRAME", "DIM", "CENTER", "DEFPOINTS", "VIEWPORT", "VIEWPORTS", "NOPLOT"}
 _RAW_DIRS = ((0, 1), (1, 1), (1, 0), (1, -1), (0, -1), (-1, -1), (-1, 0), (-1, 1),
              (1, 2), (2, 1), (-1, 2), (-2, 1), (1, -2), (2, -1), (-1, -2), (-2, -1))
@@ -83,7 +89,7 @@ def _iter_texts(layout):
         if kind in ("TEXT", "MTEXT"):
             yield entity
         elif kind == "DIMENSION":
-            yield from _virtual_texts(entity)
+            yield from _dimension_texts(entity)
         elif kind == "INSERT":
             yield from _virtual_texts(entity)
 
@@ -101,6 +107,56 @@ def _virtual_texts(entity, depth: int = 0):
             yield item
         elif kind in ("INSERT", "DIMENSION"):
             yield from _virtual_texts(item, depth + 1)
+
+
+def _dimension_texts(entity):
+    """Text actually stored on the dimension, including text that was slid along the line."""
+    try:
+        block = entity.get_geometry_block()
+    except (AttributeError, KeyError, ValueError):
+        yield from _virtual_texts(entity)
+        return
+    for item in block:
+        if item.dxftype() in ("TEXT", "MTEXT"):
+            yield item
+
+
+def _dimension_lines(layout) -> list[tuple[Vec2, Vec2]]:
+    """Dimension line and extension lines, in model space."""
+    found = []
+    for dim in layout.query("DIMENSION"):
+        try:
+            block = dim.get_geometry_block()
+        except (AttributeError, KeyError, ValueError):
+            continue
+        for entity in block:
+            if entity.dxftype() != "LINE":
+                continue
+            start, end = Vec2(entity.dxf.start), Vec2(entity.dxf.end)
+            if start.distance(end) > 1e-9:
+                found.append((start, end))
+    return found
+
+
+def _segments_cross(a: Vec2, b: Vec2, c: Vec2, d: Vec2, eps: float = 1e-8) -> bool:
+    """True when the open segments cross or overlap. Sharing an endpoint does not count."""
+    def orient(p, q, r) -> float:
+        return (q.x - p.x) * (r.y - p.y) - (q.y - p.y) * (r.x - p.x)
+
+    d1, d2 = orient(c, d, a), orient(c, d, b)
+    d3, d4 = orient(a, b, c), orient(a, b, d)
+    if d1 * d2 < -eps and d3 * d4 < -eps:
+        return True
+    if abs(d1) > eps or abs(d2) > eps or abs(d3) > eps or abs(d4) > eps:
+        return False
+    # Collinear: an interior overlap, not a shared endpoint.
+    length = max(a.distance(b), 1e-12)
+
+    def param(p) -> float:
+        return (p - a).dot(b - a) / (length * length)
+
+    lo, hi = sorted((param(c), param(d)))
+    return min(hi, 1.0) - max(lo, 0.0) > 1e-6
 
 
 def text_boxes(layout) -> list[tuple[float, float, float, float]]:
@@ -295,22 +351,23 @@ def _pointer_hits(start: Vec2, end: Vec2, texts, gap: float) -> int:
     return count
 
 
+def _line_crosses(start: Vec2, end: Vec2, leaders, dim_lines) -> int:
+    count = 0
+    for other_a, other_b, *_rest in leaders:
+        if _segments_cross(start, end, other_a, other_b):
+            count += 1
+    for other_a, other_b in dim_lines:
+        if _segments_cross(start, end, other_a, other_b):
+            count += 1
+    return count
+
+
 def _remember_leader(leaders, at: Vec2, lines: list[str], height: float, target: Vec2, k: float,
                      elbow: str | None) -> None:
     left, right = _shelf(at, lines, height, target, k)
     start, end = _pointer(at, lines, height, target, k, elbow)
     for a, b in ((left, right), (start, end)):
         leaders.append((a, b, (min(a.x, b.x), min(a.y, b.y), max(a.x, b.x), max(a.y, b.y))))
-
-
-def _score(box, pointer, texts, leaders, segments, circles, gap_text, gap_line, anchor_box):
-    text_hits = _hits_text(box, texts, gap_text)
-    leader_hits = _pointer_hits(pointer[0], pointer[1], texts, gap_text) if pointer else 0
-    leader_block = _hits_geometry(box, leaders, [], gap_text)
-    anchor_hit = 1 if anchor_box and _overlaps(box, anchor_box, 0) else 0
-    geom = _hits_geometry(box, segments, circles, gap_line)
-    clear = text_hits == leader_hits == leader_block == anchor_hit == geom == 0
-    return clear, (leader_hits, text_hits + leader_block + anchor_hit, geom)
 
 
 def _elbow_name(at, lines, height, target, k, which: str) -> str:
@@ -342,6 +399,34 @@ def _options(ctx, at, align, lines, height, explicit, target):
                 yield at + offset, align, False, None
 
 
+def _grid_options(ctx, lines, height, target, bounds):
+    """Leader positions on a grid across the drawing area, after the ring is exhausted."""
+    if not bounds:
+        return
+    width = max(text_width(line, height) for line in lines)
+    step = ctx.paper(12)
+    span_x = max(bounds[2] - bounds[0] - width, 0.0)
+    span_y = max(bounds[3] - bounds[1] - height, 0.0)
+    nx = int(span_x / step) + 1
+    ny = int(span_y / step) + 1
+    cells = nx * ny
+    if cells > 360 and cells > 0:
+        step *= math.sqrt(cells / 360.0)
+        nx = int(span_x / step) + 1
+        ny = int(span_y / step) + 1
+    for iy in range(max(ny, 1)):
+        y = bounds[3] - height - iy * step
+        if y < bounds[1] - 1e-6:
+            break
+        for ix in range(max(nx, 1)):
+            x = bounds[0] + ix * step
+            if x > bounds[2] - width + 1e-6:
+                break
+            at = Vec2(x, y)
+            for which in ("near", "far"):
+                yield at, "left", True, _elbow_name(at, lines, height, target, ctx.k, which)
+
+
 def _draw(ctx: DrawContext, lines, at: Vec2, align: str, leader: bool, target: Vec2, height: float,
           elbow: str | None, rotation: float = 0.0) -> None:
     if leader:
@@ -366,12 +451,6 @@ def _box_inside(box, bounds) -> bool:
             and box[2] <= bounds[2] + 1e-6 and box[3] <= bounds[3] + 1e-6)
 
 
-def _point_inside(point: Vec2, bounds) -> bool:
-    if not bounds:
-        return True
-    return bounds[0] - 1e-6 <= point.x <= bounds[2] + 1e-6 and bounds[1] - 1e-6 <= point.y <= bounds[3] + 1e-6
-
-
 def _item_placement(ctx, item):
     """Lines, height, preferred point, align, leader flag and target for one queued item."""
     el, anchor, radius = item["el"], item["anchor"], item["radius"]
@@ -389,13 +468,33 @@ def _item_placement(ctx, item):
     return lines, height, at, align, explicit, target, 0.0
 
 
-def _place_one(ctx, item, texts, segments, circles, leaders, gap_text, gap_line, bounds, content) -> None:
+def draw_fixed_text(ctx: DrawContext) -> None:
+    """Draw queued free text at its authored point. It is not moved and gets no leader of its own."""
+    items = [item for item in ctx.pending if item.get("kind") == "text"]
+    if not items:
+        return
+    ctx.pending = [item for item in ctx.pending if item.get("kind") != "text"]
+    for item in items:
+        el = item["el"]
+        at = Vec2(el.get("at") or item["anchor"])
+        height = ctx.paper(snap_text_height(float(el.get("height") or ctx.style["text_height"])))
+        lines = pick(el.get("text"), ctx.language)
+        if not lines:
+            continue
+        if el.get("leader_to"):
+            leader_label(ctx, lines, at, Vec2(el["leader_to"]), height)
+        else:
+            stack_text(ctx, lines, at, height, el.get("align", "left"), float(el.get("rotation") or 0))
+
+
+def _place_one(ctx, item, texts, segments, circles, leaders, dim_lines, gap_text, gap_line, bounds,
+               content) -> None:
     el = item["el"]
     lines, height, at, align, explicit, target, rotation = _item_placement(ctx, item)
     if not lines:
         return
     anchor_box = _anchor_box(item["anchor"], item["radius"])
-    pinned = bool(el.get("label_pinned"))
+    pinned = bool(el.get("label_pinned")) or item.get("kind") == "text"
     if pinned:
         if item.get("kind") == "text":
             _draw(ctx, lines, at, align, explicit, target, height, None, rotation)
@@ -407,36 +506,52 @@ def _place_one(ctx, item, texts, segments, circles, leaders, gap_text, gap_line,
             _remember_leader(leaders, at, lines, height, target, ctx.k, None)
         return
     chosen = None
-    best = None
-    for index, (candidate, cand_align, cand_leader, elbow) in enumerate(
-            _options(ctx, at, align, lines, height, explicit, target)):
-        if index > 400:
-            break
-        box = _box(candidate, lines, height, cand_align, cand_leader, target, ctx.k)
-        pointer = _pointer(candidate, lines, height, target, ctx.k, elbow) if cand_leader else None
-        outside = 0 if _in_limits(box, bounds, content) else 1
-        if pointer and not (_in_limits((pointer[0].x, pointer[0].y, pointer[0].x, pointer[0].y), bounds, content)
-                            and _in_limits((pointer[1].x, pointer[1].y, pointer[1].x, pointer[1].y), bounds, content)):
-            outside = 1
-        clear, score = _score(box, pointer, texts, leaders, segments, circles, gap_text, gap_line, anchor_box)
-        ranked = (outside,) + score + (index,)
-        if clear and outside == 0:
-            chosen = (candidate, cand_align, cand_leader, elbow, box)
-            break
-        if best is None or ranked < best[0]:
-            best = (ranked, (candidate, cand_align, cand_leader, elbow, box))
-    if chosen is None:
-        chosen = best[1]
-        if chosen[4] and not _in_limits(chosen[4], bounds, content):
-            ctx.warnings.append(
-                f"ERROR: label {el.get('id', '?')!r} has no position inside the sheet and was not drawn")
-            return
+    fallback = None
+
+    def consider(options) -> bool:
+        nonlocal chosen, fallback
+        for candidate, cand_align, cand_leader, elbow in options:
+            box = _box(candidate, lines, height, cand_align, cand_leader, target, ctx.k)
+            pointer = _pointer(candidate, lines, height, target, ctx.k, elbow) if cand_leader else None
+            shelf = _shelf(candidate, lines, height, target, ctx.k) if cand_leader else None
+            if not _in_limits(box, bounds, content):
+                continue
+            parts = []
+            if pointer:
+                parts.append(pointer)
+            if shelf:
+                parts.append(shelf)
+            if any(not _in_limits((p.x, p.y, p.x, p.y), bounds, content) for a, b in parts for p in (a, b)):
+                continue
+            text_hits = _hits_text(box, texts, gap_text)
+            leader_hits = crossings = 0
+            for start, end in parts:
+                leader_hits += _pointer_hits(start, end, texts, gap_text)
+                crossings += _line_crosses(start, end, leaders, dim_lines)
+            if text_hits or leader_hits or crossings:
+                continue
+            geom = _hits_geometry(box, segments, circles, gap_line)
+            anchor_hit = 1 if anchor_box and _overlaps(box, anchor_box, 0) else 0
+            leader_block = _hits_geometry(box, leaders, [], gap_text)
+            packed = (candidate, cand_align, cand_leader, elbow, box)
+            if geom == anchor_hit == leader_block == 0:
+                chosen = packed
+                return True
+            score = geom + anchor_hit + leader_block
+            if fallback is None or score < fallback[0]:
+                fallback = (score, packed)
+        return False
+
+    if not consider(_options(ctx, at, align, lines, height, explicit, target)):
+        consider(_grid_options(ctx, lines, height, target, bounds))
+    if chosen is None and fallback is not None:
+        chosen = fallback[1]
         ctx.warnings.append(f"label {el.get('id', '?')!r} has no clear position")
-    candidate, cand_align, cand_leader, elbow, box = chosen
-    if not _in_limits(box, bounds, content):
+    if chosen is None:
         ctx.warnings.append(
-            f"ERROR: label {el.get('id', '?')!r} has no position inside the sheet and was not drawn")
+            f"ERROR: label {el.get('id', '?')!r} has no position clear of other text and was not drawn")
         return
+    candidate, cand_align, cand_leader, elbow, box = chosen
     _draw(ctx, lines, candidate, cand_align, cand_leader, target, height, elbow, rotation)
     texts.append(box)
     if cand_leader:
@@ -444,26 +559,47 @@ def _place_one(ctx, item, texts, segments, circles, leaders, gap_text, gap_line,
 
 
 def place_labels(ctx: DrawContext, bounds=None, content=None) -> None:
-    """Draw queued labels and free text. `bounds` is the drawing area in model space."""
+    """Draw queued labels. `bounds` is the drawing area in model space. Free text is not moved."""
     items = list(ctx.pending)
     ctx.pending.clear()
     if not items:
         return
     texts, segments, circles = _collect(ctx.msp)
     leaders: list = []
+    dim_lines = _dimension_lines(ctx.msp)
     gap_text, gap_line = ctx.paper(GAP_TEXT_MM), ctx.paper(GAP_LINE_MM)
     pinned = [item for item in items if item["el"].get("label_pinned")]
     free = [item for item in items if not item["el"].get("label_pinned")]
     for item in pinned + free:
-        _place_one(ctx, item, texts, segments, circles, leaders, gap_text, gap_line, bounds, content)
+        _place_one(ctx, item, texts, segments, circles, leaders, dim_lines, gap_text, gap_line, bounds, content)
 
 
 def _same_box(a, b, tol: float = 1e-3) -> bool:
     return all(abs(a[i] - b[i]) <= tol for i in range(4))
 
 
+def _dim_frame(dim):
+    """(origin, direction, normal, along-span) of a linear dimension line."""
+    angle = math.radians(float(dim.dxf.angle or 0))
+    direction = Vec2(math.cos(angle), math.sin(angle))
+    normal = Vec2(-direction.y, direction.x)
+    origin = Vec2(dim.dxf.defpoint)
+    ends = []
+    for name in ("defpoint2", "defpoint3"):
+        if dim.dxf.hasattr(name):
+            ends.append((Vec2(getattr(dim.dxf, name)) - origin).dot(direction))
+    if len(ends) == 2:
+        span = (min(ends), max(ends))
+    else:
+        span = None
+    return origin, direction, normal, span
+
+
 def nudge_dimensions(ctx: DrawContext, bounds=None) -> None:
-    """Move dimension text that sits on linework or other text. The dimension line stays put."""
+    """Slide dimension text along its dimension line, or flip it to the other side.
+
+    The text keeps its distance to the line. It is never moved off the line.
+    """
     dims = list(ctx.msp.query("DIMENSION"))
     if not dims:
         return
@@ -474,6 +610,7 @@ def nudge_dimensions(ctx: DrawContext, bounds=None) -> None:
             block = dim.get_geometry_block()
         except (AttributeError, KeyError, ValueError):
             continue
+        origin, direction, normal, span = _dim_frame(dim)
         for entity in block:
             if entity.dxftype() not in ("TEXT", "MTEXT"):
                 continue
@@ -481,33 +618,60 @@ def nudge_dimensions(ctx: DrawContext, bounds=None) -> None:
             if not box:
                 continue
             others = [other for other in texts if not _same_box(other, box)]
-            anchor_box = None
-            clear, _score_now = _score(box, None, others, [], segments, circles, gap_text, gap_line, anchor_box)
-            if clear and _box_inside(box, bounds):
+            center = Vec2((box[0] + box[2]) / 2, (box[1] + box[3]) / 2)
+            rel = center - origin
+            along0 = rel.dot(direction)
+            across0 = rel.dot(normal)
+            window = span if span is not None else (along0 - ctx.paper(20), along0 + ctx.paper(20))
+
+            def candidate_at(along, across):
+                delta = direction * (along - along0) + normal * (across - across0)
+                return delta, (box[0] + delta.x, box[1] + delta.y, box[2] + delta.x, box[3] + delta.y)
+
+            def acceptable(candidate) -> bool:
+                if not _box_inside(candidate, bounds):
+                    return False
+                return _hits_text(candidate, others, gap_text) == 0
+
+            home_ok = acceptable(box) and _hits_geometry(box, segments, circles, gap_line) == 0
+            if home_ok:
                 continue
-            height = entity.dxf.char_height if entity.dxftype() == "MTEXT" else entity.dxf.height
             moved = None
-            best = None
-            for index, (step, direction) in enumerate((s, d) for s in STEPS_MM for d in DIRS):
-                if index > 200:
+            fallback = None
+            for flip in (1.0, -1.0):
+                across = across0 * flip
+                for step in SLIDE_MM:
+                    signs = (0,) if step == 0 else (1, -1)
+                    for sign in signs:
+                        along = along0 + sign * ctx.paper(step)
+                        if not (window[0] - 1e-6 <= along <= window[1] + 1e-6):
+                            continue
+                        delta, candidate = candidate_at(along, across)
+                        if not acceptable(candidate):
+                            continue
+                        geom = _hits_geometry(candidate, segments, circles, gap_line)
+                        if geom == 0:
+                            moved = (delta, candidate)
+                            break
+                        if fallback is None or geom < fallback[0]:
+                            fallback = (geom, (delta, candidate))
+                    if moved is not None:
+                        break
+                if moved is not None:
                     break
-                delta = direction * ctx.paper(step)
-                candidate = (box[0] + delta.x, box[1] + delta.y, box[2] + delta.x, box[3] + delta.y)
-                outside = 0 if _box_inside(candidate, bounds) else 1
-                ok, score = _score(candidate, None, others, [], segments, circles, gap_text, gap_line, None)
-                ranked = (outside,) + score + (index,)
-                if ok and outside == 0:
-                    moved = (delta, candidate)
-                    break
-                if best is None or ranked < best[0]:
-                    best = (ranked, (delta, candidate))
-            if moved is None and best is not None and _box_inside(best[1][1], bounds):
-                moved = best[1]
-                ctx.warnings.append("dimension text has no clear position")
-            if moved is None:
-                ctx.warnings.append("ERROR: dimension text has no position inside the sheet and was left in place")
+            if moved is None and fallback is not None and _hits_text(box, others, gap_text):
+                # The authored spot sits on other text. A slide that misses the text is better,
+                # even when it still meets linework.
+                moved = fallback[1]
+            elif moved is None and _hits_text(box, others, gap_text):
+                ctx.warnings.append(
+                    "ERROR: dimension text has no position along its dimension line and was left in place")
+                continue
+            elif moved is None:
                 continue
             delta, candidate = moved
+            if abs(delta.x) + abs(delta.y) < 1e-9:
+                continue
             entity.translate(delta.x, delta.y, 0)
             texts = [other for other in texts if not _area_overlap(other, box)]
             texts.append(candidate)
@@ -548,3 +712,40 @@ def leader_crosses_text(layout) -> list[tuple[int, int]]:
             if _seg_hits_rect(start, end, box[0] + inset, box[1] + inset, box[2] - inset, box[3] - inset):
                 hits.append((i, j))
     return hits
+
+
+def leader_crossings(layout) -> list[tuple]:
+    """Leaders that cross another leader, or a dimension line. Endpoint touches do not count."""
+    lines = [entity for entity in layout.query("LINE") if _layer(entity) == "TEXT"]
+    dim_lines = _dimension_lines(layout)
+    hits = []
+    for i, left in enumerate(lines):
+        a, b = Vec2(left.dxf.start), Vec2(left.dxf.end)
+        for j in range(i + 1, len(lines)):
+            right = lines[j]
+            if _segments_cross(a, b, Vec2(right.dxf.start), Vec2(right.dxf.end)):
+                hits.append(("leader", i, j))
+        for k, (c, d) in enumerate(dim_lines):
+            if _segments_cross(a, b, c, d):
+                hits.append(("dimension", i, k))
+    return hits
+
+
+def dimension_text_gap_mm(layout, k: float) -> list[float]:
+    """Paper millimetres from each dimension-text box to its dimension line."""
+    if k <= 0:
+        return []
+    gaps = []
+    for dim in layout.query("DIMENSION"):
+        origin, _direction, normal, _span = _dim_frame(dim)
+        for entity in _dimension_texts(dim):
+            box = _entity_box(entity)
+            if not box:
+                continue
+            corners = (Vec2(box[0], box[1]), Vec2(box[2], box[1]), Vec2(box[2], box[3]), Vec2(box[0], box[3]))
+            signed = [(corner - origin).dot(normal) for corner in corners]
+            if min(signed) <= 0 <= max(signed):
+                gaps.append(0.0)
+            else:
+                gaps.append(min(abs(value) for value in signed) / k)
+    return gaps

@@ -53,14 +53,17 @@ Extra keys supported by the renderer:
 Element labels are placed deterministically. `label_at` is the first candidate, in drawing units. It is kept when the
 text box (real paper height × scale, font-width estimate, both lines of an en/he label) is clear of other text,
 dimension text, drawn linework and other leaders; otherwise the label is nudged and a leader is added or extended.
-Label boxes keep about 1.5 mm of clear paper between them, and a leader is not drawn across another text box.
-Free text is nudged the same way unless `label_pinned` is set, and dimension text moves off linework.
+Label boxes keep about 1.5 mm of clear paper between them. A leader is not drawn across another text box, another
+leader, or a dimension line. The search grows outward, then tries a leader into free space on the sheet. A position
+that overlaps other text is never used; if none is clear, the label is omitted and reported as an error.
 Nothing is placed outside the drawing area: a candidate past that rectangle is rejected.
-`label_pinned: true` keeps that point even when it collides. A `text` element is not nudged. The same spec always
-produces the same sheet.
+`label_pinned: true` keeps that point even when it collides. A `text` element is not moved and is not given a leader
+(it is only an obstacle). Dimension text may only slide along its own dimension line, or flip to the other side of
+that line. The same spec always produces the same sheet.
 
 Paper text heights snap to the ISO 3098 set **2.5 / 3.5 / 5 / 7 mm** (a tie takes the larger size). The
-title-block title rounds up and is not shrunk to fit the field (3.29 stays 3.5, 4.1 becomes 5). ezdxf cannot
+title-block title rounds up (3.29 stays 3.5, 4.1 becomes 5), then shrinks within that series or splits onto two
+lines so the English and the Hebrew never overlap inside the field. ezdxf cannot
 create annotative text, so model-space text height is that paper height times the view's scale denominator.
 Entities are BYLAYER. Layers `0` and `DEFPOINTS` hold no geometry: below-grade work goes on `EXISTING_DASH`,
 `NEW_DASH` or `PROPOSED_DASH` instead of a per-entity linetype.

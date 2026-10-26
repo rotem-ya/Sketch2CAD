@@ -34,7 +34,12 @@ def _stack(blocks: list[Block], top_left: Vec2, gap: float, vertical: bool) -> l
 
 
 def _suggest_scale(scale: float, fill: float) -> int:
-    needed = scale * fill
+    """Next standard denominator that fits. `fill` is content / free space.
+
+    A view that does not fit needs a smaller scale, which is a larger denominator.
+    Never suggest a larger scale (a smaller denominator) than `scale`.
+    """
+    needed = scale * max(float(fill), 1.0)
     return next((s for s in STANDARD_SCALES if s + 1e-9 >= needed), round(needed))
 
 

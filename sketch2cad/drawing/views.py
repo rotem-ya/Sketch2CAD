@@ -16,8 +16,7 @@ from ezdxf.math import Matrix44, Vec2
 from .. import templates
 from . import components, dims, legend, place
 from .context import LTSCALE_FACTOR, DrawContext
-from .layout import content_extents
-from .layout import STANDARD_SCALES
+from .layout import _suggest_scale, content_extents
 from .text import LINE_SPACING, put_text, text_width
 
 ELEMENT_ERRORS = (KeyError, ValueError, TypeError, IndexError, ZeroDivisionError)
@@ -31,7 +30,6 @@ CAPTION_GAP = 1.5                         # viewport top → scale baseline
 RULE_GAP = 0.8                            # scale cap-height → underline
 TITLE_GAP = 1.0                           # underline → title baseline
 NTS_FIT_MM = 80.0
-PACK_STEP_MM = 5.0
 
 
 def _draw_elements(ctx: DrawContext, elements) -> None:
@@ -102,15 +100,11 @@ def _resolve_scale(view: dict, unit: float, sheet_scale: float) -> tuple[float, 
     """Return (numeric scale denominator, not_to_scale)."""
     scale = view.get("scale")
     if isinstance(scale, str) and scale.strip().upper() == "NTS":
-        elements = view.get("elements")
-        bounds = _rough_bounds(elements)
+        bounds = _rough_bounds(view.get("elements"))
         fit = float(view.get("fit_mm") or NTS_FIT_MM)
         if not bounds or fit <= 0:
             return float(sheet_scale), True
         longer = max(bounds[2] - bounds[0], bounds[3] - bounds[1], unit)
-        provisional = longer / (fit * unit)
-        grown = _rough_bounds(elements, text_scale=provisional, unit=unit) or bounds
-        longer = max(grown[2] - grown[0], grown[3] - grown[1], unit)
         return longer / (fit * unit), True
     return float(scale), False
 
@@ -136,13 +130,15 @@ def _draw_model_view(ctx: DrawContext, view: dict, cursor_x: float, base_y: floa
         dims.draw_dimensions(child, view.get("dimensions") or [])
     except ELEMENT_ERRORS as exc:
         ctx.warnings.append(f"view {view.get('id')!r}: dimensions skipped ({exc!r})")
-    _finish_labels(child)
+    # Free text stays put and is part of the view. The viewport is measured before labels move.
+    place.draw_fixed_text(child)
     ext = ezbbox.extents(block, fast=True)
     if not ext.has_data:
         ctx.doc.blocks.delete_block(name, safe=True)
         ctx.warnings.append(f"view {view.get('id')!r} has nothing to draw")
         return None
     x0, y0, x1, y1 = ext.extmin.x, ext.extmin.y, ext.extmax.x, ext.extmax.y
+    _finish_labels(child)
     dx, dy = cursor_x - x0, base_y - y0
     shift = Matrix44.translate(dx, dy, 0)
     for entity in list(block):
@@ -233,21 +229,58 @@ def _inside(area, x, y, w, h) -> bool:
 
 
 def _scan(area, w, h, occupied, gap: float):
-    x_min, y_min = area["x"], area["y"]
-    x_max = area["x"] + area["w"] - w
-    y_max = area["y"] + area["h"] - h
+    """A free slot if one exists. Candidates sit against the area or an occupied rectangle."""
     if w > area["w"] + 1e-6 or h > area["h"] + 1e-6:
         return None
-    y = y_max
-    while y >= y_min - 1e-6:
-        x = x_min
-        while x <= x_max + 1e-6:
-            rect = (x, y, x + w, y + h)
-            if not any(_rects_overlap(rect, other, gap) for other in occupied):
-                return x, y
-            x += PACK_STEP_MM
-        y -= PACK_STEP_MM
-    return None
+    xs = [area["x"], area["x"] + area["w"] - w]
+    ys = [area["y"], area["y"] + area["h"] - h]
+    for other in occupied:
+        xs.append(other[2] + gap)
+        xs.append(other[0] - gap - w)
+        ys.append(other[3] + gap)
+        ys.append(other[1] - gap - h)
+    best = None
+    for x in xs:
+        for y in ys:
+            if not _inside(area, x, y, w, h) or _hits_occupied(x, y, w, h, occupied, gap):
+                continue
+            key = (-round(y, 4), round(x, 4))
+            if best is None or key < best[0]:
+                best = (key, (x, y))
+    return None if best is None else best[1]
+
+
+def _best_fill(area, w, h, occupied, gap: float) -> float:
+    """Smallest content/free-space ratio. Above 1 means the view does not fit what is left."""
+    xs = sorted({area["x"], area["x"] + area["w"]}
+                | {edge for other in occupied for edge in (other[0] - gap, other[2] + gap)})
+    ys = sorted({area["y"], area["y"] + area["h"]}
+                | {edge for other in occupied for edge in (other[1] - gap, other[3] + gap)})
+    best = None
+    x0_limit, x1_limit = area["x"] - 1e-6, area["x"] + area["w"] + 1e-6
+    y0_limit, y1_limit = area["y"] - 1e-6, area["y"] + area["h"] + 1e-6
+    for i, x0 in enumerate(xs):
+        if x0 < x0_limit:
+            continue
+        for x1 in xs[i + 1:]:
+            if x1 > x1_limit:
+                continue
+            for j, y0 in enumerate(ys):
+                if y0 < y0_limit:
+                    continue
+                for y1 in ys[j + 1:]:
+                    if y1 > y1_limit:
+                        continue
+                    rect = (x0, y0, x1, y1)
+                    if any(_rects_overlap(rect, other, 0) for other in occupied):
+                        continue
+                    fw, fh = x1 - x0, y1 - y0
+                    if fw > 1 and fh > 1:
+                        fill = max(w / fw, h / fh)
+                        best = fill if best is None else min(best, fill)
+    if best is None:
+        return max(w / max(area["w"], 1e-6), h / max(area["h"], 1e-6))
+    return best
 
 
 def _clip_area(area: dict, frame_w: float, frame_h: float) -> dict:
@@ -393,6 +426,7 @@ def _pack(area, items: list[dict], frame_w: float, frame_h: float) -> dict[str, 
         else:
             item["skip"] = True
             item["overflow"] = True
+            item["suggest_fill"] = _best_fill(area, item["slot_w"], item["slot_h"], occupied, VIEW_GAP_MM)
     return placed
 
 
@@ -403,10 +437,10 @@ def _write_caption(msp, origin: Vec2, width: float, height: float, title: str, s
     rule_y = scale_y + SCALE_H + RULE_GAP
     title_y = rule_y + TITLE_GAP
     center = origin.x + width / 2
-    put_text(msp, scale_label, (center, scale_y), SCALE_H, layer="TEXT", align="CENTER")
+    put_text(msp, scale_label, (center, scale_y), SCALE_H, layer="TEXT", align="CENTER", nowrap=True)
     if not title:
         return
-    put_text(msp, title, (center, title_y), TITLE_H, layer="TEXT", align="CENTER")
+    put_text(msp, title, (center, title_y), TITLE_H, layer="TEXT", align="CENTER", nowrap=True)
     half = text_width(title, TITLE_H) / 2
     msp.add_line((center - half, rule_y), (center + half, rule_y), dxfattribs={"layer": "TEXT"})
 
@@ -424,9 +458,13 @@ def _reserve_side(area: dict, template: dict, needed: bool) -> dict:
     return shrunk
 
 
-def compose(ctx: DrawContext, spec: dict, template: dict, values: dict, language: str) -> tuple[dict, str]:
-    """Draw extra views, then a 1:1 paper-space sheet. Returns (title-block rects, layout name)."""
-    px0, py0, px1, py1 = content_extents(ctx)
+def compose(ctx: DrawContext, spec: dict, template: dict, values: dict, language: str,
+            primary_bbox=None) -> tuple[dict, str]:
+    """Draw extra views, then a 1:1 paper-space sheet. Returns (title-block rects, layout name).
+
+    `primary_bbox` is the primary view measured before its labels were moved.
+    """
+    px0, py0, px1, py1 = content_extents(ctx) if primary_bbox is None else primary_bbox
     if px1 - px0 < 1e-9 and py1 - py0 < 1e-9:
         px1, py1 = px0 + ctx.k, py0 + ctx.k
     span = max(px1 - px0, py1 - py0, ctx.k)
@@ -451,7 +489,10 @@ def compose(ctx: DrawContext, spec: dict, template: dict, values: dict, language
 
     margin = float(template.get("margin", 10))
     frame = Vec2(margin, margin)
-    area = _reserve_side(template["drawing_area"], template, bool(spec.get("legend") or _has_notes(spec.get("notes"))))
+    # An explicit notes_at already occupies its own spot, so it does not take a side column.
+    needs_column = bool(spec.get("legend") and not spec.get("legend_at")) or (
+        _has_notes(spec.get("notes")) and not spec.get("notes_at"))
+    area = _reserve_side(template["drawing_area"], template, needs_column)
 
     def item_for(key, title, numeric, nts, bbox, k, fixed):
         pw, ph, _mw, _mh = _window(bbox, k)
@@ -503,9 +544,11 @@ def compose(ctx: DrawContext, spec: dict, template: dict, values: dict, language
 
 
 def _view_fit_warning(item: dict, area: dict) -> str:
-    fill = max(item["slot_w"] / max(area["w"], 1e-6), item["slot_h"] / max(area["h"], 1e-6))
-    needed = float(item["numeric"]) * fill
-    better = next((scale for scale in STANDARD_SCALES if scale + 1e-9 >= needed), round(needed))
+    area_fill = max(item["slot_w"] / max(area["w"], 1e-6), item["slot_h"] / max(area["h"], 1e-6))
+    # Remaining free space, not the whole sheet: a view that is smaller than the sheet can still
+    # be too big for the gap that is left, and the advice must be a smaller scale.
+    fill = max(float(item.get("suggest_fill") or area_fill), area_fill, 1.0)
+    better = _suggest_scale(float(item["numeric"]), fill)
     return (f"ERROR: view {item['key']!r} ({item['slot_w']:.0f} x {item['slot_h']:.0f} paper mm) "
             f"does not fit the {area['w']:.0f} x {area['h']:.0f} mm area at 1:{item['numeric']:g} - "
             f"not placed off the sheet. Consider 1:{better:g} or a larger sheet")

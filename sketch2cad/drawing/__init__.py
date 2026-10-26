@@ -82,12 +82,17 @@ def render(spec: dict, out_dir, basename: str, *, project=None, document=None, c
 
     values = templates.build_values(spec, project, document)
     sheet_layout = None
+    from . import place
     if spec.get("views"):
+        # Free text stays where it was written, and it counts toward the view. Labels are
+        # measured before they move, so a nudge cannot inflate the viewport.
+        place.draw_fixed_text(ctx)
+        primary_bbox = layout.content_extents(ctx)
         if place_labels:
-            from . import place
             place.nudge_dimensions(ctx)
             place.place_labels(ctx)
-        rects, sheet_layout = sheet_views.compose(ctx, spec, template, values, language)
+        rects, sheet_layout = sheet_views.compose(
+            ctx, spec, template, values, language, primary_bbox=primary_bbox)
     else:
         # legend table / notes: explicit positions are drawn now (they count as content), the rest is laid out
         la = template.get("legend_area")
@@ -103,8 +108,10 @@ def render(spec: dict, out_dir, basename: str, *, project=None, document=None, c
         origin, placements = layout.plan_sheet(ctx, template, side, sheet.get("origin"))
         for block, top_left in placements:
             block.draw(top_left)
+        # After the sheet is planned, so a long note does not push the legend off the sheet.
+        # The text still stays on the point the spec gave it.
+        place.draw_fixed_text(ctx)
         if place_labels:
-            from . import place
             area = template["drawing_area"]
             k = ctx.k
             bounds = (origin.x + area["x"] * k, origin.y + area["y"] * k,

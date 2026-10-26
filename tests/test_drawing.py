@@ -569,11 +569,14 @@ def test_nts_view_is_labelled_and_fitted(tmp_path):
                                     {"id": "e", "type": "rect", "status": "new",
                                      "corners": [[0, 0], [80, 40]]}]}]}
     doc = ezdxf.readfile(render(spec, tmp_path, "nts", formats=("dxf",))["dxf"])
-    texts = [e.dxf.text for e in doc.layouts.get("SHEET").query("TEXT")]
+    texts = [e.dxf.text if e.dxftype() == "TEXT" else e.text for e in doc.layouts.get("SHEET").query("TEXT MTEXT")]
     assert "SCALE NTS" in texts and "SCRAP" in texts
     scales = _viewport_scales(doc, "mm")
     assert 100 in [round(s) for s in scales]
     assert any(s != 100 for s in scales)
+    nts = next(vp for vp in doc.layouts.get("SHEET").query("VIEWPORT")
+               if vp.dxf.status > 1 and abs((vp.dxf.view_height / vp.dxf.height) - 100) > 1)
+    assert max(nts.dxf.width, nts.dxf.height) == pytest.approx(64, abs=2)
 
 
 def test_views_round_trip_and_old_specs_stay_compatible():
@@ -633,7 +636,7 @@ def test_full_sheet_stays_inside_the_frame(tmp_path):
             {"id": "bldg", "type": "rect", "status": "existing", "corners": [[0, 0], [140, 36]]},
             {"id": "pipe", "type": "pipe", "status": "new", "od": 0.2, "points": [[10, 18], [80, 18]],
              "label": {"en": "BT PIPE", "he": "צינור"}},
-            {"id": "outlet", "type": "text", "at": [40, 18],
+            {"id": "outlet", "type": "text", "at": [40, 24],
              "text": {"en": "PVC Ø200 OUTLET", "he": "יציאה"}},
             {"id": "end", "type": "circle", "status": "new", "at": [140, 18], "radius": 0.4,
              "label": {"en": "END STRUCTURE", "he": "מבנה קצה"}},
@@ -673,6 +676,27 @@ def test_title_height_rounds_up_and_is_not_shrunk():
         if "LONG DRAINAGE" in text or "ניקוז" in text:
             heights.append(entity.dxf.char_height if entity.dxftype() == "MTEXT" else entity.dxf.height)
     assert heights and min(heights) == pytest.approx(5.0)
+    # A long pair in a narrow field must shrink or stack. The two titles never overlap.
+    from sketch2cad.drawing.place import _entity_box, _overlaps
+    narrow = load_template("a3_simple")
+    narrow["fields"] = [{**field, "h": 3.5, "w": 80} if field["key"] == "title" else field
+                        for field in narrow["fields"]]
+    doc2 = ezdxf.new()
+    draw_titleblock(doc2.modelspace(), narrow, {
+        "title_en": "DRAINAGE GENERAL ARRANGEMENT", "title_he": "תוכנית ניקוז כללית",
+        "scale": "400", "view": "PLAN"}, 1, "mm", language="both")
+    en_box = he_box = None
+    for entity in doc2.modelspace().query("TEXT MTEXT"):
+        text = entity.text if entity.dxftype() == "MTEXT" else entity.dxf.text
+        height = entity.dxf.char_height if entity.dxftype() == "MTEXT" else entity.dxf.height
+        if "DRAINAGE" in text:
+            en_box = _entity_box(entity)
+            assert height <= 3.5 + 1e-6
+        if "ניקוז" in text:
+            he_box = _entity_box(entity)
+            assert height <= 3.5 + 1e-6
+    assert en_box and he_box
+    assert not _overlaps(en_box, he_box, 1.0)
 
 
 def test_oversized_view_is_not_placed_off_the_sheet(tmp_path):
@@ -693,3 +717,109 @@ def test_oversized_view_is_not_placed_off_the_sheet(tmp_path):
         assert vp.dxf.center.x + vp.dxf.width / 2 <= 420
         assert 10 <= vp.dxf.center.y - vp.dxf.height / 2
         assert vp.dxf.center.y + vp.dxf.height / 2 <= 297
+
+
+def dense_drainage_plan() -> dict:
+    path = Path(__file__).parent / "fixtures" / "dense_drainage_plan.json"
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def test_dense_drainage_fixture(tmp_path):
+    from sketch2cad.drawing.place import (
+        dimension_text_gap_mm, leader_crosses_text, leader_crossings, overlapping_text,
+    )
+    from sketch2cad.drawing.place import _entity_box, _overlaps
+
+    spec = dense_drainage_plan()
+    res = render(spec, tmp_path, "dense_fix", formats=("dxf", "png"))
+    assert not any("not drawn off the sheet" in w or "no position clear of other text" in w
+                   for w in res["warnings"]), res["warnings"]
+    doc = ezdxf.readfile(res["dxf"])
+    msp = doc.modelspace()
+    assert overlapping_text(msp) == []
+    assert leader_crosses_text(msp) == []
+    assert leader_crossings(msp) == []
+    assert _outside_frame(doc, tol_mm=0.6) == []
+    gaps = dimension_text_gap_mm(msp, 400)
+    assert gaps and max(gaps) <= 3.0
+    assert _inserts_of(doc, "INV. 225.00") == [(17500, 54500)]
+    assert _inserts_of(doc, "INV. 224.80") == [(76800, -2500)]
+    titles = {}
+    for entity in msp.query("TEXT MTEXT"):
+        if entity.dxf.layer != "FRAME":
+            continue
+        text = entity.text if entity.dxftype() == "MTEXT" else entity.dxf.text
+        if "DRAINAGE" in text or "ניקוז כללית" in text:
+            titles[text] = _entity_box(entity)
+    assert len(titles) >= 2
+    boxes = list(titles.values())
+    assert not _overlaps(boxes[0], boxes[1], 400)          # 1 mm of paper between the two titles
+    assert res["png"].stat().st_size > 1000
+
+
+def test_dimension_text_only_slides_or_flips(tmp_path):
+    from sketch2cad.drawing.place import dimension_text_gap_mm, overlapping_text
+
+    spec = {
+        "units": "mm", "scale": 1, "language": "en", "paper": "A3",
+        "elements": [{"id": "inv", "type": "text", "at": [40, 2], "height": 2.5,
+                      "text": {"en": "INV. 225.00"}}],
+        "dimensions": [{"type": "chain", "points": [[0, 0], [120, 0]], "axis": "h", "base": 0}],
+    }
+    doc = ezdxf.readfile(render(spec, tmp_path, "dimslide", formats=("dxf",))["dxf"])
+    msp = doc.modelspace()
+    assert _inserts_of(doc, "INV. 225.00") == [(40, 2)]
+    assert overlapping_text(msp) == []
+    gaps = dimension_text_gap_mm(msp, 1)
+    assert gaps and max(gaps) <= 3.0
+
+
+def test_scale_advice_uses_a_smaller_scale(tmp_path):
+    spec = {
+        "units": "mm", "scale": 100, "paper": "A3", "language": "en", "view": "plan",
+        "elements": [{"id": "r", "type": "rect", "status": "existing",
+                      "corners": [[0, 0], [30000, 22000]]}],
+        "views": [{"id": "side", "title": "SIDE", "scale": 100,
+                   "elements": [{"id": "s", "type": "rect", "status": "new",
+                                 "corners": [[0, 0], [15000, 3000]]}]}],
+    }
+    res = render(spec, tmp_path, "advice", formats=("dxf",))
+    warning = next(w for w in res["warnings"] if "side" in w and "Consider 1:" in w)
+    suggested = int(warning.split("Consider 1:")[1].split()[0])
+    assert suggested >= 100, warning
+    assert suggested != 75
+
+
+def test_dense_drainage_multiview_fits(tmp_path):
+    spec = dense_drainage_plan()
+    spec["views"] = [
+        {"id": "section-a", "title": {"en": "SECTION A-A", "he": "חתך א-א"}, "scale": 50,
+         "elements": [
+             {"id": "ground", "type": "polyline", "status": "existing",
+              "points": [[0, 0], [2000, 0]]},
+             {"id": "wall", "type": "rect", "status": "new", "corners": [[400, 0], [1600, 800]]},
+         ]},
+        {"id": "detail-1", "title": {"en": "DETAIL 1", "he": "פרט 1"}, "scale": 25,
+         "elements": [
+             {"id": "box", "type": "rect", "status": "new", "corners": [[0, 0], [800, 500]]},
+         ]},
+    ]
+    res = render(spec, tmp_path, "dense_sheet", formats=("dxf", "png"))
+    assert not any("not placed off the sheet" in w for w in res["warnings"]), res["warnings"]
+    doc = ezdxf.readfile(res["dxf"])
+    assert _viewport_scales(doc, "mm") == [25.0, 50.0, 400.0]
+    psp = doc.layouts.get("SHEET")
+    titles = []
+    for entity in psp.query("TEXT MTEXT"):
+        text = entity.text if entity.dxftype() == "MTEXT" else entity.dxf.text
+        if any(part in text for part in ("PLAN /", "SECTION A-A", "DETAIL 1")):
+            titles.append(text)
+            assert "\\P" not in text and "\n" not in text
+    assert any("PLAN / תוכנית" in text for text in titles)
+    viewports = [vp for vp in psp.query("VIEWPORT") if vp.dxf.status > 1]
+    assert len(viewports) == 3
+    for vp in viewports:
+        assert 10 <= vp.dxf.center.x - vp.dxf.width / 2
+        assert vp.dxf.center.x + vp.dxf.width / 2 <= 410
+        assert 10 <= vp.dxf.center.y - vp.dxf.height / 2
+        assert vp.dxf.center.y + vp.dxf.height / 2 <= 287

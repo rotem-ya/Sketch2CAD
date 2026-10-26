@@ -313,20 +313,12 @@ def draw_break(ctx: DrawContext, el: dict):
 
 
 def draw_text(ctx: DrawContext, el: dict):
-    """Free text (height in paper mm); with `leader_to` it becomes a leader label.
+    """Queue free text. It is drawn later at `at` and is never moved or given a stray leader.
 
-    Unless `label_pinned`, the text is queued and moved off linework and other text.
+    Queuing keeps it out of the sheet-fit measurement. `leader_to`, when set, is the only leader.
     """
     at = Vec2(el.get("at") or (0, 0))
-    if ctx.nudge_labels and not el.get("label_pinned"):
-        ctx.pending.append({"kind": "text", "el": el, "anchor": at, "radius": 0.0})
-        return at, 0.0
-    h = ctx.paper(snap_text_height(float(el.get("height") or ctx.style["text_height"])))
-    lines = pick(el.get("text"), ctx.language)
-    if el.get("leader_to"):
-        leader_label(ctx, lines, at, Vec2(el["leader_to"]), h)
-    else:
-        stack_text(ctx, lines, at, h, el.get("align", "left"), float(el.get("rotation", 0)))
+    ctx.pending.append({"kind": "text", "el": el, "anchor": at, "radius": 0.0})
     return at, 0.0
 
 
