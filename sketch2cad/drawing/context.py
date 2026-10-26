@@ -63,7 +63,8 @@ class DrawContext:
         self.scale = float(spec.get("scale", 1))
         self.k = self.scale * self.u
         self.language = language
-        self.style = apply_text_style({**DEFAULT_STYLE, **(spec.get("style") or {})})
+        authored_style = spec.get("style") or {}
+        self.style = apply_text_style({**DEFAULT_STYLE, **authored_style}, explicit=set(authored_style))
         self.catalog = catalog or _NoCatalog()
         self.warnings = warnings
         self._missing: set[str] = set()

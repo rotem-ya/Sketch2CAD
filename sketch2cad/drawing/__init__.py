@@ -84,13 +84,13 @@ def render(spec: dict, out_dir, basename: str, *, project=None, document=None, c
     sheet_layout = None
     from . import place
     if spec.get("views"):
-        # Free text stays where it was written, and it counts toward the view. Labels are
-        # measured before they move, so a nudge cannot inflate the viewport.
+        # Free text stays where it was written. Labels are placed first, then the viewport
+        # is measured, so the window includes the labels and their leaders.
         place.draw_fixed_text(ctx)
-        primary_bbox = layout.content_extents(ctx)
         if place_labels:
             place.nudge_dimensions(ctx)
             place.place_labels(ctx)
+        primary_bbox = layout.content_extents(ctx)
         rects, sheet_layout = sheet_views.compose(
             ctx, spec, template, values, language, primary_bbox=primary_bbox)
     else:

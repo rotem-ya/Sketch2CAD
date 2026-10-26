@@ -29,11 +29,18 @@ def snap_text_height(mm: float, *, up: bool = False) -> float:
     return min(ISO_HEIGHTS, key=lambda height: (abs(height - value), -height))
 
 
-def apply_text_style(style: dict) -> dict:
-    """Snap style heights onto the ISO series. `table_text_height` is left as authored."""
+def apply_text_style(style: dict, *, explicit: set | None = None) -> dict:
+    """Snap default style heights onto the ISO series.
+
+    Heights the spec sets itself are kept exactly (`explicit`). `table_text_height`
+    is left as authored either way. Template fields are snapped by the title block, not here.
+    """
+    explicit = explicit or set()
     out = {}
     for key, value in style.items():
-        if isinstance(value, (int, float)) and not isinstance(value, bool) and "height" in key \
+        if key in explicit:
+            out[key] = value
+        elif isinstance(value, (int, float)) and not isinstance(value, bool) and "height" in key \
                 and key not in RAW_STYLE_HEIGHTS:
             out[key] = snap_text_height(value)
         else:

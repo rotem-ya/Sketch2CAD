@@ -52,19 +52,22 @@ Extra keys supported by the renderer:
 
 Element labels are placed deterministically. `label_at` is the first candidate, in drawing units. It is kept when the
 text box (real paper height × scale, font-width estimate, both lines of an en/he label) is clear of other text,
-dimension text, drawn linework and other leaders; otherwise the label is nudged and a leader is added or extended.
-Label boxes keep about 1.5 mm of clear paper between them. A leader is not drawn across another text box, another
-leader, or a dimension line. The search grows outward, then tries a leader into free space on the sheet. A position
-that overlaps other text is never used; if none is clear, the label is omitted and reported as an error.
-Nothing is placed outside the drawing area: a candidate past that rectangle is rejected.
+dimension text, drawn linework and other leaders. Otherwise the label is nudged by at most about 25 mm on paper
+and a leader is added or extended. A leader we add is rejected when it is longer than about 25 mm, or when it
+crosses another text box, another leader, or a dimension line. Label boxes keep about 1.5 mm of clear paper
+between them. When nothing within that distance is clear, the label stays at `label_at`, or at the default point
+just above the element, and an error naming that label is reported. A label is never omitted, on one sheet or on
+a multi-view sheet. Nothing is placed outside the drawing area: a candidate past that rectangle is rejected.
 `label_pinned: true` keeps that point even when it collides. A `text` element is not moved and is not given a leader
-(it is only an obstacle). Dimension text may only slide along its own dimension line, or flip to the other side of
-that line. The same spec always produces the same sheet.
+(it is only an obstacle); `leader_to` on that element is the only leader it can have. Dimension text may only slide
+along its own dimension line, or flip to the other side of that line. The same spec always produces the same sheet.
 
-Paper text heights snap to the ISO 3098 set **2.5 / 3.5 / 5 / 7 mm** (a tie takes the larger size). The
-title-block title rounds up (3.29 stays 3.5, 4.1 becomes 5), then shrinks within that series or splits onto two
-lines so the English and the Hebrew never overlap inside the field. ezdxf cannot
-create annotative text, so model-space text height is that paper height times the view's scale denominator.
+Paper text heights snap to the ISO 3098 set **2.5 / 3.5 / 5 / 7 mm** (a tie takes the larger size) only for
+defaults. A `height` on an element, and any height the spec sets in `style`, are kept exactly; QA may still warn
+about them. A default such as dimension text at 2.0 mm still snaps to 2.5. The title-block title rounds up
+(3.29 stays 3.5, 4.1 becomes 5), then shrinks within that series or splits onto two lines so the English and the
+Hebrew never overlap inside the field. ezdxf cannot create annotative text, so model-space text height is that
+paper height times the view's scale denominator.
 Entities are BYLAYER. Layers `0` and `DEFPOINTS` hold no geometry: below-grade work goes on `EXISTING_DASH`,
 `NEW_DASH` or `PROPOSED_DASH` instead of a per-entity linetype.
 
@@ -86,7 +89,12 @@ because the legend and the notes are drawn in paper space.
 On a single-view sheet the notes go below the drawing when a column beside it would leave the sheet,
 and they are left undrawn (with an error warning) rather than placed past the frame.
 
-### 1.4 Views – more than one scale on a sheet
+### 1.4 Views – more than one scale on a sheet (experimental)
+
+Multi-view sheets are experimental. The layout below is what the program draws, and a view that does not fit
+is reported instead of being placed off the paper, but a dense real plan can still need a scale the engineer
+sets by hand or a larger sheet.
+
 `scale` on the spec root is the **primary** view (the root `elements` and `dimensions`). Optional `views`
 adds further views on the same sheet. A spec with no `views` key is unchanged.
 
@@ -108,14 +116,19 @@ adds further views on the same sheet. A spec with no `views` key is unchanged.
 |---|---|
 | `id` | unique on the sheet |
 | `title` | string or `{en, he}`, drawn above the view as one underlined line (`SECTION A-A / חתך א-א` when both languages are on), with `SCALE 1:50` or `SCALE NTS` centred underneath |
-| `scale` | positive number, or `"NTS"` |
-| `fit_mm` | longer side on paper when `scale` is `NTS` (default 80) |
-| `origin_on_sheet` | `[x, y]` paper mm from the frame's bottom-left, the bottom-left of the view window. The same key on the spec root fixes the primary view. Omitted: the primary view stays large; the other views share a row under it (titles on one baseline) or, when that does not fit, a column beside it. Auto-placed views stay at least 10 mm inside the frame. A view that does not fit is not drawn off the sheet; the warning names a larger scale or a larger sheet |
+| `scale` | positive number, `"NTS"`, or `"auto"` |
+| `fit_mm` | longer side on paper when `scale` is `NTS` (default 80). `"auto"` does not use it |
+| `origin_on_sheet` | `[x, y]` paper mm from the frame's bottom-left, the bottom-left of the view window. The same key on the spec root fixes the primary view. Omitted: the primary view stays large; the other views share a row under it (titles on one baseline) or, when that does not fit, a column beside it. Auto-placed views stay at least 10 mm inside the frame and clear of the title block. A view that does not fit is not drawn off the sheet. The warning quotes the free rectangle that is left. When a standard scale would actually fit that rectangle, the warning names it — 1:50, 1:100, 1:125, 1:200, 1:250, 1:500 or 1:1000. An NTS view is not given a 1:n suggestion |
 | `elements`, `dimensions` | same objects as the root lists, in drawing units |
 
-The sheet `scale` is the primary view. When another view uses a different scale, the title block reads
-`AS SHOWN / כמצוין` instead of `SCALE 1:n`. A bare primary title such as `plan` is drawn `PLAN / תוכנית`.
-Each view is real model-space geometry (text height = paper height × that view's scale). The sheet is one
+`scale: "auto"` on a view picks the smallest of those denominators whose window fits in the space left beside
+the views that already have a scale. Each view chooses on its own.
+
+The sheet `scale` is the primary view. When another view uses a different scale, including `"auto"` or `"NTS"`,
+the title block reads `AS SHOWN / כמצוין` instead of `SCALE 1:n`. A bare primary title such as `plan` is drawn
+`PLAN / תוכנית`. Each view is real model-space geometry (text height = paper height × that view's scale).
+Labels are placed before the view window is measured, so the viewport includes the label boxes and the leaders
+(plus a 2 mm pad) instead of clipping them. A viewport is not drawn over the title block. The sheet is one
 paper-space layout plotted 1:1: a `VIEWPORT` per view at that scale, plus the title block, view titles
 (underlined, `SCALE 1:50` or `SCALE NTS` on the line below), legend and notes in paper space. Single-view sheets stay in model space,
 which is what existing specs already produce.

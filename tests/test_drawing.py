@@ -372,6 +372,42 @@ def _inserts_of(doc, fragment: str) -> list[tuple[float, float]]:
     return found
 
 
+def _text_centers(doc) -> list[tuple[str, float, float]]:
+    """Box centre of each model-space text entity outside the title block."""
+    from ezdxf import bbox as ezbbox
+
+    found = []
+    for entity in doc.modelspace().query("TEXT MTEXT"):
+        if entity.dxf.layer == "FRAME":
+            continue
+        ext = ezbbox.extents([entity], fast=True)
+        if not ext.has_data:
+            continue
+        text = entity.text if entity.dxftype() == "MTEXT" else entity.dxf.text
+        found.append((text, (ext.extmin.x + ext.extmax.x) / 2, (ext.extmin.y + ext.extmax.y) / 2))
+    return found
+
+
+def _paired_moves(before, after) -> tuple[list[str], list[float]]:
+    """Match each unnudged text to the nearest same string. Missing strings were omitted."""
+    used = set()
+    missing, moves = [], []
+    for text, x, y in before:
+        best_i = best_d = None
+        for i, (text2, x2, y2) in enumerate(after):
+            if i in used or text2 != text:
+                continue
+            distance = ((x2 - x) ** 2 + (y2 - y) ** 2) ** 0.5
+            if best_d is None or distance < best_d:
+                best_i, best_d = i, distance
+        if best_i is None:
+            missing.append(text)
+        else:
+            used.add(best_i)
+            moves.append(best_d)
+    return missing, moves
+
+
 def _label_stacks(layout, join: float):
     """One box per label. Lines closer than `join` (model units) belong to the same label."""
     from sketch2cad.drawing.place import _entity_box, _overlaps
@@ -598,6 +634,11 @@ def test_views_round_trip_and_old_specs_stay_compatible():
         parse_reply('{"views": [{"id": "a", "scale": "huge"}]}')
     parsed = parse_reply('```json\n{"spec": {"views": [{"id": "a", "scale": "nts", "elements": []}]}}\n```')
     assert parsed["spec"]["views"][0]["scale"] == "nts"
+    parsed = parse_reply('{"views": [{"id": "a", "scale": "auto", "elements": []}]}')
+    assert parsed["views"][0]["scale"] == "auto"
+    spec, warnings = normalize_spec({"views": [{"id": "a", "scale": "Auto", "elements": []}]})
+    assert spec["views"][0]["scale"] == "auto"
+    assert not any("Dropped view" in warning for warning in warnings)
     assert parse_reply('{"scale": 20, "elements": []}')["scale"] == 20
 
 
@@ -731,9 +772,9 @@ def test_dense_drainage_fixture(tmp_path):
     from sketch2cad.drawing.place import _entity_box, _overlaps
 
     spec = dense_drainage_plan()
+    still = ezdxf.readfile(render(spec, tmp_path, "dense_still", formats=("dxf",), place_labels=False)["dxf"])
     res = render(spec, tmp_path, "dense_fix", formats=("dxf", "png"))
-    assert not any("not drawn off the sheet" in w or "no position clear of other text" in w
-                   for w in res["warnings"]), res["warnings"]
+    assert not any("not drawn off the sheet" in w for w in res["warnings"]), res["warnings"]
     doc = ezdxf.readfile(res["dxf"])
     msp = doc.modelspace()
     assert overlapping_text(msp) == []
@@ -754,6 +795,9 @@ def test_dense_drainage_fixture(tmp_path):
     assert len(titles) >= 2
     boxes = list(titles.values())
     assert not _overlaps(boxes[0], boxes[1], 400)          # 1 mm of paper between the two titles
+    missing, moves = _paired_moves(_text_centers(still), _text_centers(doc))
+    assert missing == [], missing
+    assert moves and max(moves) <= 30 * 400               # 30 mm on paper, from the unnudged label
     assert res["png"].stat().st_size > 1000
 
 
@@ -785,9 +829,10 @@ def test_scale_advice_uses_a_smaller_scale(tmp_path):
     }
     res = render(spec, tmp_path, "advice", formats=("dxf",))
     warning = next(w for w in res["warnings"] if "side" in w and "Consider 1:" in w)
+    assert "free" in warning, warning
     suggested = int(warning.split("Consider 1:")[1].split()[0])
+    assert suggested in {50, 100, 125, 200, 250, 500, 1000}, warning
     assert suggested >= 100, warning
-    assert suggested != 75
 
 
 def test_dense_drainage_multiview_fits(tmp_path):
@@ -823,3 +868,129 @@ def test_dense_drainage_multiview_fits(tmp_path):
         assert vp.dxf.center.x + vp.dxf.width / 2 <= 410
         assert 10 <= vp.dxf.center.y - vp.dxf.height / 2
         assert vp.dxf.center.y + vp.dxf.height / 2 <= 287
+
+
+def test_explicit_text_height_is_kept(tmp_path):
+    from sketch2cad.drawing.standards import apply_text_style
+
+    snapped = apply_text_style({"text_height": 2.0, "dim_text_height": 2.0}, explicit={"text_height"})
+    assert snapped["text_height"] == 2.0
+    assert snapped["dim_text_height"] == 2.5
+    spec = {
+        "units": "mm", "scale": 10, "language": "en",
+        "elements": [
+            {"id": "inv", "type": "text", "at": [10, 10], "height": 2.0, "text": "INV. 225.00"},
+            {"id": "note", "type": "text", "at": [10, 40], "text": "NOTE"},
+        ],
+    }
+    doc = ezdxf.readfile(render(spec, tmp_path, "heights", formats=("dxf",))["dxf"])
+    k = 10
+    heights = {}
+    for entity in doc.modelspace().query("TEXT MTEXT"):
+        text = entity.text if entity.dxftype() == "MTEXT" else entity.dxf.text
+        height = entity.dxf.char_height if entity.dxftype() == "MTEXT" else entity.dxf.height
+        if "INV" in text:
+            heights["inv"] = height
+        elif "NOTE" in text:
+            heights["note"] = height
+    assert heights["inv"] == pytest.approx(2.0 * k)
+    assert heights["note"] == pytest.approx(2.5 * k)
+
+
+def test_blocked_label_stays_and_is_drawn(tmp_path):
+    lines = [{"id": f"h{i}", "type": "polyline", "status": "existing",
+              "points": [[0, y], [90, y]]} for i, y in enumerate(range(0, 91, 2))]
+    spec = {"units": "mm", "scale": 1, "language": "en", "elements": [
+        {"id": "mark", "type": "circle", "at": [0, 0], "radius": 1,
+         "label": "CN1A", "label_at": [40, 40]},
+        *lines,
+    ]}
+    res = render(spec, tmp_path, "blocked", formats=("dxf",))
+    doc = ezdxf.readfile(res["dxf"])
+    assert _inserts_of(doc, "CN1A") == [(40, 40)]
+    assert any(w.startswith("ERROR:") and "mark" in w for w in res["warnings"]), res["warnings"]
+
+
+def test_leader_is_capped_at_25_mm(tmp_path):
+    spec = {"units": "mm", "scale": 1, "language": "en", "elements": [
+        {"id": "p", "type": "circle", "at": [0, 0], "radius": 1,
+         "label": "MP2", "label_at": [80, 0], "leader": True},
+    ]}
+    res = render(spec, tmp_path, "leader", formats=("dxf",))
+    doc = ezdxf.readfile(res["dxf"])
+    assert _inserts_of(doc, "MP2") == [(80, 0)]
+    for entity in doc.modelspace().query("LINE"):
+        if entity.dxf.layer != "TEXT":
+            continue
+        start, end = entity.dxf.start, entity.dxf.end
+        length = ((end.x - start.x) ** 2 + (end.y - start.y) ** 2) ** 0.5
+        assert length <= 25.5, length
+
+
+def test_nts_fit_warning_quotes_space_and_no_scale(tmp_path):
+    spec = {"units": "mm", "scale": 100, "paper": "A3", "language": "en", "view": "plan",
+            "elements": [{"id": "r", "type": "rect", "status": "existing",
+                          "corners": [[0, 0], [4000, 3000]]}],
+            "views": [{"id": "scrap", "title": "SCRAP", "scale": "NTS", "fit_mm": 500,
+                       "elements": [{"id": "c", "type": "circle", "status": "new",
+                                     "at": [0, 0], "radius": 40}]}]}
+    res = render(spec, tmp_path, "ntsbig", formats=("dxf",))
+    warning = next(w for w in res["warnings"] if "scrap" in w and "not placed off the sheet" in w)
+    assert "free" in warning and "NTS" in warning
+    assert "Consider 1:" not in warning
+
+
+def test_auto_scale_views_stay_inside_and_off_the_title_block(tmp_path):
+    from ezdxf import bbox as ezbbox
+
+    spec = dense_drainage_plan()
+    spec["views"] = [
+        {"id": "section-a", "title": {"en": "SECTION A-A", "he": "חתך א-א"}, "scale": "auto",
+         "elements": [
+             {"id": "ground", "type": "polyline", "status": "existing", "points": [[0, 0], [2000, 0]]},
+             {"id": "wall", "type": "rect", "status": "new", "corners": [[400, 0], [1600, 800]],
+              "label": {"en": "WALL", "he": "קיר"}},
+         ],
+         "dimensions": [{"type": "chain", "points": [[400, 0], [1600, 0]], "axis": "h", "base": -400}]},
+        {"id": "detail-1", "title": {"en": "DETAIL 1", "he": "פרט 1"}, "scale": "auto",
+         "elements": [
+             {"id": "box", "type": "rect", "status": "new", "corners": [[0, 0], [800, 500]],
+              "label": {"en": "GRATE", "he": "רשת"}},
+         ]},
+    ]
+    res = render(spec, tmp_path, "auto", formats=("dxf",))
+    assert not any("not placed off the sheet" in w or "nothing to draw" in w for w in res["warnings"]), res["warnings"]
+    doc = ezdxf.readfile(res["dxf"])
+    series = {50, 100, 125, 200, 250, 500, 1000, 400}
+    scales = _viewport_scales(doc, "mm")
+    assert scales and all(scale in series for scale in scales), scales
+    assert 400 in scales
+    psp = doc.layouts.get("SHEET")
+    title_block = (10, 10, 410, 34)
+    windows = []
+    for vp in psp.query("VIEWPORT"):
+        if vp.dxf.status <= 1 or vp.dxf.height <= 0:
+            continue
+        left = vp.dxf.center.x - vp.dxf.width / 2
+        right = vp.dxf.center.x + vp.dxf.width / 2
+        bottom = vp.dxf.center.y - vp.dxf.height / 2
+        top = vp.dxf.center.y + vp.dxf.height / 2
+        assert right <= title_block[0] or left >= title_block[2] or top <= title_block[1] or bottom >= title_block[3]
+        center = vp.dxf.view_center_point
+        cx, cy = center[0], center[1]
+        half_h = vp.dxf.view_height / 2
+        half_w = half_h * (vp.dxf.width / vp.dxf.height)
+        windows.append((cx - half_w, cy - half_h, cx + half_w, cy + half_h))
+    assert len(windows) == 3
+    outside = []
+    for entity in doc.modelspace():
+        ext = ezbbox.extents([entity], fast=True)
+        if not ext.has_data:
+            continue
+        box = (ext.extmin.x, ext.extmin.y, ext.extmax.x, ext.extmax.y)
+        if not any(box[0] >= w[0] - 1 and box[1] >= w[1] - 1 and box[2] <= w[2] + 1 and box[3] <= w[3] + 1
+                   for w in windows):
+            outside.append(entity.dxftype())
+    assert outside == [], outside[:8]
+    texts = [e.text if e.dxftype() == "MTEXT" else e.dxf.text for e in doc.modelspace().query("TEXT MTEXT")]
+    assert any("WALL" in text for text in texts) and any("GRATE" in text for text in texts)

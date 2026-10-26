@@ -5,13 +5,13 @@ multiplied by the view scale) and the font width estimate, including a bilingual
 pair stacked at the MTEXT line pitch. A label keeps `label_at` when that box is
 clear of other text, dimension text, drawn linework and existing leaders. A leader
 is rejected when it crosses another text box, another leader, or a dimension line.
-If the ring around the anchor has no clear spot, the search continues on a grid
-across the drawing area, still with a leader. A candidate that overlaps other text
-is never drawn. Label boxes keep GAP_TEXT_MM of clear paper between them.
-`label_pinned` keeps the authored point even when it collides. Free `text` is not
-queued here. Dimension text may only slide along its dimension line or flip to the
-other side of it. The search order is fixed, so the same spec always lands on the
-same sheet.
+The search stays within about 25 mm of that spot, and a leader longer than that is
+rejected. If nothing nearby is clear, the label is drawn at the original point and
+an error is reported. A label is never omitted. Label boxes keep GAP_TEXT_MM of
+clear paper between them. `label_pinned` keeps the authored point even when it
+collides. Free `text` is not queued here. Dimension text may only slide along its
+dimension line or flip to the other side of it. The search order is fixed, so the
+same spec always lands on the same sheet.
 """
 from __future__ import annotations
 
@@ -22,15 +22,15 @@ from ezdxf.math import Vec2
 
 from .components import draw_label, leader_label, stack_text
 from .context import DrawContext
-from .standards import snap_text_height
 from .text import LINE_SPACING, pick, text_width
 
 GAP_TEXT_MM = 1.5
 GAP_LINE_MM = 0.35
 DESCENDER = 0.25                              # fraction of cap height below the baseline
 LEADER_FROM_MM = 6.0                          # a nudge this far grows or adds a leader
-STEPS_MM = (3.0, 6.0, 10.0, 15.0, 22.0, 32.0, 44.0, 60.0, 80.0, 105.0,
-            140.0, 185.0, 240.0, 310.0, 400.0)
+MAX_LEADER_MM = 25.0                          # a leader we add stays about this long on paper
+MAX_MOVE_MM = 25.0                            # and the label itself stays about this close
+STEPS_MM = (3.0, 6.0, 10.0, 15.0, 22.0, 25.0)
 SLIDE_MM = (0.0, 4.0, 8.0, 14.0, 22.0, 32.0, 46.0, 64.0, 86.0)
 SKIP_LAYERS = {"HATCH", "FRAME", "DIM", "CENTER", "DEFPOINTS", "VIEWPORT", "VIEWPORTS", "NOPLOT"}
 _RAW_DIRS = ((0, 1), (1, 1), (1, 0), (1, -1), (0, -1), (-1, -1), (-1, 0), (-1, 1),
@@ -399,34 +399,6 @@ def _options(ctx, at, align, lines, height, explicit, target):
                 yield at + offset, align, False, None
 
 
-def _grid_options(ctx, lines, height, target, bounds):
-    """Leader positions on a grid across the drawing area, after the ring is exhausted."""
-    if not bounds:
-        return
-    width = max(text_width(line, height) for line in lines)
-    step = ctx.paper(12)
-    span_x = max(bounds[2] - bounds[0] - width, 0.0)
-    span_y = max(bounds[3] - bounds[1] - height, 0.0)
-    nx = int(span_x / step) + 1
-    ny = int(span_y / step) + 1
-    cells = nx * ny
-    if cells > 360 and cells > 0:
-        step *= math.sqrt(cells / 360.0)
-        nx = int(span_x / step) + 1
-        ny = int(span_y / step) + 1
-    for iy in range(max(ny, 1)):
-        y = bounds[3] - height - iy * step
-        if y < bounds[1] - 1e-6:
-            break
-        for ix in range(max(nx, 1)):
-            x = bounds[0] + ix * step
-            if x > bounds[2] - width + 1e-6:
-                break
-            at = Vec2(x, y)
-            for which in ("near", "far"):
-                yield at, "left", True, _elbow_name(at, lines, height, target, ctx.k, which)
-
-
 def _draw(ctx: DrawContext, lines, at: Vec2, align: str, leader: bool, target: Vec2, height: float,
           elbow: str | None, rotation: float = 0.0) -> None:
     if leader:
@@ -451,12 +423,19 @@ def _box_inside(box, bounds) -> bool:
             and box[2] <= bounds[2] + 1e-6 and box[3] <= bounds[3] + 1e-6)
 
 
+def _element_paper_height(ctx, el) -> float:
+    """Paper height in model units. An explicit `height` is kept; the style default is already snapped."""
+    if el.get("height") is not None:
+        return ctx.paper(float(el["height"]))
+    return ctx.paper(float(ctx.style["text_height"]))
+
+
 def _item_placement(ctx, item):
     """Lines, height, preferred point, align, leader flag and target for one queued item."""
     el, anchor, radius = item["el"], item["anchor"], item["radius"]
     if item.get("kind") == "text":
         lines = pick(el.get("text"), ctx.language)
-        height = ctx.paper(snap_text_height(float(el.get("height") or ctx.style["text_height"])))
+        height = _element_paper_height(ctx, el)
         explicit = bool(el.get("leader_to"))
         at = Vec2(el.get("at") or anchor)
         align = el.get("align") or "left"
@@ -477,7 +456,7 @@ def draw_fixed_text(ctx: DrawContext) -> None:
     for item in items:
         el = item["el"]
         at = Vec2(el.get("at") or item["anchor"])
-        height = ctx.paper(snap_text_height(float(el.get("height") or ctx.style["text_height"])))
+        height = _element_paper_height(ctx, el)
         lines = pick(el.get("text"), ctx.language)
         if not lines:
             continue
@@ -506,13 +485,21 @@ def _place_one(ctx, item, texts, segments, circles, leaders, dim_lines, gap_text
             _remember_leader(leaders, at, lines, height, target, ctx.k, None)
         return
     chosen = None
-    fallback = None
+    home = _box(at, lines, height, align, explicit, target, ctx.k)
+    home_c = Vec2((home[0] + home[2]) / 2, (home[1] + home[3]) / 2)
+    move_cap = ctx.paper(MAX_MOVE_MM)
+    leader_cap = ctx.paper(MAX_LEADER_MM)
 
     def consider(options) -> bool:
-        nonlocal chosen, fallback
+        nonlocal chosen
         for candidate, cand_align, cand_leader, elbow in options:
             box = _box(candidate, lines, height, cand_align, cand_leader, target, ctx.k)
+            center = Vec2((box[0] + box[2]) / 2, (box[1] + box[3]) / 2)
+            if center.distance(home_c) > move_cap + 1e-6:
+                continue
             pointer = _pointer(candidate, lines, height, target, ctx.k, elbow) if cand_leader else None
+            if pointer and pointer[0].distance(pointer[1]) > leader_cap + 1e-6:
+                continue
             shelf = _shelf(candidate, lines, height, target, ctx.k) if cand_leader else None
             if not _in_limits(box, bounds, content):
                 continue
@@ -533,24 +520,25 @@ def _place_one(ctx, item, texts, segments, circles, leaders, dim_lines, gap_text
             geom = _hits_geometry(box, segments, circles, gap_line)
             anchor_hit = 1 if anchor_box and _overlaps(box, anchor_box, 0) else 0
             leader_block = _hits_geometry(box, leaders, [], gap_text)
-            packed = (candidate, cand_align, cand_leader, elbow, box)
             if geom == anchor_hit == leader_block == 0:
-                chosen = packed
+                chosen = (candidate, cand_align, cand_leader, elbow, box)
                 return True
-            score = geom + anchor_hit + leader_block
-            if fallback is None or score < fallback[0]:
-                fallback = (score, packed)
         return False
 
-    if not consider(_options(ctx, at, align, lines, height, explicit, target)):
-        consider(_grid_options(ctx, lines, height, target, bounds))
-    if chosen is None and fallback is not None:
-        chosen = fallback[1]
-        ctx.warnings.append(f"label {el.get('id', '?')!r} has no clear position")
+    consider(_options(ctx, at, align, lines, height, explicit, target))
     if chosen is None:
-        ctx.warnings.append(
-            f"ERROR: label {el.get('id', '?')!r} has no position clear of other text and was not drawn")
-        return
+        # Never worse than the input, and never omitted: keep the spec point and say so.
+        # A leader back to the anchor is kept only when it stays inside the same cap.
+        ctx.warnings.append(f"ERROR: label {el.get('id', '?')!r} has no clear position")
+        use_leader = bool(explicit)
+        elbow = None
+        if use_leader:
+            elbow = _elbow_name(at, lines, height, target, ctx.k, "near")
+            start, end = _pointer(at, lines, height, target, ctx.k, elbow)
+            if start.distance(end) > leader_cap + 1e-6:
+                use_leader, elbow = False, None
+        home = _box(at, lines, height, align, use_leader, target, ctx.k)
+        chosen = (at, align, use_leader, elbow, home)
     candidate, cand_align, cand_leader, elbow, box = chosen
     _draw(ctx, lines, candidate, cand_align, cand_leader, target, height, elbow, rotation)
     texts.append(box)

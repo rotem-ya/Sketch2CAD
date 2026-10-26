@@ -35,7 +35,7 @@ def _catalog_lines(catalog) -> str:
 
 def _valid_scale(scale) -> bool:
     if isinstance(scale, str):
-        return scale.strip().upper() == "NTS"
+        return scale.strip().upper() in {"NTS", "AUTO"}
     if isinstance(scale, bool) or not isinstance(scale, (int, float)):
         return False
     return scale > 0
@@ -57,7 +57,7 @@ def _validate_views_strict(views) -> None:
         if not isinstance(view, dict):
             raise ValueError(f"view {index} must be an object")
         if not _valid_scale(view.get("scale")):
-            raise ValueError(f"view {index}: scale must be a positive number or 'NTS'")
+            raise ValueError(f"view {index}: scale must be a positive number, 'NTS', or 'auto'")
         for key in ("elements", "dimensions"):
             if key in view and not isinstance(view[key], list):
                 raise ValueError(f"view {index}: {key} must be a list")
@@ -69,7 +69,7 @@ def parse_reply(text: str) -> dict:
     """Extract the JSON object from a reply (tolerates a ```json fence).
 
     A top-level `views` list, or one inside `spec`, is checked: each view needs a scale
-    (a positive number or \"NTS\") and list-shaped elements/dimensions. `normalize_spec`
+    (a positive number, \"NTS\", or \"auto\") and list-shaped elements/dimensions. `normalize_spec`
     is what drops unknown element types and fills defaults.
     """
     fence = re.search(r"```(?:json)?\s*(\{.*\})\s*```", text, re.S)
@@ -112,11 +112,11 @@ def _normalize_views(spec: dict, warnings: list[str]) -> None:
             warnings.append(f"Dropped view {i}: not an object")
             continue
         if not _valid_scale(view.get("scale")):
-            warnings.append(f"Dropped view {i}: scale must be a positive number or 'NTS'")
+            warnings.append(f"Dropped view {i}: scale must be a positive number, 'NTS', or 'auto'")
             continue
         view = dict(view)
         if isinstance(view.get("scale"), str):
-            view["scale"] = "NTS"
+            view["scale"] = "auto" if view["scale"].strip().upper() == "AUTO" else "NTS"
         vid = str(view.get("id") or f"view_{i}")
         if vid in seen:
             vid = f"{vid}_{i}"
