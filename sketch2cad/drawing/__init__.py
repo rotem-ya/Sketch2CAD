@@ -175,8 +175,9 @@ def _auto_sheet_denominator(spec: dict, template: dict, *, catalog=None, languag
     Each candidate is drawn (labels, dimension text, and on a single view the notes block)
     and measured with `content_extents`. The first scale that fits is kept. On a multi-view
     sheet the limit is the paper left after the other views, reserved at a readable size.
-    A multi-view main view is not drawn coarser than its readable floor; the warning asks
-    for a larger sheet instead.
+    A multi-view main view is not drawn coarser than its readable floor. The
+    "would be 1:n" error is not raised here: the probe is tighter than the pack,
+    so compose raises it only when the placed viewport is still coarser than the floor.
     """
     from .layout import STANDARD_SCALES
     from .views import primary_floor, primary_free_mm
@@ -197,14 +198,8 @@ def _auto_sheet_denominator(spec: dict, template: dict, *, catalog=None, languag
         if _fits_area(ctx, box, area):
             chosen = float(scale)
             break
-    if free is not None:
-        floor = primary_floor(spec)
-        if chosen > floor + 1e-6:
-            if warnings is not None:
-                warnings.append(
-                    f"ERROR: the main view would be 1:{chosen:g} beside the other views, "
-                    f"coarser than the readable 1:{floor:g}. Use a larger sheet")
-            return floor
+    if free is not None and chosen > primary_floor(spec) + 1e-6:
+        return primary_floor(spec)
     return chosen
 
 

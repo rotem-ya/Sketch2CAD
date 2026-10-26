@@ -1114,15 +1114,21 @@ def compose(ctx: DrawContext, spec: dict, template: dict, values: dict, language
             return None
         return vp_x, y, pw, ph, slot_w, slot_h, world_h
 
+    placed_primary = None
+
+    def note_unplaced(item, message: str) -> None:
+        ctx.warnings.append(message)
+        _write_omitted_caption(psp, item, pack_area, occupied, frame)
+
     for index, item in enumerate(items):
-        if not item.get("nts"):
+        if not item.get("nts") and item["key"] != "primary":
             note = _readability_warning(item["key"], item.get("title"), float(item["numeric"]))
             if note and not item.get("auto"):
                 ctx.warnings.append(note)
         if item.get("skip"):
-            ctx.warnings.append(_view_fit_warning(item, area))
             fitted = None
             label = item["scale_label"]
+            used = float(item["numeric"])
             if item.get("nts"):
                 raw = _fit_into(pack_area, item, occupied, template)
                 if raw:
@@ -1139,23 +1145,24 @@ def compose(ctx: DrawContext, spec: dict, template: dict, values: dict, language
                     fitted = place_fitted(item, scale)
                     if fitted:
                         label = _scale_label(scale, False)
+                        used = scale
                         note = _readability_warning(item["key"], item.get("title"), scale)
                         if note:
                             ctx.warnings.append(note)
                         break
             else:
                 fitted = place_fitted(item, float(item["numeric"]))
-                label = item["scale_label"]
             if fitted is None:
-                if not item.get("nts"):
-                    ctx.warnings.append(
-                        f"ERROR: view {item['key']!r} keeps 1:{float(item['numeric']):g} and does not fit. "
-                        f"Use a larger sheet (A2/A1)")
+                note_unplaced(item, _view_fit_warning(item, area))
                 continue
             vp_x, y, pw, ph, slot_w, slot_h, world_h = fitted
             if add_viewport(item, vp_x, y, pw, ph, index, world_h, label):
                 occupied.append((vp_x - max(0.0, slot_w - pw) / 2, y,
                                  vp_x - max(0.0, slot_w - pw) / 2 + slot_w, y + slot_h))
+                if item["key"] == "primary":
+                    placed_primary = used
+            else:
+                note_unplaced(item, _titleblock_warning(item))
             continue
         pos = placed.get(item["key"])
         if pos is None:
@@ -1164,17 +1171,57 @@ def compose(ctx: DrawContext, spec: dict, template: dict, values: dict, language
         pw, ph = item["vp_w"], item["vp_h"]
         vp_x = x + max(0.0, item["slot_w"] - pw) / 2
         if _hits_titleblock(vp_x, y, pw, ph, template):
-            ctx.warnings.append(
-                f"ERROR: view {item['key']!r} would overlap the title block - "
-                f"not placed off the sheet. Use a larger sheet (A2/A1)")
+            note_unplaced(item, _titleblock_warning(item))
             continue
         k = item["k"]
         # ph already includes the minimum model height, so view_height / ph is exactly this scale.
         world_h = ph * k
-        add_viewport(item, vp_x, y, pw, ph, index, world_h, item["scale_label"])
+        if add_viewport(item, vp_x, y, pw, ph, index, world_h, item["scale_label"]):
+            if item["key"] == "primary":
+                placed_primary = float(item["numeric"])
+
+    if placed_primary is not None:
+        floor = primary_floor(spec)
+        if placed_primary > floor + 0.5:
+            ctx.warnings.append(
+                f"ERROR: the main view would be 1:{placed_primary:g} beside the other views, "
+                f"coarser than the readable 1:{floor:g}. Use a larger sheet")
 
     _place_sheet_notes(ctx, spec, template, psp, frame, pack_area, occupied)
     return rects, psp.name
+
+
+def _titleblock_warning(item: dict) -> str:
+    return (f"ERROR: view {item['key']!r} would overlap the title block - "
+            f"not shown on this sheet. Use a larger sheet (A2/A1)")
+
+
+def _write_omitted_caption(msp, item: dict, area: dict, occupied: list, frame: Vec2) -> None:
+    """Name an unplaced view on the sheet, inside the packing area and clear of the notes column."""
+    caption = f"{str(item.get('key') or 'VIEW').upper()} NOT SHOWN – NEEDS A2 SHEET"
+    height = 2.5
+    width = max(text_width(caption, height), 1.0)
+    band = height * LINE_SPACING
+    hole = _largest_hole(area, occupied, 0.0)
+    x = y = None
+    if hole is not None:
+        hx, hy, fw, fh = hole
+        if fw + 1e-6 >= width and fh + 1e-6 >= band:
+            x = hx
+            y = hy + fh - band
+    if x is None:
+        x = float(area["x"])
+        y = float(area["y"]) + max(0.0, float(area["h"]) - band)
+        guard = 0
+        while _hits_occupied(x, y, min(width, float(area["w"])), band, occupied, 0.5) and guard < 30:
+            y -= band + 1.0
+            guard += 1
+        y = max(y, float(area["y"]))
+    room = float(area["w"])
+    limit = float(area["x"]) + room - min(width, room)
+    x = min(max(x, float(area["x"])), max(limit, float(area["x"])))
+    put_text(msp, caption, (frame.x + x, frame.y + y), height, layer="TEXT", align="left", nowrap=True)
+    occupied.append((x, y, x + min(width, room), y + band))
 
 
 def _view_fit_warning(item: dict, area: dict) -> str:
@@ -1182,7 +1229,7 @@ def _view_fit_warning(item: dict, area: dict) -> str:
     where = "NTS" if item.get("nts") else f"1:{float(item['numeric']):g}"
     base = (f"ERROR: view {item['key']!r} ({item['slot_w']:.0f} x {item['slot_h']:.0f} paper mm) "
             f"does not fit the free {free_w:.0f} x {free_h:.0f} mm at {where} - "
-            f"not placed off the sheet.")
+            f"not shown on this sheet.")
     better = _scale_advice(item, free_w, free_h)
     if better is None:
         return f"{base} Use a larger sheet (A2/A1)"

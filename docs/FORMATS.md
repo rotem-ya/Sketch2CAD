@@ -140,7 +140,9 @@ uses a standard scale. An auto view that does not fit steps to the next coarser 
 viewport is shrunk to match; a fixed scale is kept exactly. When the floors and the notes do not all fit,
 the sheet says so and names a larger sheet (A2/A1). The notes column is reserved before the views are
 packed and is never given to a view. Notes try 2.0 mm, then English and Hebrew side by side, then a free
-strip, and are reported as omitted only when none of those fit.
+strip, and are reported as omitted only when none of those fit. A view that still has no viewport is
+named once on the sheet (`DETAIL-1 NOT SHOWN – NEEDS A2 SHEET`) and QA reports `omitted_view`. The main
+view's "would be 1:n" error is raised only when that view is placed coarser than its floor.
 
 The sheet `scale` is the primary view. When another view uses a different scale, including `"auto"` or `"NTS"`,
 the title block reads `AS SHOWN / כמצוין` instead of `SCALE 1:n`. A bare primary title such as `plan` is drawn

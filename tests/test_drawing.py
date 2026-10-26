@@ -755,9 +755,28 @@ def test_oversized_view_is_not_placed_off_the_sheet(tmp_path):
                        "elements": [{"id": "big", "type": "rect", "status": "new",
                                      "corners": [[0, 0], [30, 20]]}]}]}
     res = render(spec, tmp_path, "huge", formats=("dxf",))
-    assert any(w.startswith("ERROR:") and "huge" in w and "not placed off the sheet" in w
-               and "larger sheet" in w and "A2/A1" in w for w in res["warnings"]), res["warnings"]
+    for key in ("huge", "primary"):
+        errs = [w for w in res["warnings"] if w.startswith("ERROR:") and f"view {key!r}" in w]
+        assert len(errs) == 1, (key, res["warnings"])
+        assert "not shown on this sheet" in errs[0] and "larger sheet" in errs[0] and "A2/A1" in errs[0]
+    assert not any("would be 1:" in w for w in res["warnings"]), res["warnings"]
     doc = ezdxf.readfile(res["dxf"])
+    psp = doc.layouts.get("SHEET")
+    captions = []
+    for entity in psp.query("TEXT MTEXT"):
+        text = entity.text if entity.dxftype() == "MTEXT" else entity.dxf.text
+        if "NOT SHOWN" not in text:
+            continue
+        captions.append(text)
+        point = entity.dxf.insert
+        assert 10 <= point.x and point.x + 2 <= 410
+        assert 10 <= point.y and point.y + entity.dxf.height <= 287.5
+    assert "HUGE NOT SHOWN – NEEDS A2 SHEET" in captions
+    assert "PRIMARY NOT SHOWN – NEEDS A2 SHEET" in captions
+    from sketch2cad.qa import review
+    omitted = [f for f in review(spec).findings if f.code == "omitted_view"]
+    assert {f.element for f in omitted} >= {"huge", "primary"}
+    assert all(f.severity == "error" and f.he for f in omitted)
     from sketch2cad.drawing.layout import STANDARD_SCALES
     assert all(scale in STANDARD_SCALES for scale in _viewport_scales(doc, "m"))
     psp = doc.layouts.get("SHEET")
@@ -860,7 +879,8 @@ def test_dense_drainage_multiview_fits(tmp_path):
          ]},
     ]
     res = render(spec, tmp_path, "dense_sheet", formats=("dxf", "png"))
-    assert not any("not placed off the sheet" in w for w in res["warnings"]), res["warnings"]
+    assert not any("not shown on this sheet" in w or "not placed off the sheet" in w
+                   for w in res["warnings"]), res["warnings"]
     doc = ezdxf.readfile(res["dxf"])
     assert _viewport_scales(doc, "mm") == [25.0, 50.0, 400.0]
     psp = doc.layouts.get("SHEET")
@@ -953,9 +973,11 @@ def test_nts_fit_warning_quotes_space_and_no_scale(tmp_path):
                        "elements": [{"id": "c", "type": "circle", "status": "new",
                                      "at": [0, 0], "radius": 40}]}]}
     res = render(spec, tmp_path, "ntsbig", formats=("dxf",))
-    warning = next(w for w in res["warnings"] if "scrap" in w and "not placed off the sheet" in w)
-    assert "free" in warning and "NTS" in warning
-    assert "Consider 1:" not in warning
+    # The requested 500 mm does not fit, and the view is fitted into the free rectangle.
+    assert not any("Consider 1:" in w or "not shown on this sheet" in w for w in res["warnings"]), res["warnings"]
+    doc = ezdxf.readfile(res["dxf"])
+    viewports = [vp for vp in doc.layouts.get("SHEET").query("VIEWPORT") if vp.dxf.status > 1]
+    assert len(viewports) == 2
 
 
 def test_auto_scale_views_stay_inside_and_off_the_title_block(tmp_path):
@@ -977,7 +999,8 @@ def test_auto_scale_views_stay_inside_and_off_the_title_block(tmp_path):
          ]},
     ]
     res = render(spec, tmp_path, "auto", formats=("dxf",))
-    assert not any("not placed off the sheet" in w or "nothing to draw" in w for w in res["warnings"]), res["warnings"]
+    assert not any("not shown on this sheet" in w or "not placed off the sheet" in w
+                   or "nothing to draw" in w for w in res["warnings"]), res["warnings"]
     doc = ezdxf.readfile(res["dxf"])
     series = {50, 100, 125, 200, 250, 500, 1000, 400}
     scales = _viewport_scales(doc, "mm")
@@ -1344,7 +1367,8 @@ def test_auto_multiview_places_every_view(tmp_path):
         "views": _side_views(),
     }
     res = render(spec, tmp_path, "mv_auto", formats=("dxf",))
-    assert not any("not placed" in w or "does not fit" in w for w in res["warnings"]), res["warnings"]
+    assert not any("not placed" in w or "not shown" in w or "does not fit" in w
+                   or "would be 1:" in w for w in res["warnings"]), res["warnings"]
     doc = ezdxf.readfile(res["dxf"])
     windows = _sheet_windows(doc)
     assert len(windows) >= 3, windows
@@ -1425,7 +1449,75 @@ def test_multiview_keeps_notes_and_fixed_scales(tmp_path):
     assert _viewport_scales(doc, "m") == [25.0, 50.0, 400.0]
     blob = _sheet_blob(doc)
     assert "Keep the trench clear." in blob and "השאר את התעלה נקייה." in blob
-    assert not any(finding.code == "omitted_strings" for finding in review(spec).findings)
+    findings = review(spec).findings
+    assert not any(finding.code == "omitted_strings" for finding in findings)
+    assert not any(finding.code == "omitted_view" for finding in findings)
+
+
+def test_auto_plan_placed_at_its_floor_does_not_warn(tmp_path):
+    """The probe may want 1:1000, but a plan that is placed at 1:500 must not say so."""
+    spec = {
+        "units": "m", "scale": "auto", "paper": "A3", "language": "en", "view": "plan",
+        "sheet": {"template": "a3_simple"},
+        "elements": [{"id": "site", "type": "rect", "status": "existing",
+                      "corners": [[0, 0], [100, 60]]}],
+        "views": [
+            {"id": "section-a", "title": "SECTION A-A", "scale": "auto",
+             "elements": [{"id": "ground", "type": "polyline", "status": "existing",
+                           "points": [[0, 0], [8, 0]]}]},
+            {"id": "detail-1", "title": "DETAIL 1", "scale": "auto",
+             "elements": [{"id": "box", "type": "rect", "status": "new",
+                           "corners": [[0, 0], [4, 3]]}]},
+        ],
+    }
+    res = render(spec, tmp_path, "floor", formats=("dxf",))
+    assert not any("would be 1:" in w for w in res["warnings"]), res["warnings"]
+    scales = _viewport_scales(ezdxf.readfile(res["dxf"]), "m")
+    assert 500.0 in scales, scales
+
+
+def test_unplaced_plan_does_not_claim_the_probe_scale(tmp_path):
+    """A plan that is not placed is named once. It is not also 'would be 1:2000'."""
+    spec = {
+        "units": "m", "scale": "auto", "paper": "A3", "language": "en", "view": "plan",
+        "sheet": {"template": "a3_simple"},
+        "elements": [{"id": "site", "type": "rect", "status": "existing",
+                      "corners": [[0, 0], [200, 150]]}],
+        "views": [
+            {"id": "section-a", "title": "SECTION A-A", "scale": "auto",
+             "elements": [{"id": "ground", "type": "polyline", "status": "existing",
+                           "points": [[0, 0], [8, 0]]}]},
+            {"id": "detail-1", "title": "DETAIL 1", "scale": "auto",
+             "elements": [{"id": "box", "type": "rect", "status": "new",
+                           "corners": [[0, 0], [4, 3]]}]},
+        ],
+    }
+    res = render(spec, tmp_path, "probe", formats=("dxf",))
+    primary = [w for w in res["warnings"] if w.startswith("ERROR:") and "view 'primary'" in w]
+    assert len(primary) == 1, res["warnings"]
+    assert "not shown on this sheet" in primary[0]
+    assert not any("would be 1:" in w for w in res["warnings"]), res["warnings"]
+    blob = _sheet_blob(ezdxf.readfile(res["dxf"]))
+    assert "PRIMARY NOT SHOWN – NEEDS A2 SHEET" in blob
+
+
+def test_placed_plan_coarser_than_its_floor_warns_once(tmp_path):
+    spec = {
+        "units": "m", "scale": 2000, "paper": "A3", "language": "en", "view": "plan",
+        "sheet": {"template": "a3_simple"},
+        "elements": [{"id": "site", "type": "rect", "status": "existing",
+                      "corners": [[0, 0], [10, 6]]}],
+        "views": [{"id": "detail-1", "title": "DETAIL 1", "scale": 50,
+                   "elements": [{"id": "box", "type": "rect", "status": "new",
+                                 "corners": [[0, 0], [1, 0.6]]}]}],
+    }
+    res = render(spec, tmp_path, "coarse", formats=("dxf",))
+    would = [w for w in res["warnings"] if "would be 1:" in w]
+    assert len(would) == 1, res["warnings"]
+    assert "1:2000" in would[0] and "1:500" in would[0]
+    assert not any("view 'primary' is at" in w for w in res["warnings"])
+    assert not any("not shown" in w for w in res["warnings"]), res["warnings"]
+    assert 2000.0 in _viewport_scales(ezdxf.readfile(res["dxf"]), "m")
 
 
 def test_nudged_dimension_text_is_stored_above_the_line(tmp_path):
