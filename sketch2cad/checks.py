@@ -195,9 +195,16 @@ def check_buried_bolts(spec, catalog) -> list[Finding]:
 CHECKS = (check_catalog, check_cover, check_discharge, check_flanges, check_buried_bolts)
 
 
-def run_checks(spec: dict, catalog=None) -> list[Finding]:
+def run_checks(spec: dict, catalog=None, project=None) -> list[Finding]:
+    """Catalog and engineering checks, then the drawing QA controller.
+
+    `project` is optional. Its `qa` dict overrides the built-in QA defaults; a spec `qa` or
+    `params.qa` overrides the project. Existing callers that pass only spec and catalog are unchanged.
+    """
     findings = []
     for check in CHECKS:
         findings += check(spec, catalog)
+    from .qa import drawing_findings
+    findings += drawing_findings(spec, catalog, project)
     order = {s: i for i, s in enumerate(SEVERITIES)}
     return sorted(findings, key=lambda f: order[f.severity])

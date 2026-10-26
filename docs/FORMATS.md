@@ -46,7 +46,10 @@ one paper-mm = `scale` mm of model space (or `scale/1000` m).
 
 Extra keys supported by the renderer:
 - element type `circle` (`at`, `radius`) for small fittings;
-- any element: `centerline`, `label_at`, `label_align`, `leader`, `leader_to`; block size overrides `D`, `t`, `L`, `H`, `Dt`;
+- any element: `centerline`, `label_at`, `label_align`, `label_height` (paper mm), `leader`, `leader_to`; block size overrides `D`, `t`, `L`, `H`, `Dt`;
+- `pipe`: `slope` (fall/run) and optional `slope_unit` `percent`, `inv` `[start, end]`, optional `inv_stations` `[s0, s1]` or `inv_at` `[[x,y],[x,y]]` for the run between those inverts (the full drawn length is not assumed), `dn`, `sn`, `cover`; a label `SLOPE 0.4%` is a percent; a text `INV` or `INV.` counts when `pipe` names the pipe, or when it lies within about 10 paper-mm of a centre-line (every such pipe, and only the ones that state a slope when any of them does);
+- `nts` (true) or the text `NTS` / `N.T.S.` in `view`, `views`, the sheet scale field or a text element marks the sheet not-to-scale;
+- `connector`: `offset`, `offset_from` (point or element id), `offset_axis` `"x"|"y"` (omit for a distance);
 - `manhole`: `cover_item` (own BOM line), `cover_status`, `di` / `do`, `grate_size`; `connector`: `height`;
 - spec root: `notes_at`, `sheet.origin`, `style` (text sizes in paper mm); dimension: `decimals`.
 
@@ -116,7 +119,8 @@ project_name_he, client, date, scale, drawn, checked + anything in `sheet.fields
 | `sketch2cad.io.pdf2dxf` | `pdf_to_dxf(pdf, out, page=0, scale=1, units="mm", raster_fallback=True)` | path |
 | `sketch2cad.io.ifc2dxf` | `ifc_to_dxf(ifc, out, cut_height=1.2, mode="plan")` | path |
 | `sketch2cad.compare` | `compare(a, b, out_png)` (PDF/DXF/PNG) | path + change ratio |
-| `sketch2cad.checks` | `run_checks(spec, catalog) -> list[Finding]` | |
+| `sketch2cad.checks` | `run_checks(spec, catalog, project=None) -> list[Finding]` | includes drawing QA |
+| `sketch2cad.qa` | `review(spec, catalog, project)`, `write_overlay(spec, path, catalog, project)` | paper-space QA and `qa_overlay.png`; defaults in `QA_DEFAULTS`, overridden by `project.qa` |
 | `sketch2cad.bom` | `build_bom(spec, catalog) -> list[row]`, `bom_to_xlsx(rows, path)` | |
 | `sketch2cad.package` | `build_package(project, document, catalog, out_pdf, *, lang, spec)` | path |
 | `sketch2cad.printset` | `build_print_set(project, out_pdf, *, lang, codes, statuses)` | path |
