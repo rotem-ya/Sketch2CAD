@@ -15,21 +15,21 @@ LAYERS = (  # name, ACI color, linetype, lineweight (1/100 mm)
     ("EXISTING", 8, "CONTINUOUS", 25),
     ("NEW", 1, "CONTINUOUS", 35),
     ("PROPOSED", 1, "CONTINUOUS", 35),
-    ("DIM", 7, "CONTINUOUS", 13),
+    ("DIM", 7, "CONTINUOUS", 18),
     ("TEXT", 7, "CONTINUOUS", 18),
     ("LEGEND", 7, "CONTINUOUS", 18),
     ("FRAME", 7, "CONTINUOUS", 25),
-    ("HATCH", 8, "CONTINUOUS", 9),
-    ("CENTER", 8, "CENTER", 13),
+    ("HATCH", 8, "CONTINUOUS", 18),
+    ("CENTER", 8, "CENTER", 18),
 )
 DIMSTYLE = "SKETCH2CAD"
 LTSCALE_FACTOR = 2.5                   # DASHED (1.27 dash) -> ~3 mm dashes on paper
-DEFAULT_STYLE = {                      # paper mm, ISO 3098 series (2.5 / 3.5 / 5 / 7)
+DEFAULT_STYLE = {                      # paper mm. Heights stay here until drawing/standards.py owns them.
     "text_height": 2.5,                # labels, free text
-    "dim_text_height": 2.5,
-    "table_text_height": 1.8,          # small annotation, not the general-note minimum
-    "legend_title_height": 3.5,
-    "notes_text_height": 2.5,
+    "dim_text_height": 2.0,
+    "table_text_height": 1.8,
+    "legend_title_height": 3.0,
+    "notes_text_height": 2.0,
     "notes_width": 100.0,
     "balloon_radius": 3.0,
 }

@@ -4,8 +4,10 @@ Geometry is measured in paper millimetres (text height is already paper mm; mode
 Standards and utility rules come from `QA_DEFAULTS`, overridden by `project.qa`, then `spec.qa` or
 `spec.params.qa`. No network and no extra dependencies.
 
-ISO 3098 text series: 2.5 / 3.5 / 5 / 7 mm. General notes and labels use 2.5 mm minimum.
-1.8 mm is only for small annotations (dimensions, tables, title-block captions).
+ISO 3098 text series: 2.5 / 3.5 / 5 / 7 mm. Labels use 2.5 mm minimum.
+1.8 mm is for small annotations (dimensions, tables, title-block captions). Notes stay at the
+engine default until drawing/standards.py owns the heights: under 1.8 mm is an error, and a
+notes height outside the series is a warning, so a sheet the tool itself draws is not blocked.
 ISO 128 line weights: 0.18–0.70 mm, and the thick weight is at least twice the thin weight
 (the standard pair 0.18 / 0.35 is accepted).
 Utility submission (Israeli water corporations such as מי שמש): warnings, not errors.
@@ -18,8 +20,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .checks import Finding
-from .drawing.context import DEFAULT_STYLE, DrawContext
-from .drawing.text import LINE_SPACING, pick, text_width
+from .drawing.text import LINE_SPACING, plain, text_width
 
 QA_DEFAULTS = {
     "min_text_mm": 2.5,
@@ -31,11 +32,15 @@ QA_DEFAULTS = {
     "thick_thin_ratio": 2.0,
     "dim_tolerance_mm": 1.0,
     "slope_tolerance_mm": 1.0,
-    # smallest listed DN that is still >= the pipe, else the last row
+    # smallest listed DN that is still >= the pipe, else the last row. Slopes are fall/run.
     "min_slopes": [
         {"dn_mm": 150, "slope": 0.015},
         {"dn_mm": 200, "slope": 0.010},
         {"dn_mm": 250, "slope": 0.007},
+        {"dn_mm": 300, "slope": 0.005},
+        {"dn_mm": 400, "slope": 0.004},
+        {"dn_mm": 500, "slope": 0.003},
+        {"dn_mm": 600, "slope": 0.0025},
     ],
     # office starting values for the SN cover hook, millimetres of cover. Not a quoted utility clause.
     "sn_cover_mm": {"SN2": 800, "SN4": 600, "SN8": 450, "SN16": 300},
@@ -46,8 +51,9 @@ ANNOTATION_ROLES = {"dim", "table", "annotation", "title"}
 # Sized to a symbol, not to the ISO text series.
 SYMBOL_ROLES = {"balloon", "north"}
 GENERAL_ROLES = {"label", "text", "notes", "legend"}
-NTS_RE = re.compile(r"\bNTS\b|not\s*to\s*scale|לא בקנה", re.IGNORECASE)
-INV_RE = re.compile(r"INV\s*[:=]?\s*(-?\d+(?:\.\d+)?)", re.IGNORECASE)
+NTS_RE = re.compile(r"\bN\.?\s*T\.?\s*S\.?\b|not\s*to\s*scale|לא בקנה", re.IGNORECASE)
+INV_RE = re.compile(r"INV\.?\s*[:=]?\s*(-?\d+(?:\.\d+)?)", re.IGNORECASE)
+SLOPE_RE = re.compile(r"(?:SLOPE|שיפוע)\s*[:=]?\s*(-?\d+(?:\.\d+)?)\s*(%|‰)?", re.IGNORECASE)
 REF_RE = re.compile(r"(?:item:|#)([A-Za-z][\w.-]*)")
 NUMBER_RE = re.compile(r"-?\d+(?:\.\d+)?")
 ELEMENT_ERRORS = (KeyError, ValueError, TypeError, IndexError, ZeroDivisionError, AttributeError)
@@ -111,6 +117,9 @@ class Scene:
     paper: tuple
     doc: object
     k: float
+    origin: tuple = (0.0, 0.0)       # model-space frame origin
+    paper_rect: tuple = (0.0, 0.0, 0.0, 0.0)  # model-space paper rectangle
+    margin: float = 10.0
 
 
 def drawing_findings(spec: dict, catalog=None, project=None) -> list[Finding]:
@@ -132,7 +141,7 @@ def review(spec: dict, catalog=None, project=None) -> Review:
     findings += _engineering(spec, catalog, cfg)
     scene = None
     try:
-        scene = build_scene(spec, catalog)
+        scene = build_scene(spec, catalog, project)
     except Exception as exc:  # noqa: BLE001 - a spec that cannot be laid out still keeps the other checks
         findings.append(Finding("warning", "qa_layout", f"Drawing QA layout failed: {exc}",
                                 f"פריסת בקרת השרטוט נכשלה: {exc}"))
@@ -147,7 +156,6 @@ def review(spec: dict, catalog=None, project=None) -> Review:
 # ---------------------------------------------------------------- sheet model
 
 
-
 def _coords(el) -> list:
     pts = []
     for key in ("at", "center", "label_at"):
@@ -158,162 +166,6 @@ def _coords(el) -> list:
             if isinstance(pt, (list, tuple)) and len(pt) >= 2:
                 pts.append(pt)
     return pts
-
-
-def _text_boxes(spec, ctx, anchors, paper, language) -> list[TextBox]:
-    from ezdxf.math import Vec2
-    boxes = []
-    style_h = float(ctx.style.get("text_height", DEFAULT_STYLE["text_height"]))
-    for index, el in enumerate(spec.get("elements") or []):
-        eid = el.get("id") or f"_{index}"
-        if el.get("type") == "text":
-            lines = pick(el.get("text"), language)
-            if not lines or not el.get("at"):
-                continue
-            h = float(el.get("height") or style_h)
-            at = Vec2(el["at"])
-            leaders = []
-            if el.get("leader_to"):
-                leaders = _leader_segments(at, Vec2(el["leader_to"]), lines, h, ctx.k)
-            boxes.append(_box(eid, "text", at, lines, h, el.get("align", "left"), paper, leaders, ctx.k))
-            continue
-        lines = pick(el.get("label"), language)
-        if not lines or eid not in anchors:
-            continue
-        anchor, radius = anchors[eid]
-        anchor = Vec2(anchor)
-        h = float(el.get("label_height") or style_h)
-        leaders = []
-        if el.get("label_at"):
-            at = Vec2(el["label_at"])
-            align = el.get("label_align", "left")
-            if el.get("leader") or el.get("leader_to"):
-                target = Vec2(el["leader_to"]) if el.get("leader_to") else anchor
-                leaders = _leader_segments(at, target, lines, h, ctx.k)
-        else:
-            n = len(lines)
-            at = anchor + Vec2(0, radius + ctx.paper(1.5) + (n - 1) * LINE_SPACING * ctx.paper(h))
-            align = "center"
-        boxes.append(_box(eid, "label", at, lines, h, align, paper, leaders, ctx.k))
-    return boxes
-
-
-def _leader_segments(at, target, lines, h_mm, k) -> list:
-    """Shelf and shaft in model space, matching leader_label."""
-    if not lines:
-        return []
-    h = h_mm * k
-    w = max(text_width(s, h) for s in lines)
-    if target.y > at.y + h:
-        y = at.y + h + 0.8 * k
-    else:
-        y = at.y - (len(lines) - 1) * LINE_SPACING * h - 0.8 * k
-    shelf = ((at.x, y), (at.x + w, y))
-    start = (at.x + w, y) if target.x > at.x + w / 2 else (at.x, y)
-    shaft = (start, (target.x, target.y))
-    return [shelf, shaft]
-
-
-def _box(eid, role, at, lines, h_mm, align, paper, leaders, k) -> TextBox:
-    width = max((text_width(s, h_mm) for s in lines), default=0.0)
-    px, py = paper(at.x, at.y)
-    top = py + h_mm
-    bottom = py - (len(lines) - 1) * LINE_SPACING * h_mm - 0.25 * h_mm
-    align = (align or "left").lower()
-    if align in ("center", "middle", "middle_center"):
-        x0, x1 = px - width / 2, px + width / 2
-    elif align == "right":
-        x0, x1 = px - width, px
-    else:
-        x0, x1 = px, px + width
-    plead = []
-    for (a, b) in leaders:
-        plead.append((*paper(a[0], a[1]), *paper(b[0], b[1])))
-    return TextBox(eid, role, x0, bottom, x1, top, h_mm, len(lines), plead)
-
-
-def _dim_boxes(spec, ctx, paper) -> list[TextBox]:
-    boxes = []
-    h = float(ctx.style.get("dim_text_height", DEFAULT_STYLE["dim_text_height"]))
-    units = spec.get("units", "mm")
-    for i, dim in enumerate(spec.get("dimensions") or []):
-        if dim.get("type", "chain") != "chain":
-            continue
-        pts = dim.get("points") or []
-        axis = dim.get("axis", "h")
-        base = float(dim.get("base", 0))
-        texts = dim.get("texts") or []
-        for j, (p1, p2) in enumerate(zip(pts, pts[1:])):
-            measured = abs(p2[0] - p1[0]) if axis == "h" else abs(p2[1] - p1[1])
-            if measured < 1e-9:
-                continue
-            raw = texts[j] if j < len(texts) else ""
-            label = _dim_display(raw, measured, units)
-            width = text_width(label or "0", h)
-            if axis == "h":
-                mx = (p1[0] + p2[0]) / 2
-                px, py = paper(mx, base)
-                py += DIM_GAP_MM
-                x0, x1 = px - width / 2, px + width / 2
-                y0, y1 = py - 0.25 * h, py + h
-            else:
-                my = (p1[1] + p2[1]) / 2
-                px, py = paper(base, my)
-                px += DIM_GAP_MM
-                x0, x1 = px - 0.25 * h, px + h
-                y0, y1 = py - width / 2, py + width / 2
-            boxes.append(TextBox(f"dim:{i}:{j}", "dim", x0, y0, x1, y1, h, 1))
-    return boxes
-
-
-def _symbol_boxes(spec, ctx, paper) -> list[TextBox]:
-    boxes = []
-    r = float(ctx.style.get("balloon_radius", DEFAULT_STYLE["balloon_radius"]))
-    h = 0.78 * r
-    for entry in spec.get("legend") or []:
-        for b in entry.get("balloons") or []:
-            px, py = paper(b[0], b[1])
-            boxes.append(TextBox(f"#{entry.get('no')}", "balloon", px - r, py - r, px + r, py + r, h, 1))
-    for index, el in enumerate(spec.get("elements") or []):
-        if el.get("type") != "north_arrow" or not el.get("at"):
-            continue
-        size = float(el.get("size", 14))
-        nh = 1.6 * size / 5.5
-        px, py = paper(el["at"][0], el["at"][1])
-        py += (5.2 * size / 5.5)
-        w = text_width("N", nh)
-        boxes.append(TextBox(el.get("id") or f"north_{index}", "north",
-                             px - w / 2, py - 0.25 * nh, px + w / 2, py + nh, nh, 1))
-    return boxes
-
-
-def _title_boxes(template, values, language) -> list[TextBox]:
-    from .templates import _format, _pick_field
-    boxes = []
-    filled = {key: "" if v is None else str(v) for key, v in values.items()}
-    fw = template["frame"]["w"]
-    for field_def in template.get("fields") or []:
-        h = float(field_def.get("h", 2.5))
-        langs = _pick_field(field_def, language)
-        texts = []
-        for lang in langs:
-            try:
-                s = _format(field_def.get(lang) or "", filled)
-            except Exception:  # noqa: BLE001
-                s = ""
-            if s:
-                texts.append(s)
-        if not texts:
-            continue
-        w = float(field_def.get("w", fw - field_def["x"] - 2))
-        x = float(field_def["x"])
-        y = float(field_def["y"])
-        # Bilingual title with he_y is two lines; otherwise one line, possibly shared.
-        nlines = 2 if len(texts) == 2 and "he_y" in field_def else 1
-        bottom = y - (nlines - 1) * LINE_SPACING * h - 0.25 * h
-        boxes.append(TextBox(f"title:{field_def.get('key', 'field')}", "title",
-                             x, bottom, x + w, y + h, h, nlines, in_notes=True))
-    return boxes
 
 
 def _paper_segments(ctx, paper) -> list:
@@ -362,38 +214,6 @@ def _sample_arc(center, radius, a0, a1, paper, layer, n=16) -> list:
     return segs
 
 
-
-
-def _block_text_h(ctx, role: str) -> float:
-    key = "table_text_height" if role == "legend" else "notes_text_height"
-    return float(ctx.style.get(key, DEFAULT_STYLE[key]))
-
-
-def _placed_box(block, at, role, paper_fn, k, legend_area, text_h: float) -> TextBox:
-    x, top = paper_fn(at.x, at.y)
-    w, h = block.width / k, block.height / k
-    # The legend table is small annotation text; notes are general text.
-    text_role = "table" if role == "legend" else "notes"
-    box = TextBox(role, text_role, x, top - h, x + w, top, text_h, 1, in_notes=True)
-    if legend_area and _rect_inside(box, legend_area, 2.0):
-        box.in_notes = True
-    return box
-
-
-def _dim_display(raw, measured, units) -> str:
-    if units == "m":
-        shown = f"{measured:.2f}"
-    else:
-        shown = f"{measured:.0f}" if abs(measured - round(measured)) < 1e-6 else f"{measured:.1f}"
-    text = raw or ""
-    if not text or text == "<>":
-        return shown
-    if "<>" in text:
-        return text.replace("<>", shown)
-    return text
-
-
-# ---------------------------------------------------------------- spec hygiene and numbers
 def _hygiene(spec, catalog) -> list[Finding]:
     out = []
     elements = [e for e in (spec.get("elements") or []) if isinstance(e, dict)]
@@ -460,10 +280,38 @@ def _unknown_item_ref(token, eid, known, catalog) -> list[Finding]:
                     f"'{eid}' מפנה לפריט לא מוכר '{token}'", eid)]
 
 
+def _is_nts(spec) -> bool:
+    """Not-to-scale: spec.nts, or N.T.S. / NTS in the view, views, sheet scale, notes or text."""
+    if spec.get("nts"):
+        return True
+    blobs = [str(spec.get("view") or "")]
+    if isinstance(spec.get("scale"), str):
+        blobs.append(spec["scale"])
+    for view in spec.get("views") or []:
+        if isinstance(view, dict):
+            blobs.extend(str(view.get(key) or "") for key in ("view", "name", "scale", "title", "en", "he"))
+        else:
+            blobs.append(str(view))
+    fields = (spec.get("sheet") or {}).get("fields") or {}
+    if isinstance(fields, dict):
+        blobs.extend(str(value) for value in fields.values() if isinstance(value, str))
+    for el in spec.get("elements") or []:
+        if isinstance(el, dict):
+            blobs.append(_blob(el.get("text")))
+            blobs.append(_blob(el.get("label")))
+    notes = spec.get("notes") or {}
+    if isinstance(notes, dict):
+        for lang in ("en", "he"):
+            blobs.extend(str(line) for line in notes.get(lang) or [])
+    for dim in spec.get("dimensions") or []:
+        if isinstance(dim, dict):
+            blobs.extend(str(text) for text in dim.get("texts") or [])
+    return any(NTS_RE.search(blob) for blob in blobs if blob)
+
+
 def _dimensions(spec, cfg) -> list[Finding]:
     out = []
-    view = str(spec.get("view") or "")
-    nts = bool(NTS_RE.search(view))
+    nts = _is_nts(spec)
     units = spec.get("units", "mm")
     tol = _du(cfg["dim_tolerance_mm"], units)
     seen = {}
@@ -523,10 +371,27 @@ def _du(mm, units) -> float:
     return float(mm) * (0.001 if units == "m" else 1.0)
 
 
-def _as_ratio(slope) -> float:
-    """Dimensionless fall/run. A value above 0.5 is read as a percent (1.5 -> 1.5%)."""
+def _as_ratio(slope, unit=None) -> float:
+    """Fall/run. `unit` is ratio, percent or permille. A bare number is a ratio, not a guess."""
     slope = float(slope)
-    return slope / 100.0 if abs(slope) > 0.5 else slope
+    unit = (unit or "ratio").lower()
+    if unit in ("percent", "%", "pct"):
+        return slope / 100.0
+    if unit in ("permille", "‰"):
+        return slope / 1000.0
+    return slope
+
+
+def _slope_of(el) -> tuple[float, str] | None:
+    """(value, unit) from slope/slope_unit, otherwise from a SLOPE / שיפוע label."""
+    if el.get("slope") is not None:
+        return float(el["slope"]), str(el.get("slope_unit") or "ratio")
+    match = SLOPE_RE.search(_blob(el.get("label")) + " " + _blob(el.get("text")))
+    if not match:
+        return None
+    mark = match.group(2) or ""
+    unit = "percent" if mark == "%" else ("permille" if mark == "‰" else "ratio")
+    return float(match.group(1)), unit
 
 
 def _engineering(spec, catalog, cfg) -> list[Finding]:
@@ -540,28 +405,48 @@ def _engineering(spec, catalog, cfg) -> list[Finding]:
         if el.get("type") != "pipe":
             continue
         eid = el.get("id") or "pipe"
-        length = _length(el.get("points") or [])
-        slope = el.get("slope")
-        inv = _pipe_inv(el, inv_texts, units)
-        if slope is not None and inv is not None and length > 0:
-            expected = _as_ratio(slope) * length
+        full = _length(el.get("points") or [])
+        parsed = _slope_of(el)
+        ratio = _as_ratio(*parsed) if parsed else None
+        inv = _pipe_inv(el, inv_texts, units, full)
+        checked_fall = False
+        checked_min = False
+        if ratio is not None and inv is not None and inv[2] > 0:
+            expected = ratio * inv[2]
             actual = inv[0] - inv[1]
+            checked_fall = True
             if abs(actual - expected) > tol:
                 out.append(Finding(
                     "error", "slope_mismatch",
                     f"Pipe {eid}: fall {actual:.4g} differs from slope × length {expected:.4g}",
                     f"צינור {eid}: הפרש רומים {actual:.4g} אינו שווה לשיפוע × אורך ({expected:.4g})",
                     eid))
-        if slope is not None or inv is not None:
-            ratio = _as_ratio(slope) if slope is not None else (abs(inv[0] - inv[1]) / length if length else None)
-            dn = _dn_mm(el, catalog, units)
-            need = _min_slope(dn, bands) if dn and ratio is not None else None
-            if need is not None and ratio + 1e-6 < need:
+        used = ratio
+        if used is None and inv is not None and inv[2] > 0:
+            used = abs(inv[0] - inv[1]) / inv[2]
+        dn = _dn_mm(el, catalog, units)
+        need = _min_slope(dn, bands) if dn and used is not None else None
+        if need is not None:
+            checked_min = True
+            if used + 1e-6 < need:
                 out.append(Finding(
                     "warning", "min_slope",
-                    f"Pipe {eid}: slope {ratio * 100:.2f}% is below {need * 100:.2f}% for DN {dn:.0f}",
-                    f"צינור {eid}: שיפוע {ratio * 100:.2f}% קטן מ-{need * 100:.2f}% לקוטר {dn:.0f}",
+                    f"Pipe {eid}: slope {used * 100:.2f}% is below {need * 100:.2f}% for DN {dn:.0f}",
+                    f"צינור {eid}: שיפוע {used * 100:.2f}% קטן מ-{need * 100:.2f}% לקוטר {dn:.0f}",
                     eid))
+        if not checked_fall or not checked_min:
+            missing_en, missing_he = [], []
+            if not checked_fall:
+                missing_en.append("no slope with an invert pair")
+                missing_he.append("אין שיפוע עם זוג רומים")
+            if not checked_min:
+                missing_en.append("no diameter or no slope")
+                missing_he.append("אין קוטר או אין שיפוע")
+            out.append(Finding(
+                "info", "slope_unchecked",
+                f"Pipe {eid} slope was not fully checked: {'; '.join(missing_en)}",
+                f"שיפוע הצינור {eid} לא נבדק עד הסוף: {'; '.join(missing_he)}",
+                eid))
         out += _sn_cover(el, spec, catalog, cfg)
     for el in elements:
         if el.get("type") == "connector" and el.get("offset") is not None:
@@ -581,10 +466,22 @@ def _inv_texts(elements) -> list[dict]:
     return found
 
 
-def _pipe_inv(el, texts, units):
+def _metric_elevations(a, b, length, units):
+    """Invert numbers written in metres on an mm drawing (225.00 along a 40 m run)."""
+    if units != "mm" or length <= 0:
+        return a, b
+    fall = abs(a - b)
+    if max(abs(a), abs(b)) <= 5000 and fall * 1000 <= length * 0.2 and fall < length * 0.002:
+        return a * 1000.0, b * 1000.0
+    return a, b
+
+
+def _pipe_inv(el, texts, units, full_length):
+    """(start, end, length). Length is the run between the two invert points when they have positions."""
     inv = el.get("inv")
     if isinstance(inv, (list, tuple)) and len(inv) >= 2:
-        return float(inv[0]), float(inv[1])
+        a, b = _metric_elevations(float(inv[0]), float(inv[1]), full_length, units)
+        return a, b, full_length
     eid = el.get("id")
     pts = el.get("points") or []
     if len(pts) < 2:
@@ -608,7 +505,11 @@ def _pipe_inv(el, texts, units):
     limit = _du(500, units)
     if not own and (dist(near_start, start) > limit or dist(near_end, end) > limit):
         return None
-    return near_start["value"], near_end["value"]
+    length = full_length
+    if near_start.get("at") and near_end.get("at"):
+        length = math.dist(near_start["at"], near_end["at"])
+    a, b = _metric_elevations(near_start["value"], near_end["value"], length, units)
+    return a, b, length
 
 
 def _length(points) -> float:
@@ -639,7 +540,7 @@ def _min_slope(dn_mm, bands) -> float | None:
     rows = []
     for row in bands or []:
         try:
-            rows.append((float(row["dn_mm"]), _as_ratio(row["slope"])))
+            rows.append((float(row["dn_mm"]), _as_ratio(row["slope"], row.get("slope_unit"))))
         except (KeyError, TypeError, ValueError):
             continue
     if not rows:
@@ -896,15 +797,14 @@ def _text_standards(scene: Scene, cfg) -> list[Finding]:
             if box.height + 1e-6 < float(cfg["min_annotation_mm"]):
                 out.append(_too_small(box, cfg["min_annotation_mm"]))
             continue
-        annotation = box.role in ANNOTATION_ROLES
+        # Notes use the engine's 2.0 mm default until standards.py. Below the annotation
+        # minimum is still an error; 2.0 mm is reported as off-series, not a blocking error.
+        annotation = box.role in ANNOTATION_ROLES or box.role == "notes"
         limit = float(cfg["min_annotation_mm"] if annotation else cfg["min_text_mm"])
         if box.height + 1e-6 < limit:
             out.append(_too_small(box, limit))
             continue
-        allowed = [float(v) for v in cfg.get("text_heights_mm") or []]
-        if annotation:
-            allowed += [float(v) for v in cfg.get("annotation_heights_mm") or []]
-        if not any(abs(box.height - item) <= 0.05 for item in allowed):
+        if _outside_series(box, cfg):
             off.setdefault(box.role, set()).add(round(box.height, 2))
         if box.role not in {"title"} | SYMBOL_ROLES:
             heights.setdefault(box.role, set()).add(round(box.height, 2))
@@ -925,6 +825,24 @@ def _text_standards(scene: Scene, cfg) -> list[Finding]:
                 f"לתפקיד '{role}' יותר מגובה טקסט אחד: {listed} מ\"מ",
                 role))
     return out
+
+
+def _series_heights(cfg, annotation: bool) -> list[float]:
+    allowed = [float(v) for v in cfg.get("text_heights_mm") or []]
+    if annotation:
+        allowed += [float(v) for v in cfg.get("annotation_heights_mm") or []]
+    return allowed
+
+
+def _outside_series(box: TextBox, cfg) -> bool:
+    """True when the box is large enough to read but not on the ISO series for its role."""
+    if box.height <= 0 or box.role in SYMBOL_ROLES:
+        return False
+    annotation = box.role in ANNOTATION_ROLES or box.role == "notes"
+    limit = float(cfg["min_annotation_mm"] if annotation else cfg["min_text_mm"])
+    if box.height + 1e-6 < limit:
+        return False
+    return not any(abs(box.height - item) <= 0.05 for item in _series_heights(cfg, annotation))
 
 
 def _too_small(box: TextBox, limit) -> Finding:
@@ -1049,154 +967,478 @@ def _explicit_props(entity) -> bool:
 
 
 # ---------------------------------------------------------------- overlay
+# A finding with no geometry (sheet hygiene, line weights, a failed layout) is a table row only.
+SHEET_CODES = frozenset({
+    "lineweight_range", "lineweight_ratio", "layer_0", "defpoints",
+    "not_bylayer", "block_layer", "qa_layout",
+})
+PAD_MM = 1.5
+MAX_MARKER_MM = 28.0
+MIN_MARKER_MM = 5.0
+TABLE_HEAD_MM = 12.0
+TABLE_ROW_MM = 11.2
+PANEL_W_MM = 228.0
+SEVERITY_COLOR = {"error": "#d00000", "warning": "#e67e00", "info": "#1d6aab"}
+SEVERITY_HE = {"error": "שגיאה", "warning": "אזהרה", "info": "הערה"}
+
+
+@dataclass
+class OverlayMarker:
+    """One numbered rectangle on the sheet. The label rectangle is in paper mm."""
+    number: int
+    severity: str
+    code: str
+    element: str
+    x0: float
+    y0: float
+    x1: float
+    y1: float
+    lx: float = 0.0
+    ly: float = 0.0
+    lw: float = 0.0
+    lh: float = 0.0
+
+    def label_rect(self) -> tuple[float, float, float, float]:
+        return (self.lx, self.ly, self.lx + self.lw, self.ly + self.lh)
+
+
+@dataclass
+class OverlayRow:
+    number: int
+    severity: str
+    code: str
+    element: str
+    he: str
+    on_sheet: bool
+
+
+def overlay_plan(spec: dict, catalog=None, project=None) -> tuple[list[OverlayMarker], list[OverlayRow]]:
+    """Numbered markers and the findings table. Marker labels are placed so they do not overlap."""
+    return _plan_overlay(review(spec, catalog, project))
+
+
 def write_overlay(spec: dict, path, catalog=None, project=None) -> str | None:
-    """Circle QA problems in red on a paper-space sheet. Returns the PNG path."""
+    """Draw numbered QA markers on a faded trial preview, with a findings table beside the sheet.
+
+    Errors are red, warnings orange. A finding with no location is a table row only.
+    Returns the PNG path, or None when the sheet cannot be laid out.
+    """
     import matplotlib
     matplotlib.use("Agg", force=False)
     import matplotlib.pyplot as plt
-    from matplotlib.patches import Circle, Rectangle
+    from matplotlib import font_manager
+    from matplotlib.patches import Rectangle
 
     result = review(spec, catalog, project)
     scene = result.scene
     if scene is None:
         return None
+    markers, rows = _plan_overlay(result)
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
+    left, bottom, right, top, panel_x, panel_w = _overlay_limits(scene, markers, rows)
+    fig, ax = plt.subplots(figsize=((right - left) / 25.4, (top - bottom) / 25.4), dpi=80)
+    _draw_underlay(ax, scene)
+    ax.set_xlim(left, right)
+    ax.set_ylim(bottom, top)
+    ax.set_aspect("equal", adjustable="box")
+    m = scene.margin
     pw, ph = scene.paper
-    fig, ax = plt.subplots(figsize=(pw / 25.4, ph / 25.4), dpi=80)
-    ax.set_xlim(-5, pw + 5)
-    ax.set_ylim(-5, ph + 5)
-    ax.set_aspect("equal")
-    ax.add_patch(Rectangle((0, 0), pw, ph, fill=False, ec="#666666", lw=0.6))
-    area = scene.areas.get("drawing")
-    if area:
-        ax.add_patch(Rectangle((area["x"], area["y"]), area["w"], area["h"], fill=False, ec="#bbbbbb", lw=0.4))
-    for seg in scene.segments:
-        if seg[4] == "FRAME":
-            continue
-        ax.plot([seg[0], seg[2]], [seg[1], seg[3]], color="#335577", lw=0.35, solid_capstyle="round")
-    for box in scene.boxes:
-        ax.add_patch(Rectangle((box.x0, box.y0), max(0.2, box.x1 - box.x0), max(0.2, box.y1 - box.y0),
-                               fill=False, ec="#3d7ea6", lw=0.35))
-    sheet_y = ph - 8
-    for finding in result.findings:
-        targets = _targets(finding, scene)
-        if targets:
-            for cx, cy, radius in targets:
-                ax.add_patch(Circle((cx, cy), radius, fill=False, ec="#d00000", lw=1.1))
-                ax.text(cx, cy + radius + 0.6, finding.code, color="#d00000", fontsize=6, ha="center", va="bottom")
-        else:
-            ax.add_patch(Circle((12, sheet_y), 4.5, fill=False, ec="#d00000", lw=1.0))
-            ax.text(18, sheet_y, finding.code, color="#d00000", fontsize=6, va="center")
-            sheet_y -= 8
+    ax.add_patch(Rectangle((-m, -m), pw, ph, fill=False, ec="#9aa3ad", lw=0.6, zorder=2))
+    font = font_manager.FontProperties(family="DejaVu Sans")
+    for marker in markers:
+        color = SEVERITY_COLOR.get(marker.severity, SEVERITY_COLOR["info"])
+        ax.add_patch(Rectangle((marker.x0, marker.y0), marker.x1 - marker.x0, marker.y1 - marker.y0,
+                               fill=False, ec=color, lw=1.15, zorder=3))
+        ax.add_patch(Rectangle((marker.lx, marker.ly), marker.lw, marker.lh,
+                               fc="white", ec=color, lw=0.8, zorder=4))
+        ax.text(marker.lx + marker.lw / 2, marker.ly + marker.lh / 2, str(marker.number),
+                color=color, fontsize=7, ha="center", va="center", zorder=5,
+                fontproperties=font, fontweight="bold")
+    _draw_table(ax, rows, panel_x, top - 2, panel_w, font)
     ax.axis("off")
-    fig.savefig(path, dpi=100, bbox_inches="tight", facecolor="white")
+    fig.savefig(path, dpi=110, bbox_inches="tight", facecolor="white")
     plt.close(fig)
     return str(path)
 
 
-def _targets(finding: Finding, scene: Scene) -> list[tuple[float, float, float]]:
-    ids = [part for part in re.split(r"[,+]", finding.element or "") if part]
-    boxes = [b for b in scene.boxes if b.eid in ids or any(b.eid.startswith(i) for i in ids)]
-    if not boxes:
-        pts = [(x, y) for eid, x, y in scene.points if eid in ids]
-        if not pts:
-            return []
-        cx = sum(p[0] for p in pts) / len(pts)
-        cy = sum(p[1] for p in pts) / len(pts)
-        return [(cx, cy, 8.0)]
+def _plan_overlay(result: Review) -> tuple[list[OverlayMarker], list[OverlayRow]]:
+    markers: list[OverlayMarker] = []
+    rows: list[OverlayRow] = []
+    number = 0
+    scene = result.scene
+    for finding in result.findings:
+        places = _places(finding, scene, result.settings)
+        if places:
+            for element, rect in places:
+                number += 1
+                markers.append(OverlayMarker(number, finding.severity, finding.code, element, *rect))
+                rows.append(OverlayRow(number, finding.severity, finding.code, element,
+                                       finding.he, True))
+        else:
+            number += 1
+            rows.append(OverlayRow(number, finding.severity, finding.code,
+                                   finding.element or "—", finding.he, False))
+    _place_labels(markers)
+    return markers, rows
+
+
+def _places(finding: Finding, scene: Scene | None, cfg) -> list[tuple[str, tuple]]:
+    """One capped rectangle per affected element. Sheet-wide codes stay off the drawing."""
+    if scene is None or finding.code in SHEET_CODES:
+        return []
+    ids = [part.strip() for part in re.split(r"[,+]", finding.element or "") if part.strip()]
+    if not ids:
+        return []
+    seen: set[int] = set()
+    boxes = []
+    for box in scene.boxes:
+        if not (box.eid in ids or box.role in ids or any(box.eid.startswith(i + ":") for i in ids)):
+            continue
+        if id(box) in seen:
+            continue
+        seen.add(id(box))
+        boxes.append(box)
+    if finding.code == "text_height_standard":
+        boxes = [box for box in boxes if _outside_series(box, cfg)]
+    if boxes:
+        return [(box.eid, _capped_rect(box.x0, box.y0, box.x1, box.y1)) for box in boxes]
     out = []
-    # One circle around the group so a pair of overlapping texts is marked once.
-    x0, y0 = min(b.x0 for b in boxes), min(b.y0 for b in boxes)
-    x1, y1 = max(b.x1 for b in boxes), max(b.y1 for b in boxes)
-    cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
-    radius = max(6.0, math.hypot(x1 - x0, y1 - y0) / 2 + 2.0)
-    out.append((cx, cy, radius))
+    for eid in ids:
+        pts = [(x, y) for peid, x, y in scene.points if peid == eid]
+        if not pts:
+            continue
+        xs = [p[0] for p in pts]
+        ys = [p[1] for p in pts]
+        out.append((eid, _capped_rect(min(xs), min(ys), max(xs), max(ys))))
     return out
 
 
+def _capped_rect(x0: float, y0: float, x1: float, y1: float) -> tuple[float, float, float, float]:
+    if x1 < x0:
+        x0, x1 = x1, x0
+    if y1 < y0:
+        y0, y1 = y1, y0
+    if x1 - x0 < 0.8 and y1 - y0 < 0.8:
+        cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
+        half = MIN_MARKER_MM / 2
+        return cx - half, cy - half, cx + half, cy + half
+    x0 -= PAD_MM
+    y0 -= PAD_MM
+    x1 += PAD_MM
+    y1 += PAD_MM
+    if x1 - x0 > MAX_MARKER_MM:
+        cx = (x0 + x1) / 2
+        x0, x1 = cx - MAX_MARKER_MM / 2, cx + MAX_MARKER_MM / 2
+    if y1 - y0 > MAX_MARKER_MM:
+        cy = (y0 + y1) / 2
+        y0, y1 = cy - MAX_MARKER_MM / 2, cy + MAX_MARKER_MM / 2
+    if x1 - x0 < MIN_MARKER_MM:
+        cx = (x0 + x1) / 2
+        x0, x1 = cx - MIN_MARKER_MM / 2, cx + MIN_MARKER_MM / 2
+    if y1 - y0 < MIN_MARKER_MM:
+        cy = (y0 + y1) / 2
+        y0, y1 = cy - MIN_MARKER_MM / 2, cy + MIN_MARKER_MM / 2
+    return x0, y0, x1, y1
 
 
-def build_scene(spec: dict, catalog=None) -> Scene:
-    """Paper-space text boxes and linework, on the same sheet origin as the renderer."""
-    from ezdxf.math import Vec2
+def _label_size(number: int) -> tuple[float, float]:
+    return (4.4 if number < 10 else 6.4), 3.8
 
-    from . import templates
-    from .drawing import components, dims, layout, legend
 
-    language = spec.get("language") or "both"
-    warnings: list[str] = []
-    sheet = spec.get("sheet") or {}
+def _labels_hit(a, b, gap: float = 0.6) -> bool:
+    return not (a[2] + gap <= b[0] or b[2] + gap <= a[0] or a[3] + gap <= b[1] or b[3] + gap <= a[1])
+
+
+def _place_labels(markers: list[OverlayMarker]) -> None:
+    """Step each number badge until it no longer touches a badge already placed."""
+    placed: list[tuple[float, float, float, float]] = []
+    for marker in markers:
+        w, h = _label_size(marker.number)
+        cx = (marker.x0 + marker.x1) / 2
+        base_y = marker.y1 + 0.6
+        chosen = None
+        for dx, dy in _label_offsets():
+            rect = (cx - w / 2 + dx, base_y + dy, cx + w / 2 + dx, base_y + dy + h)
+            if any(_labels_hit(rect, other) for other in placed):
+                continue
+            chosen = rect
+            break
+        if chosen is None:
+            x = cx - w / 2
+            y = base_y
+            rect = (x, y, x + w, y + h)
+            while any(_labels_hit(rect, other) for other in placed):
+                y += h + 0.8
+                rect = (x, y, x + w, y + h)
+            chosen = rect
+        placed.append(chosen)
+        marker.lx, marker.ly, marker.lw, marker.lh = chosen[0], chosen[1], w, h
+
+
+def _label_offsets():
+    yield 0.0, 0.0
+    for radius in (5.0, 10.0, 16.0, 23.0, 31.0, 40.0):
+        for step in range(12):
+            angle = math.radians(step * 30)
+            yield radius * math.cos(angle), radius * math.sin(angle)
+
+
+def _overlay_limits(scene: Scene, markers, rows):
+    m = scene.margin
+    pw, ph = scene.paper
+    left, bottom = -m - 3, -m - 3
+    sheet_right, top = pw - m + 3, ph - m + 3
+    right = sheet_right
+    for marker in markers:
+        left = min(left, marker.x0 - 1, marker.lx - 1)
+        right = max(right, marker.x1 + 1, marker.lx + marker.lw + 1)
+        bottom = min(bottom, marker.y0 - 1, marker.ly - 1)
+        top = max(top, marker.y1 + 1, marker.ly + marker.lh + 1)
+    panel_w = PANEL_W_MM
+    panel_x = right + 8
+    table_h = _table_height(len(rows)) + 4
+    if top - bottom < table_h:
+        bottom = top - table_h
+    return left, bottom, panel_x + panel_w, top, panel_x, panel_w
+
+
+def _table_height(nrows: int) -> float:
+    return TABLE_HEAD_MM + TABLE_ROW_MM * max(nrows, 1) + 3
+
+
+def _draw_underlay(ax, scene: Scene) -> None:
+    """Faded trial preview (real linework and text) in the sheet's paper-mm frame."""
+    import io
+    import os
+    import tempfile
+
+    import matplotlib.pyplot as plt
+
+    from .drawing import preview
+
+    fd, name = tempfile.mkstemp(suffix=".dxf")
+    os.close(fd)
+    tmp = Path(name)
+    fig = None
     try:
-        template = templates.load_template(sheet.get("template") or "a3_simple")
-    except KeyError:
-        template = templates.load_template("a3_simple")
-    ctx = DrawContext(spec, catalog, language, warnings)
-    anchors: dict[str, tuple] = {}
-    for index, el in enumerate(spec.get("elements") or []):
-        drawer = components.DRAWERS.get(el.get("type"))
-        if drawer is None:
+        scene.doc.saveas(tmp)
+        fig = preview.render_figure(preview.preview_doc(tmp), scene.paper_rect, scene.paper)
+        buf = io.BytesIO()
+        fig.savefig(buf, format="png", dpi=110, facecolor="white")
+        buf.seek(0)
+        image = plt.imread(buf)
+        rgb = image[..., :3]
+        faded = rgb * 0.72 + 0.28
+        m = scene.margin
+        pw, ph = scene.paper
+        ax.imshow(faded, extent=(-m, pw - m, -m, ph - m), origin="upper",
+                  interpolation="bilinear", zorder=0, aspect="auto")
+    except Exception:  # noqa: BLE001 - the markers still stand if the preview cannot be drawn
+        return
+    finally:
+        if fig is not None:
+            plt.close(fig)
+        tmp.unlink(missing_ok=True)
+
+
+def _draw_table(ax, rows: list[OverlayRow], x: float, top: float, width: float, font) -> None:
+    from matplotlib.patches import FancyBboxPatch, Rectangle
+
+    row_h = TABLE_ROW_MM
+    header_h = TABLE_HEAD_MM
+    height = _table_height(len(rows))
+    y0 = top - height
+    ax.add_patch(Rectangle((x, y0), width, height, fc="white", ec="#c5cdd6", lw=0.6, zorder=2))
+    ax.text(x + width / 2, top - 4.2, "ממצאי בקרת שרטוט", ha="center", va="center",
+            fontsize=8, color="#1c2833", fontproperties=font, zorder=3)
+    heads = ((4, "מס'"), (16, "חומרה"), (38, "קוד"), (96, "אלמנט"))
+    for dx, label in heads:
+        ax.text(x + dx, top - header_h + 2.2, label, fontsize=5.5, color="#5d6d7e",
+                fontproperties=font, zorder=3)
+    ax.text(x + 132, top - header_h + 2.2, "ממצא", fontsize=5.5, color="#5d6d7e",
+            fontproperties=font, zorder=3)
+    for index, row in enumerate(rows):
+        y = top - header_h - row_h * (index + 0.5)
+        color = SEVERITY_COLOR.get(row.severity, SEVERITY_COLOR["info"])
+        if index % 2:
+            ax.add_patch(Rectangle((x + 0.4, y - row_h / 2), width - 0.8, row_h,
+                                   fc="#f7f9fb", ec="none", zorder=2))
+        badge_w = 7.2 if row.number < 10 else 9.2
+        ax.add_patch(FancyBboxPatch((x + 2.2, y - 1.7), badge_w, 3.4,
+                                    boxstyle="round,pad=0.02,rounding_size=0.6",
+                                    fc=color, ec=color, lw=0.4, zorder=3))
+        ax.text(x + 2.2 + badge_w / 2, y, str(row.number), color="white", fontsize=6,
+                ha="center", va="center", fontproperties=font, fontweight="bold", zorder=4)
+        ax.text(x + 16, y, SEVERITY_HE.get(row.severity, row.severity), color=color, fontsize=5.5,
+                va="center", fontproperties=font, zorder=4)
+        ax.text(x + 38, y, row.code, color="#1c2833", fontsize=5.5, va="center",
+                fontproperties=font, zorder=4)
+        ax.text(x + 96, y, row.element or "—", color="#1c2833", fontsize=5.5, va="center",
+                fontproperties=font, zorder=4)
+        lines = _message_lines(row.he)
+        ys = [y] if len(lines) == 1 else [y + 1.7, y - 1.9]
+        for yy, line in zip(ys, lines):
+            ax.text(x + 132, yy, line, color="#1c2833", fontsize=6, va="center",
+                    ha="left", fontproperties=font, zorder=4)
+
+
+def _message_lines(text: str, width: int = 50) -> list[str]:
+    """Up to two lines, split on words so a Hebrew phrase is not cut mid-word."""
+    words = [part for part in " ".join((text or "").split()).split(" ") if part]
+    if not words:
+        return ["—"]
+    lines: list[str] = []
+    cur = ""
+    index = 0
+    while index < len(words) and len(lines) < 2:
+        word = words[index]
+        cand = f"{cur} {word}".strip()
+        if len(cand) <= width or not cur:
+            cur = cand
+            index += 1
             continue
+        lines.append(cur)
+        cur = ""
+    if cur and len(lines) < 2:
+        lines.append(cur)
+    if index < len(words) and lines:
+        lines[-1] = lines[-1].rstrip() + "…"
+    return lines
+
+
+def _span_leaders(entities, paper) -> list:
+    leaders = []
+    for entity in entities:
+        if entity.dxftype() != "LINE":
+            continue
+        leaders.append((*paper(entity.dxf.start.x, entity.dxf.start.y),
+                        *paper(entity.dxf.end.x, entity.dxf.end.y)))
+    return leaders
+
+
+def _text_entities(entity) -> list:
+    if entity.dxftype() == "DIMENSION":
         try:
-            anchor, radius = drawer(ctx, el)
-        except ELEMENT_ERRORS:
-            continue
-        anchors[el.get("id") or f"_{index}"] = (Vec2(anchor), float(radius))
-        if el.get("type") != "text":
-            try:
-                components.draw_label(ctx, el, anchor, radius)
-            except ELEMENT_ERRORS:
-                pass
-    try:
-        dims.draw_dimensions(ctx, spec.get("dimensions") or [])
-    except ELEMENT_ERRORS:
-        pass
-    try:
-        legend.draw_balloons(ctx, spec.get("legend") or [])
-    except ELEMENT_ERRORS:
-        pass
+            return [item for item in entity.virtual_entities() if item.dxftype() in ("TEXT", "MTEXT")]
+        except Exception:  # noqa: BLE001
+            return []
+    if entity.dxftype() in ("TEXT", "MTEXT", "ATTRIB"):
+        return [entity]
+    return []
 
-    la = template.get("legend_area")
-    max_w = la["w"] if la else None
-    table = legend.legend_table(ctx, spec.get("legend") or [], max_w)
-    notes = legend.notes_block(ctx, spec.get("notes"), max_w)
-    side = []
-    side_roles = []
-    explicit = []
-    if table is not None:
-        if spec.get("legend_at"):
-            table.draw(Vec2(spec["legend_at"]))
-            explicit.append((table, Vec2(spec["legend_at"]), "legend"))
+
+def _entity_text_box(entity, paper, k, eid, role, in_notes, leaders) -> TextBox | None:
+    """Paper-mm box from the entity's insert, height, width and alignment."""
+    kind = entity.dxftype()
+    if kind == "MTEXT":
+        raw = entity.plain_text() or ""
+        h = float(entity.dxf.char_height)
+        lines = [ln for ln in raw.splitlines() if ln.strip()]
+        nlines = max(1, len(lines))
+        width = float(entity.dxf.width or 0) or text_width(raw, h)
+        insert = entity.dxf.insert
+        attach = int(entity.dxf.attachment_point or 1)
+        rotation = float(entity.dxf.rotation or 0)
+        row, col = divmod(max(attach, 1) - 1, 3)
+        th = h + (nlines - 1) * LINE_SPACING * h
+        if row == 0:
+            y0, y1 = -th, 0.0
+        elif row == 1:
+            y0, y1 = -th / 2, th / 2
         else:
-            side.append(table)
-            side_roles.append("legend")
-    if notes is not None:
-        if spec.get("notes_at"):
-            notes.draw(Vec2(spec["notes_at"]))
-            explicit.append((notes, Vec2(spec["notes_at"]), "notes"))
+            y0, y1 = 0.0, th
+        if col == 0:
+            x0, x1 = 0.0, width
+        elif col == 1:
+            x0, x1 = -width / 2, width / 2
         else:
-            side.append(notes)
-            side_roles.append("notes")
-    origin, placements = layout.plan_sheet(ctx, template, side, sheet.get("origin"))
-    for block, top_left in placements:
-        block.draw(top_left)
-    values = templates.build_values(spec, None, None)
-    templates.draw_titleblock(ctx.msp, template, values, ctx.scale, ctx.units, origin=origin,
-                              language=language)
+            x0, x1 = -width, 0.0
+    else:
+        raw = entity.dxf.text or ""
+        h = float(entity.dxf.height or 0)
+        if h <= 0 or not str(raw).strip():
+            return None
+        width = text_width(plain(raw), h)
+        nlines = 1
+        halign = int(entity.dxf.halign or 0)
+        valign = int(entity.dxf.valign or 0)
+        insert = entity.dxf.align_point if (halign or valign) else entity.dxf.insert
+        rotation = float(entity.dxf.rotation or 0)
+        if halign in (1, 4):
+            x0, x1 = -width / 2, width / 2
+        elif halign == 2:
+            x0, x1 = -width, 0.0
+        else:
+            x0, x1 = 0.0, width
+        if halign == 4 or valign == 2:
+            y0, y1 = -h / 2, h / 2
+        elif valign == 3:
+            y0, y1 = -h, 0.0
+        else:
+            y0, y1 = -0.2 * h, h
+    if not str(raw).strip() or h <= 0:
+        return None
+    ang = math.radians(rotation)
+    cos, sin = math.cos(ang), math.sin(ang)
+    xs, ys = [], []
+    for lx, ly in ((x0, y0), (x1, y0), (x1, y1), (x0, y1)):
+        rx, ry = lx * cos - ly * sin, lx * sin + ly * cos
+        px, py = paper(float(insert.x) + rx, float(insert.y) + ry)
+        xs.append(px)
+        ys.append(py)
+    return TextBox(eid, role, min(xs), min(ys), max(xs), max(ys), h / k, nlines, leaders, in_notes)
+
+
+def _near_boxes(a: TextBox, b: TextBox) -> bool:
+    pad = max(a.height, b.height) * LINE_SPACING
+    return not (a.x1 < b.x0 - pad or b.x1 < a.x0 - pad or a.y1 < b.y0 - pad or b.y1 < a.y0 - pad)
+
+
+def _boxes_from_spans(spans, paper, k) -> list[TextBox]:
+    boxes = []
+    for span in spans:
+        leaders = _span_leaders(span["entities"], paper)
+        made = []
+        for entity in span["entities"]:
+            for item in _text_entities(entity):
+                box = _entity_text_box(item, paper, k, span["eid"], span["role"], span["in_notes"], leaders)
+                if box is not None:
+                    made.append(box)
+        clusters: list[list[TextBox]] = []
+        for box in made:
+            for group in clusters:
+                if any(_near_boxes(box, other) for other in group):
+                    group.append(box)
+                    break
+            else:
+                clusters.append([box])
+        for group in clusters:
+            if len(group) == 1:
+                boxes.append(group[0])
+                continue
+            boxes.append(TextBox(
+                span["eid"], span["role"],
+                min(box.x0 for box in group), min(box.y0 for box in group),
+                max(box.x1 for box in group), max(box.y1 for box in group),
+                max(box.height for box in group), len(group), leaders, span["in_notes"]))
+    return boxes
+
+
+def build_scene(spec: dict, catalog=None, project=None) -> Scene:
+    """Paper-space boxes measured from the same sheet the renderer draws."""
+    from .drawing import draw_sheet
+
+    warnings: list[str] = []
+    drawn = draw_sheet(spec, catalog=catalog, project=project, warnings=warnings)
+    ctx, template, origin, rects = drawn.ctx, drawn.template, drawn.origin, drawn.rects
     k = ctx.k or 1.0
     ox, oy = float(origin.x), float(origin.y)
 
     def paper(x, y) -> tuple[float, float]:
         return (float(x) - ox) / k, (float(y) - oy) / k
 
-    boxes = _text_boxes(spec, ctx, anchors, paper, language)
-    boxes += _dim_boxes(spec, ctx, paper)
-    boxes += _symbol_boxes(spec, ctx, paper)
-    for block, at, role in explicit:
-        boxes.append(_placed_box(block, at, role, paper, k, la, _block_text_h(ctx, role)))
-    for (block, at), role in zip(placements, side_roles):
-        boxes.append(_placed_box(block, at, role, paper, k, la, _block_text_h(ctx, role)))
-    boxes += _title_boxes(template, values, language)
+    boxes = _boxes_from_spans(drawn.spans, paper, k)
     segments = _paper_segments(ctx, paper)
     # Centre-lines are what a label sitting in a pipe barrel crosses, even when the walls are drawn apart.
     for el in spec.get("elements") or []:
@@ -1222,4 +1464,5 @@ def build_scene(spec: dict, catalog=None) -> Scene:
         "blocks": list(template.get("blocks") or []),
     }
     return Scene(boxes, segments, points, areas,
-                 (float(template["paper"]["w"]), float(template["paper"]["h"])), ctx.doc, k)
+                 (float(template["paper"]["w"]), float(template["paper"]["h"])), ctx.doc, k,
+                 (ox, oy), tuple(float(v) for v in rects["paper"]), float(template.get("margin") or 10))

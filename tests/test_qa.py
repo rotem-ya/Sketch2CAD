@@ -8,7 +8,8 @@ import pytest
 from sketch2cad import checks
 from sketch2cad.catalog import load_catalog
 from sketch2cad.projects import Project, create_project
-from sketch2cad.qa import QA_DEFAULTS, review, submission_from_doc, write_overlay
+from sketch2cad.qa import (MAX_MARKER_MM, QA_DEFAULTS, SHEET_CODES, overlay_plan, review,
+                           submission_from_doc, write_overlay)
 from sketch2cad.spec import normalize_spec
 
 
@@ -126,6 +127,20 @@ def test_dimension_override_zero_and_duplicate():
     assert not _has(_dim(["2000"]), "dim_override")
     assert not _has(_dim(["<>"]), "dim_override")
     assert not _has(_dim(["1500"], view="NTS"), "dim_override")
+    assert not _has(_dim(["1500"], view="N.T.S."), "dim_override")
+    assert _has(_dim(["1500"], view="section"), "dim_override")
+    nts_flag = _dim(["1500"])
+    nts_flag["nts"] = True
+    assert not _has(nts_flag, "dim_override")
+    nts_text = _dim(["1500"])
+    nts_text["elements"] = [{"id": "cap", "type": "text", "at": [800, 2000], "height": 2.5, "text": "SECTION A - N.T.S."}]
+    assert not _has(nts_text, "dim_override")
+    nts_scale = _dim(["1500"])
+    nts_scale["sheet"] = {"template": "a3_simple", "fields": {"scale": "N.T.S."}}
+    assert not _has(nts_scale, "dim_override")
+    nts_view = _dim(["1500"], view="section")
+    nts_view["views"] = [{"name": "SECTION", "scale": "NTS"}]
+    assert not _has(nts_view, "dim_override")
 
     assert _has(_dim([""], points=[[500, 1500], [500, 1500]]), "dim_zero")
     assert not _has(_dim(["2000"]), "dim_zero")
@@ -167,10 +182,15 @@ def test_slope_matches_invert_and_minimum_by_diameter():
 
     assert _has(_spec([_pipe(slope=0.005, dn=150)]), "min_slope")
     assert not _has(_spec([_pipe(slope=0.015, dn=150)]), "min_slope")
-    assert not _has(_spec([_pipe(slope=1.5, dn=150)]), "min_slope")  # 1.5 is read as 1.5%
+    assert not _has(_spec([_pipe(slope=1.5, slope_unit="percent", dn=150)]), "min_slope")
+    assert _has(_spec([_pipe(slope=0.4, slope_unit="percent", dn=150)]), "min_slope")
     assert not _has(_spec([_pipe(slope=0.01, dn=200)]), "min_slope")
     assert _has(_spec([_pipe(slope=0.005, dn=250)]), "min_slope")
-    assert not _has(_spec([_pipe(dn=150)]), "min_slope")  # no slope declared: nothing to reject
+    assert not _has(_spec([_pipe(slope=0.004, dn=400)]), "min_slope")
+    assert _has(_spec([_pipe(slope=0.003, dn=400)]), "min_slope")
+    bare = _spec([_pipe(dn=150)])
+    assert not _has(bare, "min_slope")
+    assert _has(bare, "slope_unchecked")
 
 
 def test_sn_cover_and_connector_offset():
@@ -208,7 +228,8 @@ def test_duplicate_ids_and_unknown_references():
         {"id": "a", "type": "circle", "at": [2, 0], "radius": 1},
     ]})
     assert any("duplicate" in w for w in warnings)
-    assert raw["elements"][0]["id"] == raw["elements"][1]["id"] == "a"
+    assert raw["elements"][0]["id"] == "a"
+    assert raw["elements"][1]["id"] == "a_1"
 
     assert _has(_spec([{"id": "t", "type": "text", "at": [500, 1500], "height": 2.5, "text": "see #missing"}]),
                 "unknown_ref")
@@ -302,6 +323,78 @@ def test_overlay_circles_the_problem_and_the_import_report_points_at_it(tmp_path
     assert report["outputs"]["qa_overlay"] == "qa_overlay.png"
     assert (tmp_path / "trial" / "qa_overlay.png").stat().st_size > 1000
     assert any(f["code"] == "text_overlap" and f["he"] and f["en"] for f in report["checks"])
+
+
+def test_leader_label_box_matches_the_rendered_text():
+    """A leader is drawn left-aligned from label_at even when label_align is right."""
+    spec = _spec([
+        {"id": "near", "type": "text", "at": [1500, 1800], "height": 2.5, "text": "NEAR"},
+        {"id": "v", "type": "circle", "at": [2800, 1400], "radius": 40,
+         "label": "VALVE", "label_at": [1750, 1800], "label_align": "right", "leader": True},
+    ])
+    assert not _has(spec, "text_overlap")
+    assert not _has(spec, "outside_sheet")
+
+
+def test_qa_sheet_uses_the_renderer_origin(tmp_path):
+    spec = _spec([{"id": "t", "type": "text", "at": [800, 1600], "height": 2.5, "text": "MARK"}])
+    from sketch2cad.drawing import render
+    import ezdxf
+    render(spec, tmp_path, "sheet", formats=("dxf",))
+    doc = ezdxf.readfile(tmp_path / "sheet.dxf")
+    scene = review(spec).scene
+    found = [e for e in doc.modelspace().query("TEXT") if e.dxf.text == "MARK"]
+    assert found and scene is not None
+    insert = found[0].dxf.insert
+    px = (insert.x - scene.origin[0]) / scene.k
+    py = (insert.y - scene.origin[1]) / scene.k
+    box = next(b for b in scene.boxes if b.eid == "t")
+    assert box.x0 - 0.5 <= px <= box.x1 + 0.5
+    assert box.y0 - 0.5 <= py <= box.y1 + 0.5
+
+
+def test_metric_inverts_and_percent_slope_use_the_span_between_them():
+    """INV. 225.00 / 224.84, 40 m apart on a longer mm pipe, slope 0.4%."""
+    pipe = {"id": "p", "type": "pipe", "dn": 400, "label": "SLOPE 0.4%",
+            "points": [[0, 0], [63160, 0]]}
+    spec = _spec([
+        pipe,
+        {"id": "i1", "type": "text", "at": [10000, 400], "height": 2.5, "text": "INV. 225.00", "pipe": "p"},
+        {"id": "i2", "type": "text", "at": [50000, 400], "height": 2.5, "text": "INV. 224.84", "pipe": "p"},
+    ])
+    assert not _has(spec, "slope_mismatch")
+    assert not _has(spec, "min_slope")
+    assert not _has(spec, "slope_unchecked")
+
+
+def test_overlay_marker_labels_do_not_overlap():
+    """Each affected element gets its own capped marker, and the number badges do not collide.
+
+    A sheet-wide finding (line weight, layer 0) stays in the table and is not drawn on the sheet.
+    """
+    spec = _spec([
+        {"id": "t1", "type": "text", "at": [800, 1800], "height": 3.0, "text": "HELLO"},
+        {"id": "t2", "type": "text", "at": [812, 1800], "height": 3.0, "text": "WORLD"},
+        {"id": "t3", "type": "text", "at": [824, 1800], "height": 3.0, "text": "AGAIN"},
+    ], qa={"utility_submission": False, "lineweight_max_mm": 0.30})
+    markers, rows = overlay_plan(spec)
+    assert markers and rows
+    for marker in markers:
+        assert marker.x1 - marker.x0 <= MAX_MARKER_MM + 1e-6
+        assert marker.y1 - marker.y0 <= MAX_MARKER_MM + 1e-6
+    height_marks = [marker for marker in markers if marker.code == "text_height_standard"]
+    assert len(height_marks) >= 2
+    assert len({round(marker.x0, 1) for marker in height_marks}) >= 2
+    sheet = [row for row in rows if row.code == "lineweight_range"]
+    assert sheet and not sheet[0].on_sheet
+    assert not any(marker.code in SHEET_CODES for marker in markers)
+    assert [row.number for row in rows] == list(range(1, len(rows) + 1))
+    assert {marker.number for marker in markers} <= {row.number for row in rows}
+    rects = [marker.label_rect() for marker in markers]
+    for i, a in enumerate(rects):
+        for b in rects[i + 1:]:
+            separated = a[2] <= b[0] + 0.05 or b[2] <= a[0] + 0.05 or a[3] <= b[1] + 0.05 or b[3] <= a[1] + 0.05
+            assert separated, (a, b)
 
 
 def test_findings_carry_both_languages():

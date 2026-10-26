@@ -10,7 +10,7 @@ blocks:
 fields:
   - {key: title, x: 4, y: 16.5, w: 292, h: 3.5, en: "{title_en}", he: "{title_he}"}
   - {key: project, x: 4, y: 9.5, w: 292, h: 2.5, en: "{project_name_en} | {client} | {view}", he: "{project_name_he}"}
-  - {key: line3, x: 4, y: 3.5, w: 292, h: 2.0, en: "{line3}", he: "{line3_he}"}
+  - {key: line3, x: 4, y: 3.5, w: 292, h: 1.8, en: "{line3}", he: "{line3_he}"}
   - {key: code_label, x: 303, y: 19.5, w: 94, h: 1.8, en: "DWG No.", he: "מס' שרטוט"}
-  - {key: code, x: 303, y: 14, w: 94, h: 3.0, en: "{code}"}
-  - {key: rev_scale, x: 303, y: 4.5, w: 94, h: 2.2, en: "REV {rev} | SCALE 1:{scale} | {date}"}
+  - {key: code, x: 303, y: 14, w: 94, h: 2.5, en: "{code}"}
+  - {key: rev_scale, x: 303, y: 4.5, w: 94, h: 2.5, en: "REV {rev} | SCALE 1:{scale} | {date}"}

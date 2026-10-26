@@ -47,7 +47,8 @@ one paper-mm = `scale` mm of model space (or `scale/1000` m).
 Extra keys supported by the renderer:
 - element type `circle` (`at`, `radius`) for small fittings;
 - any element: `centerline`, `label_at`, `label_align`, `label_height` (paper mm), `leader`, `leader_to`; block size overrides `D`, `t`, `L`, `H`, `Dt`;
-- `pipe`: `slope` (fall/run, or a percent when the number is above 0.5), `inv` `[start, end]`, `dn`, `sn`, `cover`; a text `INV` with `pipe` set to the pipe id counts as an invert;
+- `pipe`: `slope` (fall/run) and optional `slope_unit` `percent`, `inv` `[start, end]`, `dn`, `sn`, `cover`; a label `SLOPE 0.4%` is a percent; a text `INV` or `INV.` with `pipe` set to the pipe id counts as an invert;
+- `nts` (true) or the text `NTS` / `N.T.S.` in `view`, `views`, the sheet scale field or a text element marks the sheet not-to-scale;
 - `connector`: `offset`, `offset_from` (point or element id), `offset_axis` `"x"|"y"` (omit for a distance);
 - `manhole`: `cover_item` (own BOM line), `cover_status`, `di` / `do`, `grate_size`; `connector`: `height`;
 - spec root: `notes_at`, `sheet.origin`, `style` (text sizes in paper mm); dimension: `decimals`.
