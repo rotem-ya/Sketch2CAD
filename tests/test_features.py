@@ -153,9 +153,52 @@ def test_print_set(project_with_doc, tmp_path):
 
 
 def test_pick_folder_without_desktop(monkeypatch):
-    from sketch2cad import native
+    """No desktop session: return None, and never open a real folder dialog."""
+    import sys
+    import types
+
+    from sketch2cad import native, procutil
+
+    monkeypatch.setattr(native.os, "name", "posix")
     monkeypatch.delenv("DISPLAY", raising=False)
+
+    def refuse(*_args, **_kwargs):
+        raise AssertionError("folder picker must not open a real dialog")
+
+    monkeypatch.setattr(procutil.subprocess, "run", refuse)
+    monkeypatch.setattr(native, "hidden_run", refuse)
+    fake_tk = types.ModuleType("tkinter")
+
+    class _Tk:
+        def __init__(self, *_args, **_kwargs):
+            raise RuntimeError("no desktop")
+
+    fake_tk.Tk = _Tk
+    fake_tk.filedialog = types.ModuleType("tkinter.filedialog")
+    monkeypatch.setitem(sys.modules, "tkinter", fake_tk)
+    monkeypatch.setitem(sys.modules, "tkinter.filedialog", fake_tk.filedialog)
     assert native.pick_folder() is None
+
+
+def test_pick_folder_windows_hides_the_console(monkeypatch):
+    from sketch2cad import native
+
+    monkeypatch.setattr(native.os, "name", "nt")
+    seen = {}
+
+    class _Proc:
+        stdout = b"D:\\Projects\r\n"
+        returncode = 0
+
+    def fake_run(cmd, **kwargs):
+        seen["cmd"] = cmd
+        seen["kwargs"] = kwargs
+        return _Proc()
+
+    monkeypatch.setattr(native, "hidden_run", fake_run)
+    assert native.pick_folder(r"D:\Projects", "Choose a folder") == r"D:\Projects"
+    assert seen["cmd"][:4] == ["powershell", "-NoProfile", "-WindowStyle", "Hidden"]
+    assert seen["kwargs"].get("gui") is True
 
 
 # ---------------------------------------------------------------- self-update
@@ -180,11 +223,13 @@ def test_updater_latest_and_apply(tmp_path, monkeypatch):
     app = tmp_path / "app"
     (app / ".venv").mkdir(parents=True)
     (app / ".venv" / "keep.txt").write_text("venv")
-    (app / "requirements.txt").write_text("ezdxf\n")
+    # CRLF, as Windows write_text stores it: same requirements as the LF zip, so pip must not run.
+    (app / "requirements.txt").write_bytes(b"ezdxf\r\n")
     (app / "old.py").write_text("old")
+    assert updater.requirements_digest(b"ezdxf\r\n") == updater.requirements_digest(b"ezdxf\n")
     assert updater.installed_version(app) is None and updater.update_available(rel, app)
     calls = []
-    monkeypatch.setattr(updater.subprocess, "run", lambda cmd, **kw: calls.append(cmd))
+    monkeypatch.setattr(updater, "run", lambda cmd, **kw: calls.append((cmd, kw)))
     zip_bytes = _zip_of({"app/app.py": "new app", "requirements.txt": "ezdxf\n", ".venv/keep.txt": "NO"})
     sha = updater.apply_update(app, "abc123", log=lambda m: None, download=lambda url, t: zip_bytes)
     assert sha == "abc123" and (app / "app" / "app.py").read_text() == "new app"
@@ -193,7 +238,30 @@ def test_updater_latest_and_apply(tmp_path, monkeypatch):
     assert updater.installed_version(app) == "abc123" and not updater.update_available(rel, app)
     zip_bytes = _zip_of({"requirements.txt": "ezdxf\nnewlib\n"})
     updater.apply_update(app, "def456", log=lambda m: None, download=lambda url, t: zip_bytes)
-    assert calls and calls[0][1:4] == ["-m", "pip", "install"]
+    assert calls and calls[0][0][1:4] == ["-m", "pip", "install"]
+
+
+def test_hidden_subprocess_on_windows(monkeypatch):
+    """git, pip and PowerShell go through procutil: no console, and no window unless gui=True."""
+    import subprocess
+
+    from sketch2cad import procutil
+
+    monkeypatch.setattr(procutil.os, "name", "nt")
+    seen = []
+
+    def fake_run(cmd, **kwargs):
+        seen.append(kwargs)
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(procutil.subprocess, "run", fake_run)
+    procutil.run(["git", "status"], capture_output=True, text=True)
+    procutil.run(["powershell", "-Command", "Write-Output ok"], capture_output=True, gui=True)
+    assert seen[0]["creationflags"] & procutil.CREATE_NO_WINDOW
+    assert seen[1]["creationflags"] & procutil.CREATE_NO_WINDOW
+    assert "startupinfo" not in seen[1]
+    if hasattr(subprocess, "STARTUPINFO"):
+        assert seen[0]["startupinfo"].wShowWindow == 0
 
 
 
