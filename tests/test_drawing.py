@@ -755,9 +755,28 @@ def test_oversized_view_is_not_placed_off_the_sheet(tmp_path):
                        "elements": [{"id": "big", "type": "rect", "status": "new",
                                      "corners": [[0, 0], [30, 20]]}]}]}
     res = render(spec, tmp_path, "huge", formats=("dxf",))
-    assert any(w.startswith("ERROR:") and "huge" in w and "not placed off the sheet" in w
-               and "larger sheet" in w and "A2/A1" in w for w in res["warnings"]), res["warnings"]
+    for key in ("huge", "primary"):
+        errs = [w for w in res["warnings"] if w.startswith("ERROR:") and f"view {key!r}" in w]
+        assert len(errs) == 1, (key, res["warnings"])
+        assert "not shown on this sheet" in errs[0] and "larger sheet" in errs[0] and "A2/A1" in errs[0]
+    assert not any("would be 1:" in w for w in res["warnings"]), res["warnings"]
     doc = ezdxf.readfile(res["dxf"])
+    psp = doc.layouts.get("SHEET")
+    captions = []
+    for entity in psp.query("TEXT MTEXT"):
+        text = entity.text if entity.dxftype() == "MTEXT" else entity.dxf.text
+        if "NOT SHOWN" not in text:
+            continue
+        captions.append(text)
+        point = entity.dxf.insert
+        assert 10 <= point.x and point.x + 2 <= 410
+        assert 10 <= point.y and point.y + entity.dxf.height <= 287.5
+    assert "HUGE NOT SHOWN – NEEDS A2 SHEET" in captions
+    assert "PRIMARY NOT SHOWN – NEEDS A2 SHEET" in captions
+    from sketch2cad.qa import review
+    omitted = [f for f in review(spec).findings if f.code == "omitted_view"]
+    assert {f.element for f in omitted} >= {"huge", "primary"}
+    assert all(f.severity == "error" and f.he for f in omitted)
     from sketch2cad.drawing.layout import STANDARD_SCALES
     assert all(scale in STANDARD_SCALES for scale in _viewport_scales(doc, "m"))
     psp = doc.layouts.get("SHEET")
@@ -768,6 +787,154 @@ def test_oversized_view_is_not_placed_off_the_sheet(tmp_path):
         assert vp.dxf.center.x + vp.dxf.width / 2 <= 420
         assert 10 <= vp.dxf.center.y - vp.dxf.height / 2
         assert vp.dxf.center.y + vp.dxf.height / 2 <= 297
+
+
+def _paper_box(entity):
+    from ezdxf import bbox as ezbbox
+
+    ext = ezbbox.extents([entity], fast=True)
+    if not ext.has_data:
+        return None
+    return (ext.extmin.x, ext.extmin.y, ext.extmax.x, ext.extmax.y)
+
+
+def _boxes_overlap(a, b) -> bool:
+    return not (a[2] <= b[0] or b[2] <= a[0] or a[3] <= b[1] or b[3] <= a[1])
+
+
+def test_omitted_caption_uses_the_strip_between_views():
+    """A one-line caption wider than the largest gap sits in the free strip, not on a view."""
+    from ezdxf.math import Vec2
+    from sketch2cad.drawing.text import put_text
+    from sketch2cad.drawing.views import _write_omitted_caption
+    from sketch2cad.templates import load_template
+
+    template = load_template("a3_simple")
+    doc = ezdxf.new()
+    psp = doc.layouts.new("SHEET")
+    frame = 10.0
+    # Frame coordinates: an 8 mm strip at y 133.7, and a 72.02 mm column that is the largest gap.
+    section = (10.0, 27.0, 317.98, 133.7)
+    plan = (10.0, 141.7, 317.98, 267.0)
+    area = {"x": 10.0, "y": 27.0, "w": 380.0, "h": 240.0}
+    for rect, status in ((section, 2), (plan, 3)):
+        cx = frame + (rect[0] + rect[2]) / 2
+        cy = frame + (rect[1] + rect[3]) / 2
+        psp.add_viewport(center=(cx, cy), size=(rect[2] - rect[0], rect[3] - rect[1]),
+                         view_center_point=(0, 0), view_height=100, status=status)
+    put_text(psp, "חתך א-א", (frame + 30, frame + 100), 3.5, align="left")
+    put_text(psp, "TRENCH DRAIN – MUFLE WING", (frame + 30, frame + 60), 2.5, align="left")
+    occupied = [section, plan]
+    _write_omitted_caption(psp, {"key": "detail-1"}, area, occupied, Vec2(frame, frame), template)
+    captions = [entity for entity in psp.query("TEXT MTEXT")
+                if "NOT SHOWN" in (entity.text if entity.dxftype() == "MTEXT" else entity.dxf.text)]
+    assert len(captions) == 1
+    caption = _paper_box(captions[0])
+    mid_y = (caption[1] + caption[3]) / 2 - frame
+    assert 133.7 < mid_y < 141.7, caption
+    for vp in psp.query("VIEWPORT"):
+        if vp.dxf.status <= 1:
+            continue
+        view = (vp.dxf.center.x - vp.dxf.width / 2, vp.dxf.center.y - vp.dxf.height / 2,
+                vp.dxf.center.x + vp.dxf.width / 2, vp.dxf.center.y + vp.dxf.height / 2)
+        assert not _boxes_overlap(caption, view)
+    for entity in psp.query("TEXT MTEXT"):
+        if entity is captions[0]:
+            continue
+        other = _paper_box(entity)
+        assert other and not _boxes_overlap(caption, other)
+
+
+def test_omitted_caption_wraps_into_the_gap_when_the_strip_is_blocked():
+    """When the strip is full, two lines fit the 72 mm gap and still miss every view and text."""
+    from ezdxf.math import Vec2
+    from sketch2cad.drawing.text import put_text
+    from sketch2cad.drawing.views import _write_omitted_caption
+    from sketch2cad.templates import load_template
+
+    template = load_template("a3_simple")
+    doc = ezdxf.new()
+    psp = doc.layouts.new("SHEET")
+    frame = 10.0
+    section = (10.0, 27.0, 317.98, 133.7)
+    plan = (10.0, 141.7, 317.98, 267.0)
+    area = {"x": 10.0, "y": 27.0, "w": 380.0, "h": 240.0}
+    for rect, status in ((section, 2), (plan, 3)):
+        cx = frame + (rect[0] + rect[2]) / 2
+        cy = frame + (rect[1] + rect[3]) / 2
+        psp.add_viewport(center=(cx, cy), size=(rect[2] - rect[0], rect[3] - rect[1]),
+                         view_center_point=(0, 0), view_height=100, status=status)
+    put_text(psp, "חתך א-א", (frame + 30, frame + 100), 3.5, align="left")
+    put_text(psp, "TRENCH DRAIN – MUFLE WING", (frame + 30, frame + 60), 2.5, align="left")
+    put_text(psp, "BLOCK " * 24, (frame + 12, frame + 134.2), 2.5, align="left")
+    _write_omitted_caption(psp, {"key": "detail-1"}, area, [section, plan], Vec2(frame, frame), template)
+    captions = [entity for entity in psp.query("TEXT MTEXT")
+                if "NOT SHOWN" in (entity.text if entity.dxftype() == "MTEXT" else entity.dxf.text)]
+    assert len(captions) == 1
+    text = captions[0].text if captions[0].dxftype() == "MTEXT" else captions[0].dxf.text
+    assert "\\P" in text
+    caption = _paper_box(captions[0])
+    assert caption[0] - frame >= 317.98 - 0.5
+    for vp in psp.query("VIEWPORT"):
+        if vp.dxf.status <= 1:
+            continue
+        view = (vp.dxf.center.x - vp.dxf.width / 2, vp.dxf.center.y - vp.dxf.height / 2,
+                vp.dxf.center.x + vp.dxf.width / 2, vp.dxf.center.y + vp.dxf.height / 2)
+        assert not _boxes_overlap(caption, view), (caption, view)
+    for entity in psp.query("TEXT MTEXT"):
+        if entity is captions[0]:
+            continue
+        other = _paper_box(entity)
+        assert other and not _boxes_overlap(caption, other), (text, caption, other)
+
+
+def test_tight_sheet_omitted_caption_misses_views_and_text(tmp_path):
+    """Plan and section leave a short strip. The omitted detail is named in that strip."""
+    spec = {
+        "units": "mm", "scale": 10, "paper": "A3", "language": "both", "view": "plan",
+        "sheet": {"template": "a3_simple"},
+        "origin_on_sheet": [10, 181],
+        "elements": [{"id": "site", "type": "rect", "status": "existing",
+                      "corners": [[0, 0], [3000, 700]]}],
+        "views": [
+            {"id": "section-a", "title": {"en": "SECTION A-A", "he": "חתך א-א"}, "scale": 10,
+             "origin_on_sheet": [10, 98],
+             "elements": [{"id": "wall", "type": "rect", "status": "new",
+                           "corners": [[0, 0], [3000, 600]],
+                           "label": "TRENCH DRAIN – MUFLE WING", "label_at": [1500, 300],
+                           "label_pinned": True}]},
+            {"id": "detail-1", "title": "DETAIL 1", "scale": 5,
+             "elements": [{"id": "big", "type": "rect", "status": "new",
+                           "corners": [[0, 0], [5000, 4000]]}]},
+        ],
+    }
+    res = render(spec, tmp_path, "tight_caption", formats=("dxf",))
+    detail_errors = [w for w in res["warnings"] if w.startswith("ERROR:") and "view 'detail-1'" in w]
+    assert len(detail_errors) == 1, res["warnings"]
+    doc = ezdxf.readfile(res["dxf"])
+    psp = doc.layouts.get("SHEET")
+    captions = [entity for entity in psp.query("TEXT MTEXT")
+                if "DETAIL-1 NOT SHOWN" in (entity.text if entity.dxftype() == "MTEXT" else entity.dxf.text)]
+    assert len(captions) == 1
+    caption = _paper_box(captions[0])
+    viewports = []
+    for vp in psp.query("VIEWPORT"):
+        if vp.dxf.status <= 1:
+            continue
+        view = (vp.dxf.center.x - vp.dxf.width / 2, vp.dxf.center.y - vp.dxf.height / 2,
+                vp.dxf.center.x + vp.dxf.width / 2, vp.dxf.center.y + vp.dxf.height / 2)
+        viewports.append(view)
+        assert not _boxes_overlap(caption, view), (caption, view)
+    lower = min(view[3] for view in viewports)
+    upper = max(view[1] for view in viewports)
+    assert lower <= caption[1] and caption[3] <= upper, (caption, viewports)
+    for entity in psp.query("TEXT MTEXT"):
+        if entity is captions[0]:
+            continue
+        other = _paper_box(entity)
+        assert other and not _boxes_overlap(caption, other)
+    assert any("TRENCH DRAIN" in (entity.dxf.text if entity.dxftype() == "TEXT" else entity.text)
+               for entity in doc.modelspace().query("TEXT MTEXT"))
 
 
 def dense_drainage_plan() -> dict:
@@ -860,7 +1027,8 @@ def test_dense_drainage_multiview_fits(tmp_path):
          ]},
     ]
     res = render(spec, tmp_path, "dense_sheet", formats=("dxf", "png"))
-    assert not any("not placed off the sheet" in w for w in res["warnings"]), res["warnings"]
+    assert not any("not shown on this sheet" in w or "not placed off the sheet" in w
+                   for w in res["warnings"]), res["warnings"]
     doc = ezdxf.readfile(res["dxf"])
     assert _viewport_scales(doc, "mm") == [25.0, 50.0, 400.0]
     psp = doc.layouts.get("SHEET")
@@ -953,9 +1121,11 @@ def test_nts_fit_warning_quotes_space_and_no_scale(tmp_path):
                        "elements": [{"id": "c", "type": "circle", "status": "new",
                                      "at": [0, 0], "radius": 40}]}]}
     res = render(spec, tmp_path, "ntsbig", formats=("dxf",))
-    warning = next(w for w in res["warnings"] if "scrap" in w and "not placed off the sheet" in w)
-    assert "free" in warning and "NTS" in warning
-    assert "Consider 1:" not in warning
+    # The requested 500 mm does not fit, and the view is fitted into the free rectangle.
+    assert not any("Consider 1:" in w or "not shown on this sheet" in w for w in res["warnings"]), res["warnings"]
+    doc = ezdxf.readfile(res["dxf"])
+    viewports = [vp for vp in doc.layouts.get("SHEET").query("VIEWPORT") if vp.dxf.status > 1]
+    assert len(viewports) == 2
 
 
 def test_auto_scale_views_stay_inside_and_off_the_title_block(tmp_path):
@@ -977,7 +1147,8 @@ def test_auto_scale_views_stay_inside_and_off_the_title_block(tmp_path):
          ]},
     ]
     res = render(spec, tmp_path, "auto", formats=("dxf",))
-    assert not any("not placed off the sheet" in w or "nothing to draw" in w for w in res["warnings"]), res["warnings"]
+    assert not any("not shown on this sheet" in w or "not placed off the sheet" in w
+                   or "nothing to draw" in w for w in res["warnings"]), res["warnings"]
     doc = ezdxf.readfile(res["dxf"])
     series = {50, 100, 125, 200, 250, 500, 1000, 400}
     scales = _viewport_scales(doc, "mm")
@@ -1344,7 +1515,8 @@ def test_auto_multiview_places_every_view(tmp_path):
         "views": _side_views(),
     }
     res = render(spec, tmp_path, "mv_auto", formats=("dxf",))
-    assert not any("not placed" in w or "does not fit" in w for w in res["warnings"]), res["warnings"]
+    assert not any("not placed" in w or "not shown" in w or "does not fit" in w
+                   or "would be 1:" in w for w in res["warnings"]), res["warnings"]
     doc = ezdxf.readfile(res["dxf"])
     windows = _sheet_windows(doc)
     assert len(windows) >= 3, windows
@@ -1425,7 +1597,75 @@ def test_multiview_keeps_notes_and_fixed_scales(tmp_path):
     assert _viewport_scales(doc, "m") == [25.0, 50.0, 400.0]
     blob = _sheet_blob(doc)
     assert "Keep the trench clear." in blob and "השאר את התעלה נקייה." in blob
-    assert not any(finding.code == "omitted_strings" for finding in review(spec).findings)
+    findings = review(spec).findings
+    assert not any(finding.code == "omitted_strings" for finding in findings)
+    assert not any(finding.code == "omitted_view" for finding in findings)
+
+
+def test_auto_plan_placed_at_its_floor_does_not_warn(tmp_path):
+    """The probe may want 1:1000, but a plan that is placed at 1:500 must not say so."""
+    spec = {
+        "units": "m", "scale": "auto", "paper": "A3", "language": "en", "view": "plan",
+        "sheet": {"template": "a3_simple"},
+        "elements": [{"id": "site", "type": "rect", "status": "existing",
+                      "corners": [[0, 0], [100, 60]]}],
+        "views": [
+            {"id": "section-a", "title": "SECTION A-A", "scale": "auto",
+             "elements": [{"id": "ground", "type": "polyline", "status": "existing",
+                           "points": [[0, 0], [8, 0]]}]},
+            {"id": "detail-1", "title": "DETAIL 1", "scale": "auto",
+             "elements": [{"id": "box", "type": "rect", "status": "new",
+                           "corners": [[0, 0], [4, 3]]}]},
+        ],
+    }
+    res = render(spec, tmp_path, "floor", formats=("dxf",))
+    assert not any("would be 1:" in w for w in res["warnings"]), res["warnings"]
+    scales = _viewport_scales(ezdxf.readfile(res["dxf"]), "m")
+    assert 500.0 in scales, scales
+
+
+def test_unplaced_plan_does_not_claim_the_probe_scale(tmp_path):
+    """A plan that is not placed is named once. It is not also 'would be 1:2000'."""
+    spec = {
+        "units": "m", "scale": "auto", "paper": "A3", "language": "en", "view": "plan",
+        "sheet": {"template": "a3_simple"},
+        "elements": [{"id": "site", "type": "rect", "status": "existing",
+                      "corners": [[0, 0], [200, 150]]}],
+        "views": [
+            {"id": "section-a", "title": "SECTION A-A", "scale": "auto",
+             "elements": [{"id": "ground", "type": "polyline", "status": "existing",
+                           "points": [[0, 0], [8, 0]]}]},
+            {"id": "detail-1", "title": "DETAIL 1", "scale": "auto",
+             "elements": [{"id": "box", "type": "rect", "status": "new",
+                           "corners": [[0, 0], [4, 3]]}]},
+        ],
+    }
+    res = render(spec, tmp_path, "probe", formats=("dxf",))
+    primary = [w for w in res["warnings"] if w.startswith("ERROR:") and "view 'primary'" in w]
+    assert len(primary) == 1, res["warnings"]
+    assert "not shown on this sheet" in primary[0]
+    assert not any("would be 1:" in w for w in res["warnings"]), res["warnings"]
+    blob = _sheet_blob(ezdxf.readfile(res["dxf"]))
+    assert "PRIMARY NOT SHOWN – NEEDS A2 SHEET" in blob
+
+
+def test_placed_plan_coarser_than_its_floor_warns_once(tmp_path):
+    spec = {
+        "units": "m", "scale": 2000, "paper": "A3", "language": "en", "view": "plan",
+        "sheet": {"template": "a3_simple"},
+        "elements": [{"id": "site", "type": "rect", "status": "existing",
+                      "corners": [[0, 0], [10, 6]]}],
+        "views": [{"id": "detail-1", "title": "DETAIL 1", "scale": 50,
+                   "elements": [{"id": "box", "type": "rect", "status": "new",
+                                 "corners": [[0, 0], [1, 0.6]]}]}],
+    }
+    res = render(spec, tmp_path, "coarse", formats=("dxf",))
+    would = [w for w in res["warnings"] if "would be 1:" in w]
+    assert len(would) == 1, res["warnings"]
+    assert "1:2000" in would[0] and "1:500" in would[0]
+    assert not any("view 'primary' is at" in w for w in res["warnings"])
+    assert not any("not shown" in w for w in res["warnings"]), res["warnings"]
+    assert 2000.0 in _viewport_scales(ezdxf.readfile(res["dxf"]), "m")
 
 
 def test_nudged_dimension_text_is_stored_above_the_line(tmp_path):

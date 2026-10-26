@@ -151,7 +151,7 @@ def review(spec: dict, catalog=None, project=None) -> Review:
         findings += _text_standards(scene, cfg)
         findings += _lineweights(scene, cfg)
         findings += _submission(scene.doc, cfg)
-    findings += _omitted_strings(spec, catalog, project)
+    findings += _multiview_omissions(spec, catalog, project)
     return Review(cfg, scene, findings)
 
 
@@ -262,11 +262,12 @@ def _hygiene(spec, catalog) -> list[Finding]:
     return out
 
 
-def _omitted_strings(spec, catalog, project) -> list[Finding]:
-    """Note strings that a multi-view sheet did not draw.
+def _multiview_omissions(spec, catalog, project) -> list[Finding]:
+    """Unplaced views, and note strings a multi-view sheet did not draw.
 
-    Single-view sheets are checked by the model-space layout. A multi-view sheet draws notes in
-    paper space, so this reads that sheet and reports every spec note that is absent.
+    Single-view sheets are checked by the model-space layout and are not rendered again. A
+    multi-view sheet is rendered once: each view the sheet did not place is `omitted_view`, and
+    every spec note absent from that sheet is `omitted_strings`.
     """
     if not any(isinstance(view, dict) for view in (spec.get("views") or [])):
         return []
@@ -278,8 +279,6 @@ def _omitted_strings(spec, catalog, project) -> list[Finding]:
                 text = str(line).strip()
                 if text:
                     lines.append(text)
-    if not lines:
-        return []
     import tempfile
 
     import ezdxf
@@ -287,8 +286,25 @@ def _omitted_strings(spec, catalog, project) -> list[Finding]:
     from .drawing import render
 
     with tempfile.TemporaryDirectory() as tmp:
-        res = render(spec, tmp, "qa_notes", formats=("dxf",), catalog=catalog, project=project)
+        res = render(spec, tmp, "qa_sheet", formats=("dxf",), catalog=catalog, project=project)
         doc = ezdxf.readfile(res["dxf"])
+    findings = []
+    seen = set()
+    for warning in res.get("warnings") or []:
+        if "not shown on this sheet" not in warning:
+            continue
+        match = re.search(r"view (['\"])(.+?)\1", warning)
+        key = match.group(2) if match else ""
+        if key in seen:
+            continue
+        seen.add(key)
+        findings.append(Finding(
+            "error", "omitted_view",
+            f"View {key} is not shown on this sheet. Use a larger sheet (A2/A1).",
+            f"מבט {key} לא מוצג בגיליון. צריך גיליון גדול יותר (A2/A1).",
+            key))
+    if not lines:
+        return findings
     chunks = []
     layouts = [doc.modelspace()]
     sheet = doc.layouts.get("SHEET") if "SHEET" in doc.layouts else None
@@ -299,12 +315,12 @@ def _omitted_strings(spec, catalog, project) -> list[Finding]:
             chunks.append(entity.text if entity.dxftype() == "MTEXT" else entity.dxf.text)
     blob = "\n".join(chunks).replace("\\P", " ")
     missing = [line for line in lines if line not in blob]
-    if not missing:
-        return []
-    shown = "; ".join(missing[:8])
-    return [Finding("error", "omitted_strings",
-                     f"Notes omitted from the sheet: {shown}",
-                     f"הערות חסרות בגיליון: {shown}", "notes")]
+    if missing:
+        shown = "; ".join(missing[:8])
+        findings.append(Finding("error", "omitted_strings",
+                                 f"Notes omitted from the sheet: {shown}",
+                                 f"הערות חסרות בגיליון: {shown}", "notes"))
+    return findings
 
 
 def _blob(value) -> str:
