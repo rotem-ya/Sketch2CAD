@@ -2,7 +2,8 @@
 from __future__ import annotations
 
 import os
-import subprocess
+
+from .procutil import run as hidden_run
 
 PS_PICK_FOLDER = r"""
 [Console]::OutputEncoding = [Text.Encoding]::UTF8
@@ -20,8 +21,10 @@ def pick_folder(initial: str = "", title: str = "") -> str | None:
     """Show the OS folder picker; returns the chosen folder, or None (cancelled / no desktop)."""
     if os.name == "nt":
         env = {**os.environ, "S2C_START": initial or "", "S2C_TITLE": title or ""}
-        proc = subprocess.run(["powershell", "-NoProfile", "-STA", "-Command", PS_PICK_FOLDER],
-                              capture_output=True, env=env, creationflags=subprocess.CREATE_NO_WINDOW)
+        # gui=True: hide the PowerShell console, not the folder dialog itself.
+        proc = hidden_run(
+            ["powershell", "-NoProfile", "-WindowStyle", "Hidden", "-STA", "-Command", PS_PICK_FOLDER],
+            capture_output=True, env=env, gui=True)
         path = proc.stdout.decode("utf-8", "ignore").strip()
         return path or None
     try:
