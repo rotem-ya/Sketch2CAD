@@ -62,6 +62,16 @@ def test_bilingual_label_is_two_lines_and_overlap_is_caught():
     assert _has(piled, "text_overlap")
 
 
+def test_connector_along_a_leader_is_still_linework():
+    """inv_ne's leader lies on cn1b. The connector is not the label's own line."""
+    spec = _spec([
+        {"id": "inv_ne", "type": "text", "at": [20000, 20000], "height": 2.5,
+         "text": "INV. 225.00", "leader_to": [20000, 10000]},
+        {"id": "cn1b", "type": "pipe", "dn": 400, "points": [[20000, 8000], [20000, 25000]]},
+    ], scale=400)
+    assert any(f.code == "text_over_line" and f.element == "inv_ne" for f in review(spec).findings)
+
+
 def test_text_over_line_ignores_the_labels_own_leader():
     on_pipe = _spec([{
         "id": "p", "type": "pipe", "points": [[400, 1000], [3000, 1000]], "od": 40,
@@ -379,19 +389,28 @@ def test_metric_inverts_and_percent_slope_use_the_span_between_them():
 
 
 def test_inverts_off_the_pipe_use_the_projected_run():
-    """INV texts 2.36 m off a 1:400 pipe, 40 m apart along it, 11.6 m from the ends."""
+    """INV texts 2.36 m off a 1:400 pipe, 40 m apart along it, 11.6 m from the ends.
+
+    Short connectors sit between each text and the main pipe. The text is nearer the
+    connector, and matching both pipes used to crash. The main pipe still owns the run.
+    """
     pipe = {"id": "p", "type": "pipe", "dn": 400, "label": "SLOPE 0.4%",
             "points": [[0, 0], [63160, 0]]}
     texts = [
         {"id": "i1", "type": "text", "at": [11580, 2360], "height": 2.5, "text": "INV. 225.00"},
         {"id": "i2", "type": "text", "at": [51580, 2360], "height": 2.5, "text": "INV. 224.84"},
     ]
-    spec = _spec([pipe, *texts], scale=400)
-    assert not _has(spec, "slope_mismatch")
-    assert not _has(spec, "min_slope")
-    assert not _has(spec, "slope_unchecked")
-    low = _spec([pipe, texts[0], {**texts[1], "text": "INV. 224.70"}], scale=400)
-    assert _has(low, "slope_mismatch")
+    connectors = [
+        {"id": "c1", "type": "pipe", "points": [[11580, 0], [11580, 1000]]},
+        {"id": "c2", "type": "pipe", "points": [[51580, 0], [51580, 1000]]},
+    ]
+    spec = _spec([pipe, *connectors, *texts], scale=400)
+    findings = review(spec).findings
+    assert not any(f.code == "slope_mismatch" for f in findings)
+    assert not any(f.code == "min_slope" for f in findings)
+    assert not any(f.code == "slope_unchecked" and f.element == "p" for f in findings)
+    low = _spec([pipe, *connectors, texts[0], {**texts[1], "text": "INV. 224.70"}], scale=400)
+    assert any(f.code == "slope_mismatch" and f.element == "p" for f in review(low).findings)
     stationed = _spec([_pipe(slope=0.4, slope_unit="percent", dn=400, inv=[225.00, 224.84],
                              inv_stations=[11580, 51580], points=[[0, 0], [63160, 0]])], scale=400)
     assert not _has(stationed, "slope_mismatch")
@@ -411,11 +430,17 @@ def test_large_target_keeps_a_full_outline():
 
 def test_title_role_is_not_an_inconsistent_height():
     spec = _spec([
-        {"id": "sec", "type": "text", "role": "title", "at": [800, 2200], "height": 3.5,
+        {"id": "sec_title", "type": "text", "at": [800, 2200], "height": 3.5,
          "text": "SECTION A-A"},
         {"id": "note", "type": "text", "at": [800, 1800], "height": 2.5, "text": "NOTE"},
     ])
     assert not _has(spec, "text_height_inconsistent")
+    titled = _spec([
+        {"id": "caption", "type": "text", "role": "section_title", "at": [800, 2200],
+         "height": 3.5, "text": "SECTION B-B"},
+        {"id": "note", "type": "text", "at": [800, 1800], "height": 2.5, "text": "NOTE"},
+    ])
+    assert not _has(titled, "text_height_inconsistent")
     block = _spec([{"id": "p", "type": "circle", "at": [1000, 1500], "radius": 20}])
     assert not any(f.code == "text_height_inconsistent" and f.element == "title"
                    for f in review(block).findings)
@@ -480,6 +505,45 @@ def test_valve_typical_collapses_repeated_height_rows():
     dim = next(row for row in rows if row.code == "text_height_standard" and "dim:" in row.element)
     assert dim.element.startswith("×")
     assert "dim:0" in dim.element and "dim:1" in dim.element
+
+
+def test_overlay_table_shapes_hebrew_and_keeps_the_element_column():
+    """Table strings go through the bidi path, and a long id list stays out of the message."""
+    from matplotlib import font_manager
+    from matplotlib.ft2font import FT2Font, LoadFlags
+
+    from sketch2cad.drawing.text import to_visual
+    from sketch2cad.qa import OverlayRow, _ax_shapes_rtl, _draw_table, _table_text
+
+    severity = _table_text("שגיאה")
+    if _ax_shapes_rtl():
+        assert severity == "שגיאה"
+    else:
+        assert severity == to_visual("שגיאה")
+        assert severity != "שגיאה"
+    font = FT2Font(font_manager.findfont(font_manager.FontProperties(family="DejaVu Sans")))
+    font.set_size(32, 72)
+    right = max(font._layout(severity, LoadFlags.NO_HINTING), key=lambda item: item.x)
+    assert right.char == "ש"
+
+    captured = []
+
+    class _Ax:
+        def text(self, _x, _y, text, *args, **kwargs):
+            captured.append(text)
+
+        def add_patch(self, *args, **kwargs):
+            return None
+
+    long_ids = "×7: " + ", ".join(f"inv_{i}" for i in range(7))
+    row = OverlayRow(1, "error", "text_over_line", long_ids, "הטקסט חוצה קווי שרטוט", True)
+    _draw_table(_Ax(), [row], 0, 80, 228, font_manager.FontProperties(family="DejaVu Sans"))
+    assert _table_text("ממצאי בקרת שרטוט") in captured
+    assert _table_text("שגיאה") in captured
+    assert _table_text("הטקסט חוצה קווי שרטוט") in captured
+    shown = next(text for text in captured if "inv_" in text or text.endswith("…"))
+    assert shown.endswith("…")
+    assert "inv_6" not in shown
 
 
 def test_findings_carry_both_languages():

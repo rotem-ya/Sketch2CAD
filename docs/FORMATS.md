@@ -47,7 +47,7 @@ one paper-mm = `scale` mm of model space (or `scale/1000` m).
 Extra keys supported by the renderer:
 - element type `circle` (`at`, `radius`) for small fittings;
 - any element: `centerline`, `label_at`, `label_align`, `label_height` (paper mm), `leader`, `leader_to`; block size overrides `D`, `t`, `L`, `H`, `Dt`;
-- `pipe`: `slope` (fall/run) and optional `slope_unit` `percent`, `inv` `[start, end]`, optional `inv_stations` `[s0, s1]` or `inv_at` `[[x,y],[x,y]]` for the run between those inverts (the full drawn length is not assumed), `dn`, `sn`, `cover`; a label `SLOPE 0.4%` is a percent; a text `INV` or `INV.` counts when `pipe` names the pipe, or when it lies within about 10 paper-mm of the centre-line;
+- `pipe`: `slope` (fall/run) and optional `slope_unit` `percent`, `inv` `[start, end]`, optional `inv_stations` `[s0, s1]` or `inv_at` `[[x,y],[x,y]]` for the run between those inverts (the full drawn length is not assumed), `dn`, `sn`, `cover`; a label `SLOPE 0.4%` is a percent; a text `INV` or `INV.` counts when `pipe` names the pipe, or when it lies within about 10 paper-mm of a centre-line (every such pipe, and only the ones that state a slope when any of them does);
 - `nts` (true) or the text `NTS` / `N.T.S.` in `view`, `views`, the sheet scale field or a text element marks the sheet not-to-scale;
 - `connector`: `offset`, `offset_from` (point or element id), `offset_axis` `"x"|"y"` (omit for a distance);
 - `manhole`: `cover_item` (own BOM line), `cover_status`, `di` / `do`, `grate_size`; `connector`: `height`;

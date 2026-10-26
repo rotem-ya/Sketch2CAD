@@ -21,7 +21,7 @@ from functools import lru_cache
 from pathlib import Path
 
 from .checks import Finding
-from .drawing.text import LINE_SPACING, has_hebrew, plain
+from .drawing.text import LINE_SPACING, has_hebrew, plain, to_visual
 
 QA_DEFAULTS = {
     "min_text_mm": 2.5,
@@ -169,9 +169,15 @@ def _coords(el) -> list:
     return pts
 
 
-def _paper_segments(ctx, paper) -> list:
+def _paper_segments(ctx, paper, spans) -> list:
+    """Segments as (x0, y0, x1, y1, layer, owner). Owner is the element id, empty for the sheet."""
+    owner_of = {}
+    for span in spans:
+        for entity in span["entities"]:
+            owner_of[id(entity)] = span["eid"]
     segs = []
     for entity in ctx.msp:
+        owner = owner_of.get(id(entity), "")
         ents = [entity]
         if entity.dxftype() in ("INSERT", "DIMENSION"):
             try:
@@ -183,7 +189,7 @@ def _paper_segments(ctx, paper) -> list:
             kind = item.dxftype()
             if kind == "LINE":
                 a, b = paper(item.dxf.start.x, item.dxf.start.y), paper(item.dxf.end.x, item.dxf.end.y)
-                segs.append((*a, *b, layer))
+                segs.append((*a, *b, layer, owner))
             elif kind == "LWPOLYLINE":
                 pts = [(p[0], p[1]) for p in item.get_points("xy")]
                 pairs = list(zip(pts, pts[1:]))
@@ -191,16 +197,16 @@ def _paper_segments(ctx, paper) -> list:
                     pairs.append((pts[-1], pts[0]))
                 for a, b in pairs:
                     pa, pb = paper(*a), paper(*b)
-                    segs.append((*pa, *pb, layer))
+                    segs.append((*pa, *pb, layer, owner))
             elif kind == "CIRCLE":
-                segs += _sample_arc(item.dxf.center, item.dxf.radius, 0, 360, paper, layer)
+                segs += _sample_arc(item.dxf.center, item.dxf.radius, 0, 360, paper, layer, owner)
             elif kind == "ARC":
                 segs += _sample_arc(item.dxf.center, item.dxf.radius, item.dxf.start_angle,
-                                    item.dxf.end_angle, paper, layer)
+                                    item.dxf.end_angle, paper, layer, owner)
     return segs
 
 
-def _sample_arc(center, radius, a0, a1, paper, layer, n=16) -> list:
+def _sample_arc(center, radius, a0, a1, paper, layer, owner="", n=16) -> list:
     if a1 <= a0:
         a1 += 360
     segs = []
@@ -210,7 +216,7 @@ def _sample_arc(center, radius, a0, a1, paper, layer, n=16) -> list:
         ang = math.radians(a0 + (a1 - a0) * i / steps)
         pt = paper(center.x + radius * math.cos(ang), center.y + radius * math.sin(ang))
         if prev is not None:
-            segs.append((*prev, *pt, layer))
+            segs.append((*prev, *pt, layer, owner))
         prev = pt
     return segs
 
@@ -530,7 +536,12 @@ def _stated_run(el, points):
 
 
 def _inv_for_pipe(el, elements, texts, spec) -> list:
-    """INV texts for this pipe: an explicit `pipe` id, or within 10 paper-mm of the centre-line."""
+    """INV texts for this pipe.
+
+    An explicit `pipe` id always counts. An unlinked text belongs to every pipe within
+    10 paper-mm. When one of those pipes states a slope, only the sloped pipes keep it,
+    so a short connector nearer the text does not take it away from the main run.
+    """
     eid = el.get("id")
     pts = el.get("points") or []
     limit = _model_tol(10.0, spec)
@@ -545,13 +556,16 @@ def _inv_for_pipe(el, elements, texts, spec) -> list:
                 if proj:
                     owned.append({**text, "station": proj[0]})
             continue
-        best = None
+        hits = []
         for pipe in pipes:
             proj = _project(pipe.get("points") or [], text["at"])
-            if proj and (best is None or proj[1] < best[1]):
-                best = (pipe.get("id"), proj)
-        if best and best[0] == eid and best[1][1] <= limit:
-            owned.append({**text, "station": best[1][0]})
+            if proj and proj[1] <= limit:
+                hits.append((pipe, proj))
+        if any(_slope_of(pipe) for pipe, _proj in hits):
+            hits = [(pipe, proj) for pipe, proj in hits if _slope_of(pipe)]
+        for pipe, proj in hits:
+            if pipe.get("id") == eid:
+                owned.append({**text, "station": proj[0]})
     return owned
 
 
@@ -768,6 +782,9 @@ def _overlap(a: TextBox, b: TextBox) -> bool:
 
 
 def _own_leader(seg, box: TextBox) -> bool:
+    """The label's own leader is not linework. Another element's pipe along that leader is."""
+    if len(seg) > 5 and seg[5] != box.eid:
+        return False
     mx, my = (seg[0] + seg[2]) / 2, (seg[1] + seg[3]) / 2
     for lx0, ly0, lx1, ly1 in box.leaders:
         if _dist_point_seg((seg[0], seg[1]), (lx0, ly0, lx1, ly1)) < 1.0 and \
@@ -789,27 +806,38 @@ def _dist_point_seg(p, seg) -> float:
 
 
 def _seg_hits(seg, box: TextBox) -> bool:
-    x0, y0, x1, y1 = seg[:4]
-    # Shrink so a line that only grazes the text border is not a clash.
-    a, b = box.x0 + OVERLAP_EPS_MM, box.y0 + OVERLAP_EPS_MM
-    c, d = box.x1 - OVERLAP_EPS_MM, box.y1 - OVERLAP_EPS_MM
-    if c <= a or d <= b:
-        return False
+    """True when the segment overlaps the text box, including a run along its edge.
 
-    def inside(x, y):
-        return a <= x <= c and b <= y <= d
+    A connector that follows the label's insert (the left edge of left-aligned text) used
+    to miss: the old test shrank the box and rejected a collinear edge. A mere corner touch
+    is still too short to count.
+    """
+    return _clip_length(seg[0], seg[1], seg[2], seg[3], box.x0, box.y0, box.x1, box.y1) > 0.15
 
-    if inside(x0, y0) or inside(x1, y1):
-        return True
 
-    def crosses(ax, ay, bx, by, cx, cy, dx, dy):
-        def orient(px, py, qx, qy, rx, ry):
-            return (qy - py) * (rx - qx) - (qx - px) * (ry - qy)
-        return orient(ax, ay, bx, by, cx, cy) * orient(ax, ay, bx, by, dx, dy) < 0 and \
-            orient(cx, cy, dx, dy, ax, ay) * orient(cx, cy, dx, dy, bx, by) < 0
-
-    return crosses(x0, y0, x1, y1, a, b, c, b) or crosses(x0, y0, x1, y1, c, b, c, d) or \
-        crosses(x0, y0, x1, y1, c, d, a, d) or crosses(x0, y0, x1, y1, a, d, a, b)
+def _clip_length(x0, y0, x1, y1, left, bottom, right, top) -> float:
+    """Length of the segment inside the closed rectangle (Liang-Barsky)."""
+    dx, dy = x1 - x0, y1 - y0
+    t0, t1 = 0.0, 1.0
+    for p, q in ((-dx, x0 - left), (dx, right - x0), (-dy, y0 - bottom), (dy, top - y0)):
+        if abs(p) <= 1e-12:
+            if q < -1e-9:
+                return 0.0
+            continue
+        r = q / p
+        if p < 0:
+            if r > t1:
+                return 0.0
+            if r > t0:
+                t0 = r
+        else:
+            if r < t0:
+                return 0.0
+            if r < t1:
+                t1 = r
+    if t0 >= t1:
+        return 0.0
+    return (t1 - t0) * math.hypot(dx, dy)
 
 
 def _rect_inside(box: TextBox, area: dict, tol: float) -> bool:
@@ -1376,13 +1404,13 @@ def _draw_table(ax, rows: list[OverlayRow], x: float, top: float, width: float, 
     height = _table_height(len(rows))
     y0 = top - height
     ax.add_patch(Rectangle((x, y0), width, height, fc="white", ec="#c5cdd6", lw=0.6, zorder=2))
-    ax.text(x + width / 2, top - 4.2, "ממצאי בקרת שרטוט", ha="center", va="center",
+    ax.text(x + width / 2, top - 4.2, _table_text("ממצאי בקרת שרטוט"), ha="center", va="center",
             fontsize=8, color="#1c2833", fontproperties=font, zorder=3)
     heads = ((4, "מס'"), (16, "חומרה"), (38, "קוד"), (96, "אלמנט"))
     for dx, label in heads:
-        ax.text(x + dx, top - header_h + 2.2, label, fontsize=5.5, color="#5d6d7e",
+        ax.text(x + dx, top - header_h + 2.2, _table_text(label), fontsize=5.5, color="#5d6d7e",
                 fontproperties=font, zorder=3)
-    ax.text(x + 132, top - header_h + 2.2, "ממצא", fontsize=5.5, color="#5d6d7e",
+    ax.text(x + 132, top - header_h + 2.2, _table_text("ממצא"), fontsize=5.5, color="#5d6d7e",
             fontproperties=font, zorder=3)
     for index, row in enumerate(rows):
         y = top - header_h - row_h * (index + 0.5)
@@ -1396,13 +1424,14 @@ def _draw_table(ax, rows: list[OverlayRow], x: float, top: float, width: float, 
                                     fc=color, ec=color, lw=0.4, zorder=3))
         ax.text(x + 2.2 + badge_w / 2, y, str(row.number), color="white", fontsize=6,
                 ha="center", va="center", fontproperties=font, fontweight="bold", zorder=4)
-        ax.text(x + 16, y, SEVERITY_HE.get(row.severity, row.severity), color=color, fontsize=5.5,
-                va="center", fontproperties=font, zorder=4)
+        ax.text(x + 16, y, _table_text(SEVERITY_HE.get(row.severity, row.severity)), color=color,
+                fontsize=5.5, va="center", fontproperties=font, zorder=4)
         ax.text(x + 38, y, row.code, color="#1c2833", fontsize=5.5, va="center",
                 fontproperties=font, zorder=4)
-        ax.text(x + 96, y, row.element or "—", color="#1c2833", fontsize=5.5, va="center",
+        element = _fit_column(row.element or "—", 34.0, 5.5)
+        ax.text(x + 96, y, _table_text(element), color="#1c2833", fontsize=5.5, va="center",
                 fontproperties=font, zorder=4)
-        lines = _message_lines(row.he)
+        lines = [_table_text(line) for line in _message_lines(row.he)]
         ys = [y] if len(lines) == 1 else [y + 1.7, y - 1.9]
         for yy, line in zip(ys, lines):
             ax.text(x + 132, yy, line, color="#1c2833", fontsize=6, va="center",
@@ -1470,16 +1499,58 @@ def _cap_height(fname: str) -> float:
     return height or 1.0
 
 
-def _ink_width(text: str, h: float) -> float:
+def _ink_width(text: str, h: float, *, hebrew: bool | None = None) -> float:
     """Width of the drawn glyphs at cap height h, without the layout safety margin."""
     from matplotlib.font_manager import FontProperties
     from matplotlib.textpath import TextPath
     raw = plain(text or "")
     if not raw or h <= 0:
         return 0.0
-    fname = _ink_font(has_hebrew(raw))
+    fname = _ink_font(has_hebrew(raw) if hebrew is None else hebrew)
     size = h / _cap_height(fname)
     return float(TextPath((0, 0), raw, size=size, prop=FontProperties(fname=fname)).get_extents().width)
+
+
+def _ax_shapes_rtl() -> bool:
+    """True when this matplotlib shapes Hebrew in ax.text (it was built with libraqm)."""
+    try:
+        from matplotlib import ft2font
+    except Exception:  # noqa: BLE001
+        return False
+    return bool(getattr(ft2font, "__libraqm_version__", None))
+
+
+def _table_text(text: str) -> str:
+    """Hebrew as the overlay table should draw it.
+
+    The sheet preview converts to visual order because it paints glyph outlines.
+    ax.text does that itself when libraqm is present, and converting again reverses
+    the words. Without libraqm, use the same visual order as the preview.
+    """
+    if not text or _ax_shapes_rtl():
+        return text or ""
+    return to_visual(text)
+
+
+def _fit_column(text: str, width_mm: float, fontsize_pt: float) -> str:
+    """Keep an element list inside its column. A long '×7: …' list is cut, not spilled."""
+    raw = text or "—"
+    # fontsize is an em; treating it as cap height overestimates the width, so the cut is early.
+    h = fontsize_pt / 72.0 * 25.4
+    if _ink_width(raw, h, hebrew=True) <= width_mm:
+        return raw
+    mark = "…"
+    lo, hi = 0, len(raw)
+    while lo < hi:
+        mid = (lo + hi + 1) // 2
+        cand = raw[:mid].rstrip(" ,") + mark
+        if _ink_width(cand, h, hebrew=True) <= width_mm:
+            lo = mid
+        else:
+            hi = mid - 1
+    if lo <= 0:
+        return mark
+    return raw[:lo].rstrip(" ,") + mark
 
 
 def _entity_text_box(entity, paper, k, eid, role, in_notes, leaders) -> TextBox | None:
@@ -1613,14 +1684,15 @@ def build_scene(spec: dict, catalog=None, project=None) -> Scene:
         return (float(x) - ox) / k, (float(y) - oy) / k
 
     boxes = _boxes_from_spans(drawn.spans, paper, k)
-    segments = _paper_segments(ctx, paper)
+    segments = _paper_segments(ctx, paper, drawn.spans)
     # Centre-lines are what a label sitting in a pipe barrel crosses, even when the walls are drawn apart.
     for el in spec.get("elements") or []:
         if el.get("type") not in ("pipe", "polyline", "trench_drain"):
             continue
         pts = [pt for pt in (el.get("points") or []) if isinstance(pt, (list, tuple)) and len(pt) >= 2]
+        owner = str(el.get("id") or "")
         for a, b in zip(pts, pts[1:]):
-            segments.append((*paper(a[0], a[1]), *paper(b[0], b[1]), "MODEL"))
+            segments.append((*paper(a[0], a[1]), *paper(b[0], b[1]), "MODEL", owner))
     points = []
     for el in spec.get("elements") or []:
         eid = el.get("id") or el.get("type") or "?"

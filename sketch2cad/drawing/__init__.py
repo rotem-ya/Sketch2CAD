@@ -21,6 +21,12 @@ DEFAULT_TEMPLATE = "a3_simple"
 ELEMENT_ERRORS = (KeyError, ValueError, TypeError, IndexError, ZeroDivisionError)
 
 
+def _names_title(value) -> bool:
+    """True when an id or role is a title, including `sec_title` and `section_title`."""
+    parts = str(value or "").lower().replace("-", " ").replace("_", " ").split()
+    return any(part == "title" or part.endswith("title") for part in parts)
+
+
 def _default_catalog(project, warnings: list[str]):
     """The shared catalog (repo + project), or None when the catalog module/files are unavailable."""
     try:
@@ -87,7 +93,11 @@ def draw_sheet(spec: dict, *, catalog=None, project=None, document=None, warning
             continue
         kind = el.get("type")
         declared = el.get("role")
-        if declared in ("title", "text", "label", "notes", "annotation"):
+        # A section title is a text element. Its id (`sec_title`) or role names the title even
+        # when `role` itself is missing or just "text".
+        if kind == "text" and (_names_title(declared) or _names_title(el.get("id"))):
+            role = "title"
+        elif declared in ("title", "text", "label", "notes", "annotation"):
             role = declared
         elif kind == "text":
             role = "text"
