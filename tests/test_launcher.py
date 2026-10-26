@@ -211,6 +211,61 @@ def test_stop_does_not_kill_when_the_image_cannot_be_read(monkeypatch, capsys):
     assert "Sketch2CAD is stopped." not in capsys.readouterr().out
 
 
+def test_stop_counts_a_vanished_wrapper_as_stopped(monkeypatch, capsys):
+    """The server dies first. The venv wrapper then exits, and taskkill returns 128 not found."""
+    launcher.pid_file().write_text("4242 1000", encoding="utf-8")
+    children = {4242: [(5001, "python.exe", "1100")]}
+    gone = type("Proc", (), {
+        "returncode": 128, "stdout": "", "stderr": 'ERROR: The process "4242" not found.',
+    })()
+    real = launcher.terminate_pid
+
+    def terminate(pid):
+        if pid != 4242:
+            return True
+        saved = launcher.os.name
+        launcher.os.name = "nt"
+        monkeypatch.setattr(launcher, "run", lambda *args, **kwargs: gone)
+        try:
+            return real(pid)
+        finally:
+            launcher.os.name = saved
+
+    monkeypatch.setattr(launcher, "terminate_pid", terminate)
+    monkeypatch.setattr(launcher, "pid_alive", lambda pid: True)
+    monkeypatch.setattr(launcher, "_process_facts", lambda pid: ("python.exe", "1000") if pid == 4242 else (None, None))
+    monkeypatch.setattr(launcher, "_child_facts", lambda pid: list(children.get(pid, [])))
+    _alive(monkeypatch, [True, False])
+    assert launcher.main(["--stop"]) == 0
+    assert not launcher.pid_file().exists()
+    assert "Sketch2CAD is stopped." in capsys.readouterr().out
+
+
+def test_terminate_pid_not_found_is_stopped_and_denial_is_refused(monkeypatch):
+    gone = type("Proc", (), {"returncode": 128, "stdout": "", "stderr": "ERROR: not found."})()
+    denied = type("Proc", (), {"returncode": 1, "stdout": "", "stderr": "ERROR: Access is denied."})()
+    monkeypatch.setattr(launcher.os, "name", "nt")
+    monkeypatch.setattr(launcher, "run", lambda *args, **kwargs: gone)
+    assert launcher.terminate_pid(4242) is True
+    monkeypatch.setattr(launcher, "run", lambda *args, **kwargs: denied)
+    monkeypatch.setattr(launcher, "pid_alive", lambda pid: True)
+    assert launcher.terminate_pid(4242) is False
+    monkeypatch.setattr(launcher, "pid_alive", lambda pid: False)
+    assert launcher.terminate_pid(4242) is True
+    monkeypatch.setattr(launcher.os, "name", "posix")
+
+    def missing(pid, sig):
+        raise ProcessLookupError(pid)
+
+    def refused(pid, sig):
+        raise PermissionError
+
+    monkeypatch.setattr(launcher.os, "kill", missing)
+    assert launcher.terminate_pid(4242) is True
+    monkeypatch.setattr(launcher.os, "kill", refused)
+    assert launcher.terminate_pid(4242) is False
+
+
 def test_stop_keeps_the_pid_file_when_the_kill_is_refused(monkeypatch, capsys):
     launcher.pid_file().write_text("4242 1000", encoding="utf-8")
     monkeypatch.setattr(launcher, "terminate_pid", lambda pid: False)

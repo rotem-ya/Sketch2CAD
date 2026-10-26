@@ -531,13 +531,29 @@ def _stop(proc, grace: float = 5.0) -> None:
         proc.kill()
 
 
+def _kill_succeeded(returncode: int | None, output: str, pid: int) -> bool:
+    """True when the process was stopped or was already gone.
+
+    ``taskkill`` returns 128 once a venv wrapper has exited on its own after its child died.
+    That is not a refusal. A permission error while the pid is still alive is.
+    """
+    if returncode in (0, None, 128):
+        return True
+    if "not found" in (output or "").lower():
+        return True
+    return not pid_alive(pid)
+
+
 def terminate_pid(pid: int) -> bool:
     """Stop one verified process. Hidden on Windows. False when the signal is refused."""
     if os.name == "nt":
         proc = run(["taskkill", "/PID", str(pid), "/F"], capture_output=True, text=True, check=False)
-        return proc.returncode in (0, None)
+        output = f"{proc.stdout or ''}{proc.stderr or ''}"
+        return _kill_succeeded(proc.returncode, output, pid)
     try:
         os.kill(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return True
     except PermissionError:
         return False
     return True
@@ -675,7 +691,8 @@ def stop(port: int = PORT) -> int:
 
     ``taskkill`` without the tree leaves the Streamlit child running, and a forced kill does not
     run the supervisor's cleanup. Each pid is killed only after its image is Python and it was
-    created after its parent. Children first. A permission error keeps the pid file.
+    created after its parent. Children first. A process that has already exited (``taskkill`` 128)
+    counts as stopped. A permission error keeps the pid file.
     """
     record = _supervisor_record()
     stopped = False
