@@ -133,6 +133,31 @@ def test_export_skips_a_source_that_escapes_the_drawing(tmp_path):
     assert any(item["reason"] == "outside the drawing folder" for item in manifest["excluded"])
 
 
+def test_export_copies_extra_pdf_and_dwg_into_sources(tmp_path):
+    _project, doc = _drawing(tmp_path, ELBOW)
+    pdf = tmp_path / "section.pdf"
+    pdf.write_bytes(b"%PDF-1.4\nsection\n")
+    dwg = tmp_path / "ref.dwg"
+    dwg.write_bytes(b"AC1018 reference")
+    skipped = tmp_path / "note.txt"
+    skipped.write_text("not a drawing", encoding="utf-8")
+    leaked = tmp_path / "leak.pdf"
+    leaked.write_bytes(b"%PDF-1.4\nsk-ant-LEAKED\n")
+    out = tmp_path / "pkg"
+    export_package(doc.path, out, extra_sources=[pdf, dwg, skipped, leaked])
+    assert (out / "sources" / "section.pdf").read_bytes().startswith(b"%PDF")
+    assert (out / "sources" / "ref.dwg").read_bytes().startswith(b"AC1018")
+    blob = _package_bytes(out)
+    assert b"LEAKED" not in blob and b"not a drawing" not in blob
+    manifest = json.loads((out / "manifest.json").read_text(encoding="utf-8"))
+    roles = {item["name"]: item["role"] for item in manifest["files"]}
+    assert roles["sources/section.pdf"] == "source"
+    assert roles["sources/ref.dwg"] == "source"
+    reasons = {item["reason"] for item in manifest["excluded"]}
+    assert "not a PDF, DWG or image" in reasons
+    assert "secret marker" in reasons
+
+
 def test_export_refuses_a_secret_in_the_request(tmp_path):
     _project, doc = _drawing(tmp_path, ELBOW)
     out = tmp_path / "secret-package"
