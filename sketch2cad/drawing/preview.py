@@ -57,7 +57,7 @@ def render_figure(doc, paper_rect, paper_mm, layout=None):
     A single-view sheet is model space clipped to the paper rectangle. A multi-view sheet is the
     named paper-space layout, including each VIEWPORT at its own scale.
     """
-    font()                                        # registers the Arial look-alike when needed
+    font()                                        # bundled measurement face, already pinned at import
     w_in, h_in = paper_mm[0] / MM_PER_INCH, paper_mm[1] / MM_PER_INCH
     fig = plt.figure(figsize=(w_in, h_in))
     ax = fig.add_axes((0, 0, 1, 1))

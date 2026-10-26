@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import re
 from functools import lru_cache
+from pathlib import Path
 
 from bidi.algorithm import get_display
 from ezdxf.fonts import fonts
@@ -17,7 +18,7 @@ from .standards import ISO_HEIGHTS, snap_text_height
 
 STYLE = "ARIAL"
 FONT = "arial.ttf"
-FALLBACK_FONTS = ("LiberationSans-Regular.ttf", "DejaVuSans.ttf")
+_BUNDLED_FONT = Path(__file__).resolve().parent / "fonts" / "LiberationSans-Regular.ttf"
 WIDTH_MARGIN = 1.05
 RTL_PARA = "\\pxqr;"
 LINE_SPACING = 1.667                      # MTEXT default line pitch, x char height
@@ -60,15 +61,36 @@ def plain(s: str) -> str:
     return s
 
 
+def _pin_measurement_font() -> None:
+    """Measure the ARIAL style with one bundled face on every operating system.
+
+    The DXF style stays ``arial.ttf``. On Windows that name is the installed Arial, whose
+    advances differ from the Liberation Sans Linux already uses, and those differences move
+    labels onto views. The bundled file is that same Liberation Sans.
+    """
+    manager = fonts.font_manager
+    manager.scan_folder(_BUNDLED_FONT.parent)
+    cache = manager._font_cache
+    entry = cache.get(_BUNDLED_FONT.name, manager.fallback_font_name())
+    if Path(entry.file_path).resolve() != _BUNDLED_FONT.resolve():
+        raise FileNotFoundError(_BUNDLED_FONT)
+    cache[FONT] = entry
+    loaded = getattr(manager, "_loaded_ttf_fonts", None)
+    if isinstance(loaded, dict):
+        loaded.pop(FONT, None)
+        loaded.pop(_BUNDLED_FONT.name, None)
+    glyphs = getattr(fonts.TrueTypeFont, "_glyph_caches", None)
+    if isinstance(glyphs, dict):
+        glyphs.pop(FONT.lower(), None)
+        glyphs.pop(_BUNDLED_FONT.name.lower(), None)
+
+
+_pin_measurement_font()
+
+
 @lru_cache(maxsize=1)
 def font():
-    """Arial metrics at cap height 1 via ezdxf; without Arial (Linux) use metric-compatible Liberation Sans."""
-    fm = fonts.font_manager
-    if not fm.has_font(FONT):
-        for name in FALLBACK_FONTS:
-            if fm.has_font(name):
-                fm.add_synonyms({name: FONT}, reverse=False)
-                break
+    """Bundled Liberation Sans metrics at cap height 1, under the ARIAL style name."""
     return fonts.make_font(FONT, 1.0)
 
 

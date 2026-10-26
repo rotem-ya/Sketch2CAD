@@ -702,6 +702,15 @@ def test_full_sheet_stays_inside_the_frame(tmp_path):
     assert linework_hits_text(doc.modelspace()) == []
 
 
+def test_text_is_measured_with_the_bundled_face():
+    from ezdxf.fonts import fonts as ezfonts
+    from sketch2cad.drawing import text as drawing_text
+
+    manager = ezfonts.font_manager
+    entry = manager._font_cache.get(drawing_text.FONT, manager.fallback_font_name())
+    assert Path(entry.file_path).resolve() == drawing_text._BUNDLED_FONT.resolve()
+
+
 def test_title_height_rounds_up_and_is_not_shrunk():
     from sketch2cad.drawing.standards import snap_text_height
     from sketch2cad.templates import draw_titleblock, load_template
