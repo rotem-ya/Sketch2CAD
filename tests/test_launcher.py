@@ -127,48 +127,100 @@ def test_open_reports_a_server_that_does_not_come_up(monkeypatch):
 
 
 # -------------------------------------------------------------------------------------- stop/status
+def test_linux_start_token_is_stat_field_22():
+    rest = ["S", "1"] + ["0"] * 17 + ["99999"]
+    assert len(rest) == 20 and rest[19] == "99999"
+    stat = "12 (py thon) " + " ".join(rest)
+    assert launcher._linux_start_token(stat) == "99999"
+    assert launcher._linux_stat_fields(stat)[1] == "1"
+
+
 def test_stop_terminates_the_supervisor_from_the_pid_file(monkeypatch, capsys):
     launcher.pid_file().write_text("4242", encoding="utf-8")
     killed = []
     monkeypatch.setattr(launcher, "terminate_pid", killed.append)
     monkeypatch.setattr(launcher, "pid_alive", lambda pid: True)
-    monkeypatch.setattr(launcher, "_process_is_python", lambda pid: True)
-    monkeypatch.setattr(launcher, "_image_basename", lambda pid: "pythonw.exe" if pid == 4242 else None)
-    monkeypatch.setattr(launcher, "_child_pids", lambda pid: [])
+    monkeypatch.setattr(launcher, "_process_facts", lambda pid: ("pythonw.exe", "1000") if pid == 4242 else (None, None))
+    monkeypatch.setattr(launcher, "_child_facts", lambda pid: [])
     _alive(monkeypatch, [True, False])
     assert launcher.main(["--stop"]) == 0 and killed == [4242] and not launcher.pid_file().exists()
-    assert "stopped" in capsys.readouterr().out
+    assert "Sketch2CAD is stopped." in capsys.readouterr().out
 
 
-def test_stop_kills_the_server_tree_only_after_the_image_matches(monkeypatch, capsys):
-    """The supervisor's child server is stopped too. A reused pid with another image is not."""
-    launcher.pid_file().write_text("4242", encoding="utf-8")
-    images = {4242: "pythonw.exe", 5001: "python.exe", 5002: "notepad.exe"}
-    children = {4242: [5001, 5002], 5001: [], 5002: []}
+def test_stop_kills_a_child_created_after_its_parent(monkeypatch, capsys):
+    """Normal tree: the server started after the supervisor. A non-Python process is not entered."""
+    launcher.pid_file().write_text("4242 1000", encoding="utf-8")
+    children = {
+        4242: [(5001, "python.exe", "1100"), (5002, "notepad.exe", "1050")],
+        5002: [(5003, "python.exe", "1200")],
+    }
     killed = []
     monkeypatch.setattr(launcher, "terminate_pid", killed.append)
     monkeypatch.setattr(launcher, "pid_alive", lambda pid: True)
-    monkeypatch.setattr(launcher, "_process_is_python", lambda pid: True)
-    monkeypatch.setattr(launcher, "_image_basename", lambda pid: images.get(pid))
-    monkeypatch.setattr(launcher, "_child_pids", lambda pid: list(children.get(pid, [])))
+    monkeypatch.setattr(launcher, "_process_facts", lambda pid: ("pythonw.exe", "1000") if pid == 4242 else (None, None))
+    monkeypatch.setattr(launcher, "_child_facts", lambda pid: list(children.get(pid, [])))
     _alive(monkeypatch, [True, False])
     assert launcher.main(["--stop"]) == 0
     assert killed == [5001, 4242]
-    assert 5002 not in killed
+    assert 5002 not in killed and 5003 not in killed
     assert not launcher.pid_file().exists()
-    assert "stopped" in capsys.readouterr().out
+    assert "Sketch2CAD is stopped." in capsys.readouterr().out
 
 
-def test_stop_does_not_kill_when_the_image_cannot_be_read(monkeypatch):
+def test_stop_skips_a_child_older_than_the_reused_parent(monkeypatch, capsys):
+    """Windows keeps a dead parent's pid on its orphans. An older Python process is not ours."""
+    launcher.pid_file().write_text("4242 1000", encoding="utf-8")
+    children = {
+        4242: [(5001, "python.exe", "500"), (5004, "python.exe", "1300")],
+    }
+    killed = []
+    monkeypatch.setattr(launcher, "terminate_pid", killed.append)
+    monkeypatch.setattr(launcher, "pid_alive", lambda pid: True)
+    monkeypatch.setattr(launcher, "_process_facts", lambda pid: ("python.exe", "1000") if pid == 4242 else (None, None))
+    monkeypatch.setattr(launcher, "_child_facts", lambda pid: list(children.get(pid, [])))
+    _alive(monkeypatch, [True, False])
+    assert launcher.main(["--stop"]) == 0
+    assert killed == [5004, 4242]
+    assert 5001 not in killed
+    assert "Sketch2CAD is stopped." in capsys.readouterr().out
+
+
+def test_stop_does_not_kill_a_reused_supervisor_pid(monkeypatch, capsys):
+    launcher.pid_file().write_text("4242 1000", encoding="utf-8")
+    monkeypatch.setattr(launcher, "terminate_pid", lambda pid: pytest.fail("reused pid must not be killed"))
+    monkeypatch.setattr(launcher, "pid_alive", lambda pid: True)
+    monkeypatch.setattr(launcher, "_process_facts", lambda pid: ("python.exe", "5000"))
+    monkeypatch.setattr(launcher, "_child_facts", lambda pid: [(5001, "python.exe", "5100")])
+    _alive(monkeypatch, [False])
+    assert launcher.main(["--stop"]) == 0
+    assert not launcher.pid_file().exists()
+    out = capsys.readouterr().out
+    assert "Sketch2CAD is stopped." not in out
+    assert "not running" in out
+
+
+def test_stop_does_not_kill_when_the_image_cannot_be_read(monkeypatch, capsys):
     launcher.pid_file().write_text("4242", encoding="utf-8")
     monkeypatch.setattr(launcher, "terminate_pid", lambda pid: pytest.fail("unverified pid must not be killed"))
     monkeypatch.setattr(launcher, "pid_alive", lambda pid: True)
-    monkeypatch.setattr(launcher, "_process_is_python", lambda pid: True)
-    monkeypatch.setattr(launcher, "_image_basename", lambda pid: None)
-    monkeypatch.setattr(launcher, "_child_pids", lambda pid: [])
+    monkeypatch.setattr(launcher, "_process_facts", lambda pid: (None, None))
+    monkeypatch.setattr(launcher, "_child_facts", lambda pid: [])
     _alive(monkeypatch, [False])
     assert launcher.main(["--stop"]) == 0
     assert launcher.pid_file().read_text(encoding="utf-8").strip() == "4242"
+    assert "Sketch2CAD is stopped." not in capsys.readouterr().out
+
+
+def test_stop_keeps_the_pid_file_when_the_kill_is_refused(monkeypatch, capsys):
+    launcher.pid_file().write_text("4242 1000", encoding="utf-8")
+    monkeypatch.setattr(launcher, "terminate_pid", lambda pid: False)
+    monkeypatch.setattr(launcher, "pid_alive", lambda pid: True)
+    monkeypatch.setattr(launcher, "_process_facts", lambda pid: ("python.exe", "1000") if pid == 4242 else (None, None))
+    monkeypatch.setattr(launcher, "_child_facts", lambda pid: [])
+    _alive(monkeypatch, [False])
+    assert launcher.main(["--stop"]) == 0
+    assert "4242" in launcher.pid_file().read_text(encoding="utf-8")
+    assert "Sketch2CAD is stopped." not in capsys.readouterr().out
 
 
 def test_stop_removes_a_stale_pid_without_killing(monkeypatch, capsys):

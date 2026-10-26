@@ -320,6 +320,35 @@ def test_project_qa_is_saved_and_overrides_the_minimum(tmp_path):
     assert QA_DEFAULTS["min_slopes"][0]["slope"] == 0.015
 
 
+def test_qa_widths_stay_on_the_bundled_face_without_system_fonts():
+    """Removing Liberation Sans from matplotlib must not change a QA width."""
+    from matplotlib import font_manager
+
+    from sketch2cad.drawing.text import _BUNDLED_FONT
+    from sketch2cad.qa import _cap_height, _ink_font, _ink_width
+
+    sample = "DRAINAGE GENERAL ARRANGEMENT"
+    hebrew = "תוכנית ניקוז"
+    before = _ink_width(sample, 3.5)
+    before_he = _ink_width(hebrew, 3.5, hebrew=True)
+    saved = list(font_manager.fontManager.ttflist)
+    try:
+        font_manager.fontManager.ttflist = [
+            entry for entry in saved
+            if "liberation" not in entry.name.lower() and "liberation" not in Path(entry.fname).name.lower()
+        ]
+        _ink_font.cache_clear()
+        _cap_height.cache_clear()
+        assert Path(_ink_font(False)) == _BUNDLED_FONT
+        assert Path(_ink_font(True)) == _BUNDLED_FONT
+        assert _ink_width(sample, 3.5) == before
+        assert _ink_width(hebrew, 3.5, hebrew=True) == before_he
+    finally:
+        font_manager.fontManager.ttflist = saved
+        _ink_font.cache_clear()
+        _cap_height.cache_clear()
+
+
 def test_overlay_circles_the_problem_and_the_import_report_points_at_it(tmp_path):
     spec = _spec([
         {"id": "t1", "type": "text", "at": [500, 1500], "height": 2.5, "text": "HELLO"},

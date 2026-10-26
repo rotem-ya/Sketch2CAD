@@ -21,7 +21,7 @@ from functools import lru_cache
 from pathlib import Path
 
 from .checks import Finding
-from .drawing.text import LINE_SPACING, has_hebrew, plain, to_visual
+from .drawing.text import LINE_SPACING, _BUNDLED_FONT, has_hebrew, plain, to_visual
 
 QA_DEFAULTS = {
     "min_text_mm": 2.5,
@@ -1223,7 +1223,7 @@ def write_overlay(spec: dict, path, catalog=None, project=None) -> str | None:
     m = scene.margin
     pw, ph = scene.paper
     ax.add_patch(Rectangle((-m, -m), pw, ph, fill=False, ec="#9aa3ad", lw=0.6, zorder=2))
-    font = font_manager.FontProperties(family="DejaVu Sans")
+    font = font_manager.FontProperties(fname=str(_BUNDLED_FONT))
     for marker in markers:
         color = SEVERITY_COLOR.get(marker.severity, SEVERITY_COLOR["info"])
         ax.add_patch(Rectangle((marker.x0, marker.y0), marker.x1 - marker.x0, marker.y1 - marker.y0,
@@ -1559,10 +1559,13 @@ def _text_entities(entity) -> list:
 
 @lru_cache(maxsize=4)
 def _ink_font(hebrew: bool) -> str:
-    """Liberation Sans is the Arial-metric face. DejaVu Sans supplies Hebrew glyphs."""
-    from matplotlib.font_manager import FontProperties, findfont
-    family = "DejaVu Sans" if hebrew else "Liberation Sans"
-    return findfont(FontProperties(family=family), fallback_to_default=True)
+    """The bundled Liberation Sans for every QA width, Latin and Hebrew.
+
+    matplotlib's ``findfont`` falls back to DejaVu Sans when Liberation Sans is not installed,
+    which changes the overlap boxes on Windows. The file path does not consult that search.
+    """
+    del hebrew
+    return str(_BUNDLED_FONT)
 
 
 @lru_cache(maxsize=4)

@@ -240,5 +240,5 @@ Paths are relative to the project folder. A trial import does not change `spec.j
   visual order with `python-bidi` **after** replacing `%%c` → `Ø`. Do NOT do this for text drawn with matplotlib's own
   `ax.text` – matplotlib ≥ 3.11 shapes RTL itself (libraqm) and would reverse it again.
 - PDF built with PyMuPDF HTML (package / print set): logical order; see `sketch2cad/pdfdoc.py` for RLM / LRE rules.
-- Text style `ARIAL` (`arial.ttf`) for everything. Widths, including a missing style and ezdxf's default face, are measured with the bundled Liberation Sans 2.1.5 (the same file on every system), not with the installed system font. Diameter sign: `%%c`.
+- Text style `ARIAL` (`arial.ttf`) for everything. Layout widths, including a missing style and ezdxf's default face, and QA ink widths (Latin and Hebrew) are measured with the bundled Liberation Sans 2.1.5 (the same file on every system), not with the installed system font. Diameter sign: `%%c`.
 - Avoid parentheses around mixed Hebrew/Latin in Hebrew strings (use " - ").
