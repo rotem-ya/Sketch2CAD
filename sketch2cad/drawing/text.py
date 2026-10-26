@@ -19,6 +19,7 @@ FALLBACK_FONTS = ("LiberationSans-Regular.ttf", "DejaVuSans.ttf")
 WIDTH_MARGIN = 1.05
 RTL_PARA = "\\pxqr;"
 LINE_SPACING = 1.667                      # MTEXT default line pitch, x char height
+ISO_HEIGHTS = (2.5, 3.5, 5.0, 7.0)        # ISO 3098 lettering, millimetres on paper
 HEBREW = re.compile(r"[\u0590-\u05FF]")
 SPECIAL = (("%%c", "Ø"), ("%%C", "Ø"), ("%%d", "°"), ("%%D", "°"), ("%%p", "±"), ("%%P", "±"))
 
@@ -68,6 +69,12 @@ def font():
                 fm.add_synonyms({name: FONT}, reverse=False)
                 break
     return fonts.make_font(FONT, 1.0)
+
+
+def snap_text_height(mm: float) -> float:
+    """Nearest ISO 3098 paper height (2.5, 3.5, 5, 7 mm). A tie takes the larger size."""
+    value = abs(float(mm))
+    return min(ISO_HEIGHTS, key=lambda height: (abs(height - value), -height))
 
 
 def text_width(s: str, h: float) -> float:

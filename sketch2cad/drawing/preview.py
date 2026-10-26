@@ -51,15 +51,20 @@ def preview_doc(dxf_path: Path) -> ezdxf.document.Drawing:
     return doc
 
 
-def render_figure(doc, paper_rect, paper_mm):
-    """Matplotlib figure of exactly the paper size showing model space clipped to the paper rectangle."""
+def render_figure(doc, paper_rect, paper_mm, layout=None):
+    """Matplotlib figure of exactly the paper size.
+
+    A single-view sheet is model space clipped to the paper rectangle. A multi-view sheet is the
+    named paper-space layout, including each VIEWPORT at its own scale.
+    """
     font()                                        # registers the Arial look-alike when needed
     w_in, h_in = paper_mm[0] / MM_PER_INCH, paper_mm[1] / MM_PER_INCH
     fig = plt.figure(figsize=(w_in, h_in))
     ax = fig.add_axes((0, 0, 1, 1))
     config = Configuration(background_policy=BackgroundPolicy.WHITE, color_policy=ColorPolicy.COLOR,
                            lineweight_policy=LineweightPolicy.ABSOLUTE)
-    Frontend(RenderContext(doc), _Backend(ax, adjust_figure=False), config=config).draw_layout(doc.modelspace())
+    space = doc.modelspace() if not layout else doc.layouts.get(layout)
+    Frontend(RenderContext(doc), _Backend(ax, adjust_figure=False), config=config).draw_layout(space)
     x0, y0, x1, y1 = paper_rect
     ax.set_adjustable("box")
     ax.set_xlim(x0, x1)
@@ -68,9 +73,9 @@ def render_figure(doc, paper_rect, paper_mm):
     return fig
 
 
-def export(dxf_path: Path, outputs: dict[str, Path], paper_rect, paper_mm) -> None:
+def export(dxf_path: Path, outputs: dict[str, Path], paper_rect, paper_mm, layout=None) -> None:
     """Write the requested previews: outputs = {"pdf": path, "png": path} (either may be missing)."""
-    fig = render_figure(preview_doc(dxf_path), paper_rect, paper_mm)
+    fig = render_figure(preview_doc(dxf_path), paper_rect, paper_mm, layout=layout)
     try:
         if "pdf" in outputs:
             fig.savefig(outputs["pdf"], facecolor="white")

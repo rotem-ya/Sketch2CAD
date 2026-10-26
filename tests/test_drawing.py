@@ -49,6 +49,23 @@ def all_texts(doc) -> list[str]:
     return [e.text if e.dxftype() == "MTEXT" else e.dxf.text for e in msp.query("TEXT MTEXT")]
 
 
+def assert_submission(doc) -> None:
+    """Every entity is BYLAYER, and layers 0 and DEFPOINTS hold no geometry."""
+    for block in doc.blocks:
+        for entity in block:
+            if not entity.dxf.hasattr("layer"):
+                continue
+            assert entity.dxf.layer.upper() not in {"0", "DEFPOINTS"}, (
+                block.name, entity.dxftype(), entity.dxf.layer)
+            if entity.dxf.hasattr("color"):
+                assert entity.dxf.color == 256, (block.name, entity.dxftype(), entity.dxf.color)
+            if entity.dxf.hasattr("linetype") and entity.dxf.linetype:
+                assert entity.dxf.linetype.upper() == "BYLAYER", (
+                    block.name, entity.dxftype(), entity.dxf.linetype)
+            if entity.dxf.hasattr("lineweight"):
+                assert entity.dxf.lineweight == -1, (block.name, entity.dxftype(), entity.dxf.lineweight)
+
+
 def dimension_texts(doc) -> list[str]:
     """The rendered text of every DIMENSION (what AutoCAD shows)."""
     out = []
@@ -95,6 +112,7 @@ def test_render_examples(tmp_path, catalog, name, units, hebrew, dims):
     for value in dims:                                                  # dimlfac 1: no x100 values
         assert value in shown
     assert not any(s.startswith(("22900", "6220")) for s in shown)
+    assert_submission(doc)
 
 
 def test_diameter_code_kept_in_dxf(tmp_path):
@@ -184,10 +202,14 @@ def test_below_grade_dashed_and_proposed_red(tmp_path):
         {"id": "a", "type": "pipe", "status": "proposed", "below_grade": True, "od": 100,
          "points": [[0, 0], [1000, 0]]}]}
     doc = ezdxf.readfile(render(spec, tmp_path, "d", catalog=FakeCatalog(), formats=("dxf",))["dxf"])
-    lines = doc.modelspace().query("LWPOLYLINE[layer=='PROPOSED']")
-    assert len(lines) == 2 and all(p.dxf.linetype == "DASHED" for p in lines)
+    lines = doc.modelspace().query("LWPOLYLINE[layer=='PROPOSED_DASH']")
+    assert len(lines) == 2
+    assert all(p.dxf.linetype == "BYLAYER" and p.dxf.color == 256 for p in lines)
+    assert doc.layers.get("PROPOSED_DASH").dxf.linetype == "DASHED"
     assert doc.layers.get("PROPOSED").color == 1
+    assert doc.layers.get("PROPOSED_DASH").color == 1
     assert doc.layers.get("EXISTING").color == 8
+    assert_submission(doc)
 
 
 def test_language_modes(tmp_path):
@@ -293,3 +315,219 @@ def test_preview_text_is_drawn_as_paths_not_matplotlib_text(tmp_path):
         assert len(fig.axes[0].texts) == 0 and len(fig.axes[0].patches) > 0
     finally:
         preview.plt.close(fig)
+
+
+# ------------------------------------------------------------------ labels and multi-view sheets
+ISO = {2.5, 3.5, 5.0, 7.0}
+
+
+def dense_plan() -> dict:
+    """A 1:400 plan where a trench and a pipe 1 m apart would otherwise stack their labels."""
+    return {
+        "version": 1, "units": "m", "scale": 400, "paper": "A3", "language": "both", "view": "PLAN",
+        "sheet": {"template": "a3_simple", "fields": {
+            "title_en": "DRAIN PLAN", "title_he": "תוכנית ניקוז", "line3": "SYNTHETIC"}},
+        "elements": [
+            {"id": "bldg", "type": "rect", "status": "existing", "corners": [[0, 0], [94.3, 52]]},
+            {"id": "trench", "type": "trench_drain", "status": "new", "width": 0.32,
+             "points": [[20, 10], [55, 10]], "label": {"en": "TRENCH DRAIN", "he": "תעלת ניקוז"}},
+            {"id": "pipe", "type": "pipe", "status": "new", "od": 0.2,
+             "points": [[20, 11], [55, 11]], "label": {"en": "BT PIPE", "he": "צינור בטון"}},
+            {"id": "mh1", "type": "circle", "status": "existing", "at": [20, 10], "radius": 0.6,
+             "label": {"en": "MH-1 INV 225.20", "he": "שוחה 1"}},
+            {"id": "mh2", "type": "circle", "status": "existing", "at": [55, 11], "radius": 0.6,
+             "label": {"en": "MH-2 INV 224.94", "he": "שוחה 2"}},
+            {"id": "note", "type": "text", "at": [70, 40], "height": 2.5,
+             "text": {"en": "INV SEE PROFILE", "he": "רום בחתך"}},
+        ],
+        "dimensions": [
+            {"type": "chain", "points": [[0, 0], [40, 0], [94.3, 0]], "axis": "h", "base": -4, "decimals": 1},
+        ],
+    }
+
+
+def _fingerprint(doc) -> list:
+    rows = []
+    for entity in doc.modelspace():
+        kind = entity.dxftype()
+        if kind == "TEXT":
+            rows.append((kind, entity.dxf.text, round(entity.dxf.insert.x, 4), round(entity.dxf.insert.y, 4)))
+        elif kind == "MTEXT":
+            rows.append((kind, entity.text, round(entity.dxf.insert.x, 4), round(entity.dxf.insert.y, 4)))
+        elif kind == "LINE":
+            rows.append((kind, round(entity.dxf.start.x, 4), round(entity.dxf.start.y, 4),
+                         round(entity.dxf.end.x, 4), round(entity.dxf.end.y, 4)))
+        elif kind == "DIMENSION":
+            rows.append((kind, round(entity.dxf.defpoint.x, 4), round(entity.dxf.defpoint.y, 4),
+                         entity.dxf.text))
+    return rows
+
+
+def _inserts_of(doc, fragment: str) -> list[tuple[float, float]]:
+    found = []
+    for entity in doc.modelspace().query("TEXT MTEXT"):
+        text = entity.text if entity.dxftype() == "MTEXT" else entity.dxf.text
+        if fragment in text:
+            found.append((entity.dxf.insert.x, entity.dxf.insert.y))
+    return found
+
+
+def test_dense_labels_do_not_overlap(tmp_path):
+    from sketch2cad.drawing.place import overlapping_text
+
+    res = render(dense_plan(), tmp_path, "dense", formats=("dxf", "png"))
+    doc = ezdxf.readfile(res["dxf"])
+    hits = overlapping_text(doc.modelspace())
+    assert hits == [], hits
+    assert_submission(doc)
+    assert res["png"].stat().st_size > 1000
+
+
+def test_label_placement_is_deterministic(tmp_path):
+    first = _fingerprint(ezdxf.readfile(render(dense_plan(), tmp_path, "a", formats=("dxf",))["dxf"]))
+    second = _fingerprint(ezdxf.readfile(render(dense_plan(), tmp_path, "b", formats=("dxf",))["dxf"]))
+    assert first == second
+    assert len(first) > 5
+
+
+def test_label_at_is_a_hint_and_pinned_stays(tmp_path):
+    spec = {"units": "mm", "scale": 10, "language": "en", "elements": [
+        {"id": "a", "type": "circle", "at": [0, 0], "radius": 4,
+         "label": {"en": "ALPHA LABEL"}, "label_at": [80, 80]},
+        {"id": "b", "type": "circle", "at": [0, 200], "radius": 4,
+         "label": {"en": "BETA LABEL"}, "label_at": [80, 80]},
+        {"id": "c", "type": "circle", "at": [2000, 0], "radius": 4,
+         "label": {"en": "CLEAR"}, "label_at": [2100, 40]},
+        {"id": "d", "type": "circle", "at": [4000, 0], "radius": 4,
+         "label": {"en": "PINNED"}, "label_at": [80, 80], "label_pinned": True},
+    ]}
+    doc = ezdxf.readfile(render(spec, tmp_path, "hint", formats=("dxf",))["dxf"])
+    pinned = _inserts_of(doc, "PINNED")
+    clear = _inserts_of(doc, "CLEAR")
+    alpha = _inserts_of(doc, "ALPHA")
+    beta = _inserts_of(doc, "BETA")
+    assert pinned == [(80, 80)]
+    assert clear == [(2100, 40)]
+    # the pinned label owns (80, 80); both hints that asked for it have to move
+    assert alpha and beta
+    assert all(point != (80, 80) for point in alpha + beta)
+    from sketch2cad.drawing.place import overlapping_text
+    assert overlapping_text(doc.modelspace()) == []
+
+
+def test_text_heights_follow_iso_3098(tmp_path):
+    doc = ezdxf.readfile(render(dense_plan(), tmp_path, "iso", formats=("dxf",))["dxf"])
+    k = 400 * 0.001
+    for entity in doc.modelspace().query("TEXT MTEXT"):
+        if entity.dxf.layer == "FRAME":
+            continue
+        height = entity.dxf.char_height if entity.dxftype() == "MTEXT" else entity.dxf.height
+        assert round(height / k, 3) in ISO
+    for dim in doc.modelspace().query("DIMENSION"):
+        for entity in dim.virtual_entities():
+            if entity.dxftype() == "MTEXT":
+                assert round(entity.dxf.char_height / k, 3) in ISO
+
+
+def multiview_spec() -> dict:
+    return {
+        "version": 1, "units": "m", "scale": 400, "paper": "A3", "language": "both", "view": "PLAN",
+        "sheet": {"template": "a3_simple", "fields": {"title_en": "MULTI VIEW", "title_he": "רב מבט"}},
+        "elements": [
+            {"id": "bldg", "type": "rect", "status": "existing", "corners": [[0, 0], [94.3, 52]]},
+            {"id": "trench", "type": "trench_drain", "status": "new", "width": 0.3,
+             "points": [[10, 20], [40, 20]], "label": {"en": "TRENCH", "he": "תעלה"}},
+        ],
+        "dimensions": [{"type": "chain", "points": [[0, 0], [94.3, 0]], "axis": "h", "base": -3, "decimals": 1}],
+        "views": [
+            {"id": "section-a", "title": {"en": "SECTION A-A", "he": "חתך א-א"}, "scale": 50,
+             "elements": [
+                 {"id": "ground", "type": "polyline", "status": "existing", "style": "ground",
+                  "points": [[0, 0], [2.4, 0]]},
+                 {"id": "wall", "type": "rect", "status": "new", "corners": [[0.4, 0], [1.6, 1.1]],
+                  "label": {"en": "WALL", "he": "קיר"}},
+             ],
+             "dimensions": [{"type": "chain", "points": [[0.4, 0], [1.6, 0]], "axis": "h",
+                             "base": -0.3, "decimals": 2}]},
+            {"id": "detail-1", "title": {"en": "DETAIL 1", "he": "פרט 1"}, "scale": 25,
+             "elements": [
+                 {"id": "box", "type": "rect", "status": "new", "corners": [[-0.5, -0.5], [0.5, 0.5]]},
+                 {"id": "grate", "type": "circle", "status": "new", "at": [0, 0], "radius": 0.3,
+                  "label": {"en": "GRATE", "he": "רשת"}},
+             ]},
+        ],
+    }
+
+
+def _viewport_scales(doc, units: str) -> list[float]:
+    u = 0.001 if units == "m" else 1.0
+    layout = doc.layouts.get("SHEET")
+    scales = []
+    for vp in layout.query("VIEWPORT"):
+        if vp.dxf.status <= 1 or vp.dxf.height <= 0:
+            continue
+        scales.append((vp.dxf.view_height / vp.dxf.height) / u)
+    return sorted(round(scale, 4) for scale in scales)
+
+
+def test_multiview_sheet_plan_section_detail(tmp_path):
+    res = render(multiview_spec(), tmp_path, "sheet", formats=("dxf", "png", "pdf"))
+    doc = ezdxf.readfile(res["dxf"])
+    assert res["layout"] == "SHEET"
+    assert _viewport_scales(doc, "m") == [25.0, 50.0, 400.0]
+    psp = doc.layouts.get("SHEET")
+    texts = [e.text if e.dxftype() == "MTEXT" else e.dxf.text for e in psp.query("TEXT MTEXT")]
+    joined = "\n".join(texts)
+    for fragment in ("PLAN", "1:400", "SECTION A-A", "1:50", "DETAIL 1", "1:25", "חתך"):
+        assert fragment in joined
+    for entity in psp.query("TEXT MTEXT"):
+        if entity.dxf.layer == "FRAME":
+            continue
+        height = entity.dxf.char_height if entity.dxftype() == "MTEXT" else entity.dxf.height
+        assert round(height, 3) in ISO
+    assert_submission(doc)
+    # the preview actually drew the viewports, not a blank page
+    from PIL import Image
+    import numpy as np
+    ink = np.asarray(Image.open(res["png"]).convert("L"))
+    assert (ink < 250).mean() > 0.002
+    with pymupdf.open(res["pdf"]) as pdf:
+        page = pdf[0].rect
+        assert (page.width * 25.4 / 72, page.height * 25.4 / 72) == pytest.approx((420, 297), abs=0.5)
+
+
+def test_nts_view_is_labelled_and_fitted(tmp_path):
+    spec = {"units": "mm", "scale": 100, "paper": "A3", "language": "en", "view": "PLAN",
+            "elements": [{"id": "r", "type": "rect", "status": "existing", "corners": [[0, 0], [5000, 3000]]}],
+            "views": [{"id": "scrap", "title": "SCRAP", "scale": "NTS", "fit_mm": 60,
+                       "elements": [{"id": "c", "type": "circle", "status": "new", "at": [0, 0], "radius": 40},
+                                    {"id": "e", "type": "rect", "status": "new",
+                                     "corners": [[0, 0], [80, 40]]}]}]}
+    doc = ezdxf.readfile(render(spec, tmp_path, "nts", formats=("dxf",))["dxf"])
+    texts = [e.dxf.text for e in doc.layouts.get("SHEET").query("TEXT")]
+    assert "NTS" in texts and "SCRAP" in texts
+    scales = _viewport_scales(doc, "mm")
+    assert 100 in [round(s) for s in scales]
+    assert any(s != 100 for s in scales)
+
+
+def test_views_round_trip_and_old_specs_stay_compatible():
+    from sketch2cad.spec import normalize_spec, parse_reply
+
+    bare = {"units": "mm", "scale": 15, "elements": [
+        {"id": "circle-25", "type": "circle", "status": "existing", "at": [365, 1150], "radius": 22}]}
+    spec, warnings = normalize_spec(bare)
+    assert "views" not in spec and spec["elements"] == bare["elements"]
+    assert not any("Dropped" in warning for warning in warnings)
+
+    bad_view = {"views": [{"id": "s", "scale": 50, "elements": [{"type": "spaceship"}, {"type": "circle",
+                "at": [0, 0], "radius": 1}]}]}
+    spec, warnings = normalize_spec(bad_view)
+    assert spec["views"][0]["id"] == "s" and spec["views"][0]["elements"][0]["type"] == "circle"
+    assert any("spaceship" in warning for warning in warnings)
+
+    with pytest.raises(ValueError):
+        parse_reply('{"views": [{"id": "a", "scale": "huge"}]}')
+    parsed = parse_reply('```json\n{"spec": {"views": [{"id": "a", "scale": "nts", "elements": []}]}}\n```')
+    assert parsed["spec"]["views"][0]["scale"] == "nts"
+    assert parse_reply('{"scale": 20, "elements": []}')["scale"] == 20

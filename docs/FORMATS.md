@@ -46,9 +46,19 @@ one paper-mm = `scale` mm of model space (or `scale/1000` m).
 
 Extra keys supported by the renderer:
 - element type `circle` (`at`, `radius`) for small fittings;
-- any element: `centerline`, `label_at`, `label_align`, `leader`, `leader_to`; block size overrides `D`, `t`, `L`, `H`, `Dt`;
+- any element: `centerline`, `label_at`, `label_align`, `label_pinned`, `leader`, `leader_to`; block size overrides `D`, `t`, `L`, `H`, `Dt`;
 - `manhole`: `cover_item` (own BOM line), `cover_status`, `di` / `do`, `grate_size`; `connector`: `height`;
-- spec root: `notes_at`, `sheet.origin`, `style` (text sizes in paper mm); dimension: `decimals`.
+- spec root: `notes_at`, `sheet.origin`, `style` (text sizes in paper mm), `views` (see 1.4); dimension: `decimals`.
+
+Element labels are placed deterministically. `label_at` is the first candidate, in drawing units. It is kept when the
+text box (real paper height × scale, font-width estimate, both lines of an en/he label) is clear of other text,
+dimension text and drawn linework; otherwise the label is nudged and a leader is added or extended. `label_pinned: true`
+keeps that point even when it collides. A `text` element is not nudged. The same spec always produces the same sheet.
+
+Paper text heights snap to the ISO 3098 set **2.5 / 3.5 / 5 / 7 mm** (a tie takes the larger size). ezdxf cannot
+create annotative text, so model-space text height is that paper height times the view's scale denominator.
+Entities are BYLAYER. Layers `0` and `DEFPOINTS` hold no geometry: below-grade work goes on `EXISTING_DASH`,
+`NEW_DASH` or `PROPOSED_DASH` instead of a per-entity linetype.
 
 ### 1.2 Dimensions
 ```json
@@ -63,6 +73,40 @@ Extra keys supported by the renderer:
 ```
 Each balloon i gets a leader to targets[i]. The legend table lists No | DESCRIPTION | תיאור.
 Table placement: `legend_at` [x, y] in the spec root (top-left of the table), optional.
+On a multi-view sheet (1.4) `legend_at` and `notes_at` are paper millimetres from the frame's bottom-left,
+because the legend and the notes are drawn in paper space.
+
+### 1.4 Views – more than one scale on a sheet
+`scale` on the spec root is the **primary** view (the root `elements` and `dimensions`). Optional `views`
+adds further views on the same sheet. A spec with no `views` key is unchanged.
+
+```json
+"views": [
+  {
+    "id": "section-a",
+    "title": {"en": "SECTION A-A", "he": "חתך א-א"},
+    "scale": 50,
+    "origin_on_sheet": [280, 40],
+    "elements": [],
+    "dimensions": []
+  },
+  {"id": "detail-1", "title": {"en": "DETAIL 1"}, "scale": "NTS", "fit_mm": 80, "elements": []}
+]
+```
+
+| key | meaning |
+|---|---|
+| `id` | unique on the sheet |
+| `title` | string or `{en, he}`, drawn above the view |
+| `scale` | positive number, or `"NTS"` |
+| `fit_mm` | longer side on paper when `scale` is `NTS` (default 80) |
+| `origin_on_sheet` | `[x, y]` paper mm from the frame's bottom-left, the bottom-left of the view window. Omitted: packed into free drawing-area space, primary view centred |
+| `elements`, `dimensions` | same objects as the root lists, in drawing units |
+
+Each view is real model-space geometry (text height = paper height × that view's scale). The sheet is one
+paper-space layout plotted 1:1: a `VIEWPORT` per view at that scale, plus the title block, view titles,
+scale labels (`1:50` or `NTS`), legend and notes in paper space. Single-view sheets stay in model space,
+which is what existing specs already produce.
 
 ## 2. Catalog – `catalog/*.yaml` (repo) + optional `<project>/catalog.yaml`
 

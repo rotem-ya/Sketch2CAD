@@ -33,11 +33,110 @@ def _catalog_lines(catalog) -> str:
     return "\n".join(lines) or "(empty)"
 
 
+def _valid_scale(scale) -> bool:
+    if isinstance(scale, str):
+        return scale.strip().upper() == "NTS"
+    if isinstance(scale, bool) or not isinstance(scale, (int, float)):
+        return False
+    return scale > 0
+
+
+def _xy(value) -> bool:
+    if not isinstance(value, (list, tuple)) or len(value) != 2:
+        return False
+    return all(isinstance(part, (int, float)) and not isinstance(part, bool) for part in value)
+
+
+def _validate_views_strict(views) -> None:
+    """Raise ValueError when `views` is present and not a list of view objects."""
+    if views is None:
+        return
+    if not isinstance(views, list):
+        raise ValueError("views must be a list")
+    for index, view in enumerate(views):
+        if not isinstance(view, dict):
+            raise ValueError(f"view {index} must be an object")
+        if not _valid_scale(view.get("scale")):
+            raise ValueError(f"view {index}: scale must be a positive number or 'NTS'")
+        for key in ("elements", "dimensions"):
+            if key in view and not isinstance(view[key], list):
+                raise ValueError(f"view {index}: {key} must be a list")
+        if "origin_on_sheet" in view and view["origin_on_sheet"] is not None and not _xy(view["origin_on_sheet"]):
+            raise ValueError(f"view {index}: origin_on_sheet must be [x, y]")
+
+
 def parse_reply(text: str) -> dict:
-    """Extract the JSON object from a reply (tolerates a ```json fence)."""
+    """Extract the JSON object from a reply (tolerates a ```json fence).
+
+    A top-level `views` list, or one inside `spec`, is checked: each view needs a scale
+    (a positive number or \"NTS\") and list-shaped elements/dimensions. `normalize_spec`
+    is what drops unknown element types and fills defaults.
+    """
     fence = re.search(r"```(?:json)?\s*(\{.*\})\s*```", text, re.S)
     raw = fence.group(1) if fence else text[text.find("{"): text.rfind("}") + 1]
-    return json.loads(raw)
+    obj = json.loads(raw)
+    if isinstance(obj, dict):
+        _validate_views_strict(obj.get("views"))
+        spec = obj.get("spec")
+        if isinstance(spec, dict):
+            _validate_views_strict(spec.get("views"))
+    return obj
+
+
+def _normalize_elements(elements, warnings: list[str], label: str = "element") -> list:
+    kept, seen = [], set()
+    for i, el in enumerate(elements):
+        if not isinstance(el, dict) or el.get("type") not in ELEMENT_TYPES:
+            kind = el.get("type") if isinstance(el, dict) else el
+            warnings.append(f"Dropped {label} {i}: unknown type {kind!r}")
+            continue
+        el.setdefault("id", f"{el['type']}_{i}")
+        if el["id"] in seen:
+            el["id"] = f"{el['id']}_{i}"
+        seen.add(el["id"])
+        kept.append(el)
+    return kept
+
+
+def _normalize_views(spec: dict, warnings: list[str]) -> None:
+    if "views" not in spec:
+        return
+    views = spec.get("views")
+    if not isinstance(views, list):
+        warnings.append("views is not a list and was dropped")
+        spec["views"] = []
+        return
+    kept, seen = [], set()
+    for i, view in enumerate(views):
+        if not isinstance(view, dict):
+            warnings.append(f"Dropped view {i}: not an object")
+            continue
+        if not _valid_scale(view.get("scale")):
+            warnings.append(f"Dropped view {i}: scale must be a positive number or 'NTS'")
+            continue
+        view = dict(view)
+        if isinstance(view.get("scale"), str):
+            view["scale"] = "NTS"
+        vid = str(view.get("id") or f"view_{i}")
+        if vid in seen:
+            vid = f"{vid}_{i}"
+        seen.add(vid)
+        view["id"] = vid
+        if "origin_on_sheet" in view and not _xy(view.get("origin_on_sheet")):
+            warnings.append(f"view {vid}: origin_on_sheet must be [x, y] and was dropped")
+            view.pop("origin_on_sheet", None)
+        elements = view.get("elements", [])
+        if not isinstance(elements, list):
+            warnings.append(f"view {vid}: elements is not a list")
+            elements = []
+        view["elements"] = _normalize_elements(elements, warnings, f"view {vid} element")
+        dimensions = view.get("dimensions", [])
+        if not isinstance(dimensions, list):
+            warnings.append(f"view {vid}: dimensions is not a list")
+            dimensions = []
+        view["dimensions"] = dimensions
+        kept.append(view)
+    spec["views"] = kept
 
 
 def normalize_spec(spec: dict, *, units: str = "mm", language: str = "both") -> tuple[dict, list[str]]:
@@ -56,15 +155,6 @@ def normalize_spec(spec: dict, *, units: str = "mm", language: str = "both") -> 
             spec[key] = []
     spec.setdefault("notes", {"en": [], "he": []})
     spec.setdefault("params", {})
-    kept, seen = [], set()
-    for i, el in enumerate(spec["elements"]):
-        if not isinstance(el, dict) or el.get("type") not in ELEMENT_TYPES:
-            warnings.append(f"Dropped element {i}: unknown type {el.get('type') if isinstance(el, dict) else el!r}")
-            continue
-        el.setdefault("id", f"{el['type']}_{i}")
-        if el["id"] in seen:
-            el["id"] = f"{el['id']}_{i}"
-        seen.add(el["id"])
-        kept.append(el)
-    spec["elements"] = kept
+    spec["elements"] = _normalize_elements(spec["elements"], warnings)
+    _normalize_views(spec, warnings)
     return spec, warnings

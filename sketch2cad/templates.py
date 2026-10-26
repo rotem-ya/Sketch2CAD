@@ -17,7 +17,7 @@ import yaml
 from ezdxf.math import Vec2
 
 from . import config
-from .drawing.text import LINE_SPACING, put_text, text_width, wrap
+from .drawing.text import LINE_SPACING, put_text, snap_text_height, text_width, wrap
 
 REPO_DIR = Path(__file__).parents[1] / "templates"
 DEFAULTS = {"margin": 10.0, "frame_width": 0.7, "blocks": [], "fields": []}
@@ -145,14 +145,16 @@ def draw_titleblock(msp, template: dict, values: dict, scale: float, units: str,
 
     filled = defaultdict(str, {key: "" if v is None else str(v) for key, v in values.items()})
     for field in template["fields"]:
-        h = field.get("h", 2.5)
+        h = snap_text_height(field.get("h", 2.5))
         w = field.get("w", fw - field["x"] - 2)
         texts = {lang: _format(field[lang], filled) for lang in _pick_field(field, language)}
         texts = {lang: s for lang, s in texts.items() if s}
         both = len(texts) == 2
-        if both and "he_y" not in field:          # en left + he right on one line: shrink to fit
+        if both and "he_y" not in field:          # en left + he right on one line: largest ISO size that fits
             unit = text_width(texts["en"], 1.0) + text_width(texts["he"], 1.0)
-            h = min(h, (w - SAME_LINE_GAP) / unit)
+            fit = (w - SAME_LINE_GAP) / unit if unit else h
+            choices = [size for size in (2.5, 3.5, 5.0, 7.0) if size <= min(h, fit) + 1e-6]
+            h = max(choices) if choices else 2.5
         en_last = field["y"]                     # baseline of the last English line (a wrapped title grows down)
         for lang, s in texts.items():
             y = field["y"]

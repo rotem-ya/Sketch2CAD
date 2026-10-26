@@ -11,7 +11,7 @@ from typing import Callable
 from ezdxf.math import Vec2
 
 from .context import DrawContext
-from .text import LINE_SPACING, pick, put_text, text_width, wrap
+from .text import LINE_SPACING, pick, put_text, snap_text_height, text_width, wrap
 
 PAD_X, PAD_Y = 1.5, 1.0            # cell padding, paper mm
 GAP = 1.5                         # title -> table gap, paper mm
@@ -37,7 +37,9 @@ def draw_balloons(ctx: DrawContext, legend: list[dict]) -> None:
         balloons = [Vec2(b) for b in entry.get("balloons") or []]
         for b in balloons:
             ctx.msp.add_circle(b, r, dxfattribs=attribs)
-            put_text(ctx.msp, str(entry.get("no", "")), b, 0.78 * r, layer="LEGEND", align="MIDDLE_CENTER")
+            put_text(ctx.msp, str(entry.get("no", "")), b,
+                     ctx.paper(snap_text_height(0.78 * ctx.style["balloon_radius"])),
+                     layer="LEGEND", align="MIDDLE_CENTER")
         if not balloons:
             continue
         for i, t in enumerate(entry.get("targets") or []):

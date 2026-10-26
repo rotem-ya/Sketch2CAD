@@ -49,8 +49,12 @@ def _export_dwg(dxf_path: Path, out_dir: Path, warnings: list[str]) -> Path | No
 
 
 def render(spec: dict, out_dir, basename: str, *, project=None, document=None, catalog=None,
-           formats=("dxf", "pdf", "dwg", "png")) -> dict:
-    """Draw the spec on its title-block sheet and write the requested formats (DXF is always written)."""
+           formats=("dxf", "pdf", "dwg", "png"), place_labels=True) -> dict:
+    """Draw the spec on its title-block sheet and write the requested formats (DXF is always written).
+
+    `place_labels` nudges element labels off other text and linework. Set it false to keep the
+    authored point even when it collides (used to draw the "before" of a placement check).
+    """
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     warnings: list[str] = []
@@ -64,6 +68,8 @@ def render(spec: dict, out_dir, basename: str, *, project=None, document=None, c
     template = _load_template(sheet.get("template") or value_of(document, "titleblock")
                               or value_of(project, "default_titleblock") or DEFAULT_TEMPLATE, warnings)
     ctx = DrawContext(spec, catalog, language, warnings)
+    ctx.nudge_labels = place_labels
+    from . import views as sheet_views
 
     for i, el in enumerate(spec.get("elements", [])):
         try:
@@ -73,32 +79,43 @@ def render(spec: dict, out_dir, basename: str, *, project=None, document=None, c
     dims.draw_dimensions(ctx, spec.get("dimensions", []))
     entries = spec.get("legend", [])
     legend.draw_balloons(ctx, entries)
-
-    # legend table / notes: explicit positions are drawn now (they count as content), the rest is laid out
-    la = template.get("legend_area")
-    max_w = la["w"] if la else None
-    side = []
-    for block, at in ((legend.legend_table(ctx, entries, max_w), spec.get("legend_at")),
-                      (legend.notes_block(ctx, spec.get("notes"), max_w), spec.get("notes_at"))):
-        if block and at:
-            block.draw(Vec2(at))
-        elif block:
-            side.append(block)
-    origin, placements = layout.plan_sheet(ctx, template, side, sheet.get("origin"))
-    for block, top_left in placements:
-        block.draw(top_left)
+    if place_labels:
+        from . import place
+        place.place_labels(ctx)
 
     values = templates.build_values(spec, project, document)
-    rects = templates.draw_titleblock(ctx.msp, template, values, ctx.scale, ctx.units, origin=origin,
-                                      language=language)
+    sheet_layout = None
+    if spec.get("views"):
+        rects, sheet_layout = sheet_views.compose(ctx, spec, template, values, language)
+    else:
+        # legend table / notes: explicit positions are drawn now (they count as content), the rest is laid out
+        la = template.get("legend_area")
+        max_w = la["w"] if la else None
+        side = []
+        for block, at in ((legend.legend_table(ctx, entries, max_w), spec.get("legend_at")),
+                          (legend.notes_block(ctx, spec.get("notes"), max_w), spec.get("notes_at"))):
+            if block and at:
+                block.draw(Vec2(at))
+            elif block:
+                side.append(block)
+        origin, placements = layout.plan_sheet(ctx, template, side, sheet.get("origin"))
+        for block, top_left in placements:
+            block.draw(top_left)
+        rects = templates.draw_titleblock(ctx.msp, template, values, ctx.scale, ctx.units, origin=origin,
+                                          language=language)
+
+    from .standards import apply_submission_standard
+    apply_submission_standard(ctx.doc)
 
     result: dict = {"dxf": out_dir / f"{basename}.dxf"}
+    if sheet_layout:
+        result["layout"] = sheet_layout
     ctx.doc.saveas(result["dxf"])
     previews = {fmt: out_dir / f"{basename}.{fmt}" for fmt in ("pdf", "png") if fmt in formats}
     if previews:
         from . import preview                    # matplotlib only when a preview is requested
         paper = template["paper"]
-        preview.export(result["dxf"], previews, rects["paper"], (paper["w"], paper["h"]))
+        preview.export(result["dxf"], previews, rects["paper"], (paper["w"], paper["h"]), layout=sheet_layout)
         result.update(previews)
     if "dwg" in formats:
         dwg = _export_dwg(result["dxf"], out_dir, warnings)
