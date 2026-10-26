@@ -292,6 +292,7 @@ def test_pwsh_treats_stderr_and_exit_zero_as_success(tmp_path):
     fake = tmp_path / "claude"
     fake.write_text("#!/bin/sh\necho 'progress on stderr' >&2\nexit 0\n", encoding="utf-8")
     fake.chmod(0o755)
+    task = tmp_path / "task"
     task.mkdir()
     (task / "p.txt").write_text("hello\n", encoding="utf-8-sig")
     runner._write_ps1(task / "run.ps1", runner.render_run_ps1(
@@ -318,6 +319,65 @@ def test_unknown_query_does_not_start_the_next_account(tmp_path, monkeypatch):
     runner.tick(settings, projects=[str(project.path)])
     assert len(launched) == 1
     assert runner.status_for_document(project.path, doc.code)["status"] == "working"
+
+
+def test_wmi_error_is_unknown_and_does_not_start_the_next_account(tmp_path, monkeypatch):
+    project, doc = _drawing(tmp_path)
+    settings = _settings(project)
+    real_status = runner.process_status
+    launched, _killed, _alive, _scripts = _patch_launch(monkeypatch)
+    package = export_to_outbox(doc.path, request="move the note")
+    task = runner.watch_package(package, settings)
+    monkeypatch.setattr(runner.os, "name", "nt")
+    seen = {}
+
+    def fail(argv, **_kwargs):
+        seen["script"] = argv[-1]
+        return subprocess.CompletedProcess(argv, 2, "", "cim failed")
+
+    monkeypatch.setattr(runner, "hidden_run", fail)
+    assert runner.query_process(40)["status"] == "unknown"
+    assert "-ErrorAction Stop" in seen["script"]
+    assert "exit 2" in seen["script"]
+    assert "SilentlyContinue" not in seen["script"]
+
+    def status_from_failed_query(pid, image, created):
+        runner.os.name = "nt"
+        try:
+            return real_status(pid, image, created)
+        finally:
+            runner.os.name = "posix"
+
+    monkeypatch.setattr(runner.os, "name", "posix")
+    monkeypatch.setattr(runner, "process_status", status_from_failed_query)
+    (task / "run.log").write_text("session limit\n", encoding="utf-8")
+    runner.tick(settings, projects=[str(project.path)])
+    assert len(launched) == 1
+    state = json.loads((task / "state.json").read_text(encoding="utf-8"))
+    assert state["account_index"] == 0
+    assert runner.status_for_document(project.path, doc.code)["status"] == "working"
+
+
+def test_unknown_past_grace_fails_without_another_account(tmp_path, monkeypatch):
+    project, doc = _drawing(tmp_path)
+    settings = _settings(project)
+    launched, _killed, _alive, _scripts = _patch_launch(monkeypatch)
+    package = export_to_outbox(doc.path, request="move the note")
+    task = runner.watch_package(package, settings)
+    monkeypatch.setattr(runner, "process_status", lambda *_args: "unknown")
+    state = json.loads((task / "state.json").read_text(encoding="utf-8"))
+    timeout_s = int(state["timeout_s"])
+    state["started"] = time.time() - (timeout_s + runner._UNKNOWN_GRACE * timeout_s + 1)
+    (task / "state.json").write_text(json.dumps(state), encoding="utf-8")
+    runner.tick(settings, projects=[str(project.path)])
+    assert len(launched) == 1
+    status = runner.status_for_document(project.path, doc.code)
+    assert status["status"] == "failed"
+    assert "unknown" in status["log_tail"]
+    again = json.loads((task / "state.json").read_text(encoding="utf-8"))
+    assert again["account_index"] == 0
+    runner.tick(settings, projects=[str(project.path)])
+    assert len(launched) == 1
 
 
 def test_run_timeout_advances_when_identity_is_missing(tmp_path, monkeypatch):
@@ -720,16 +780,20 @@ def test_launch_uses_showwindow_and_headless_conhost(monkeypatch):
 
 def test_repository_has_no_scheduled_task_command():
     needle = "sch" + "tasks"
-    skip = {".git", ".venv", "__pycache__", "node_modules"}
     suffixes = {".py", ".ps1", ".bat", ".md", ".txt", ".json"}
+    listed = subprocess.run(
+        ["git", "ls-files", "-z"], cwd=ROOT, capture_output=True, check=True,
+    ).stdout.split(b"\0")
     hits = []
-    for path in ROOT.rglob("*"):
-        if not path.is_file() or path.suffix.lower() not in suffixes:
+    for raw in listed:
+        if not raw:
             continue
-        if any(part in skip for part in path.parts) or "codemap" in path.parts:
+        rel = raw.decode("utf-8", errors="surrogateescape")
+        path = ROOT / rel
+        if path.suffix.lower() not in suffixes or not path.is_file():
             continue
         if needle in path.read_text(encoding="utf-8", errors="ignore").lower():
-            hits.append(str(path.relative_to(ROOT)))
+            hits.append(rel)
     assert hits == []
 
 

@@ -35,6 +35,8 @@ _LIMITS = ("usage limit", "session limit", "rate limit", "hit your limit", "too 
 # longer than one slow query or launch, so a live tick is not stolen.
 _LOCK_STALE_S = 900
 _LAUNCH_TIMEOUT_S = 30
+# After the run timeout, wait this many extra timeouts before an unknown query is given up.
+_UNKNOWN_GRACE = 2
 _UI_TICK_INTERVAL_S = 10
 _ui_tick_at = 0.0
 _REPLY_KEYS = ("spec", "changes", "assumptions", "questions")
@@ -460,8 +462,11 @@ def query_process(pid: int) -> dict:
     if os.name != "nt":
         return {"status": "unknown"}
     script = (
-        f"$p = Get-CimInstance -ClassName Win32_Process -Filter 'ProcessId = {pid}' "
-        "-ErrorAction SilentlyContinue\r\n"
+        "try {\r\n"
+        f"  $p = Get-CimInstance -ClassName Win32_Process -Filter 'ProcessId = {pid}' -ErrorAction Stop\r\n"
+        "} catch {\r\n"
+        "  exit 2\r\n"
+        "}\r\n"
         "if (-not $p) { exit 0 }\r\n"
         "Write-Output $p.Name\r\n"
         "if ($p.CreationDate) { Write-Output ([datetime]$p.CreationDate).ToUniversalTime().ToString('o') }\r\n"
@@ -839,15 +844,39 @@ def _observe(task: Path, settings: Settings, now: float) -> None:
     timed_out = started > 0 and (now - started) >= timeout_s
     # A query that failed is not proof the process ended. A missing identity
     # plus a reused pid must still give up once the run's own time limit passes.
+    # An identified process that stays unknown past the timeout and a grace
+    # period is failed and released, without starting another account.
     if view == "unknown":
         if timed_out and not (image.strip() and created.strip()):
             _finish_attempt(task, state, settings)
+            return
+        if _unknown_is_stale(started, timeout_s, now):
+            _fail_unknown(task, state)
         return
     if view == "alive" and not limited and not timed_out:
         return
     if view == "alive" and not _stop_tracked(state):
         return
     _finish_attempt(task, state, settings)
+
+
+def _unknown_is_stale(started: float, timeout_s: int, now: float) -> bool:
+    """True once an unknown query has outlived the run timeout plus its grace."""
+    if started <= 0 or timeout_s <= 0:
+        return False
+    return (now - started) >= timeout_s + _UNKNOWN_GRACE * timeout_s
+
+
+def _fail_unknown(task: Path, state: dict) -> None:
+    """Stop waiting. The next account is not started."""
+    note = "process status stayed unknown"
+    tail = _log_tail(task)
+    state["status"] = "failed"
+    state["pid"] = 0
+    state["image"] = ""
+    state["created"] = ""
+    state["log_tail"] = f"{tail}\n{note}".strip() if tail else note
+    _write_state(task, state)
 
 
 def _finish_attempt(task: Path, state: dict, settings: Settings) -> None:
