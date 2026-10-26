@@ -572,6 +572,12 @@ def test_multiview_sheet_plan_section_detail(tmp_path):
     assert at("SECTION A-A")[1] == pytest.approx(at("DETAIL 1")[1], abs=0.3)
     assert at("SCALE 1:50")[1] < at("SECTION A-A")[1]
     assert abs(at("SCALE 1:50")[0] - at("SECTION A-A")[0]) < 2
+    from ezdxf import bbox as ezbbox
+    for entity in psp.query("MTEXT"):
+        if "תוכנית" not in (entity.text or ""):
+            continue
+        box = ezbbox.extents([entity], fast=True)
+        assert box.extmax.y <= frame_top + 0.5
     for vp in psp.query("VIEWPORT"):
         if vp.dxf.status <= 1:
             continue
@@ -1261,44 +1267,24 @@ def test_sheet_auto_fits_notes_labels_and_dimension_text(tmp_path):
     assert "MAIN PLAN" in blob and "English note 1" in blob and "הערה 1" in blob
 
 
-def test_auto_multiview_places_every_view(tmp_path):
-    """A plan that fills the sheet on its own is scaled down so the side views can sit with it."""
-    from ezdxf import bbox as ezbbox
-
-    spec = {
-        "units": "m", "scale": "auto", "paper": "A3", "language": "en", "view": "plan",
-        "sheet": {"template": "a3_simple"},
-        "elements": [{"id": "site", "type": "rect", "status": "existing",
-                      "corners": [[0, 0], [90, 50]]}],
-        "views": [
-            {"id": "section-a", "title": "SECTION A-A", "scale": "auto",
-             "elements": [{"id": "ground", "type": "polyline", "status": "existing",
-                           "points": [[0, 0], [2, 0]]}]},
-            {"id": "detail-1", "title": "DETAIL 1", "scale": "auto",
-             "elements": [{"id": "box", "type": "rect", "status": "new",
-                           "corners": [[0, 0], [1, 0.6]]}]},
-        ],
-    }
-    res = render(spec, tmp_path, "mv_auto", formats=("dxf",))
-    assert not any("not placed" in w for w in res["warnings"]), res["warnings"]
-    assert not any("does not fit" in w for w in res["warnings"]), res["warnings"]
-    doc = ezdxf.readfile(res["dxf"])
+def _sheet_windows(doc):
+    """(scale denominator, model window) for every real viewport on the sheet."""
     psp = doc.layouts.get("SHEET")
-    windows = []
-    scales = []
+    found = []
     for vp in psp.query("VIEWPORT"):
         if vp.dxf.status <= 1 or vp.dxf.height <= 0:
             continue
         center = vp.dxf.view_center_point
         half_h = vp.dxf.view_height / 2
         half_w = half_h * (vp.dxf.width / vp.dxf.height)
-        windows.append((center[0] - half_w, center[1] - half_h, center[0] + half_w, center[1] + half_h))
-        scales.append((vp.dxf.view_height / vp.dxf.height) / 0.001)
-    assert len(windows) >= 3, scales
-    primary = next(scale for scale, window in zip(scales, windows)
-                   if window[0] <= 45 <= window[2] and window[1] <= 25 <= window[3])
-    assert primary > 250, scales
-    assert all(scale < 1000 for scale in scales), scales
+        window = (center[0] - half_w, center[1] - half_h, center[0] + half_w, center[1] + half_h)
+        found.append(((vp.dxf.view_height / vp.dxf.height) / 0.001, window))
+    return found
+
+
+def _outside_viewports(doc, windows) -> list[str]:
+    from ezdxf import bbox as ezbbox
+
     outside = []
     for entity in doc.modelspace():
         ext = ezbbox.extents([entity], fast=True)
@@ -1306,9 +1292,84 @@ def test_auto_multiview_places_every_view(tmp_path):
             continue
         box = (ext.extmin.x, ext.extmin.y, ext.extmax.x, ext.extmax.y)
         if not any(box[0] >= w[0] - 1 and box[1] >= w[1] - 1 and box[2] <= w[2] + 1 and box[3] <= w[3] + 1
-                   for w in windows):
+                   for _scale, w in windows):
             outside.append(entity.dxftype())
-    assert outside == [], outside[:8]
+    return outside
+
+
+def _side_views():
+    """A short section and a few-metre detail. The far callout and fit_mm must not set the scale."""
+    return [
+        {"id": "section-a", "title": {"en": "SECTION A-A", "he": "חתך א-א"}, "scale": "auto",
+         "elements": [{"id": "ground", "type": "polyline", "status": "existing",
+                       "points": [[0, 0], [2, 0]]}]},
+        {"id": "detail-1", "title": {"en": "DETAIL 1", "he": "פרט 1"}, "scale": "auto", "fit_mm": 400,
+         "elements": [
+             {"id": "box", "type": "rect", "status": "new", "corners": [[0, 0], [2.4, 1.2]]},
+             {"id": "far", "type": "text", "at": [120, 40], "text": "SITE NOTE"},
+         ]},
+    ]
+
+
+def test_auto_multiview_places_every_view(tmp_path):
+    """The plan is scaled into the space the side views' readable floors leave, and every view is placed."""
+    from ezdxf import bbox as ezbbox
+    from sketch2cad.drawing.place import overlapping_text
+
+    spec = {
+        "units": "m", "scale": "auto", "paper": "A3", "language": "both", "view": "plan",
+        "sheet": {"template": "a3_simple"},
+        "elements": [{"id": "site", "type": "rect", "status": "existing",
+                      "corners": [[0, 0], [90, 50]]}],
+        "views": _side_views(),
+    }
+    res = render(spec, tmp_path, "mv_auto", formats=("dxf",))
+    assert not any("not placed" in w or "does not fit" in w for w in res["warnings"]), res["warnings"]
+    doc = ezdxf.readfile(res["dxf"])
+    windows = _sheet_windows(doc)
+    assert len(windows) >= 3, windows
+    primary = next(scale for scale, window in windows
+                   if window[0] <= 45 <= window[2] and window[1] <= 25 <= window[3])
+    sides = [scale for scale, window in windows
+             if not (window[0] <= 45 <= window[2] and window[1] <= 25 <= window[3])]
+    assert primary <= 500, windows
+    assert sides and max(sides) <= 100 and min(sides) <= 50, windows
+    assert overlapping_text(doc.modelspace()) == []
+    assert _outside_viewports(doc, windows) == []
+    texts = [e.text if e.dxftype() == "MTEXT" else e.dxf.text for e in doc.modelspace().query("TEXT MTEXT")]
+    assert not any("SITE NOTE" in text for text in texts)
+    psp = doc.layouts.get("SHEET")
+    for entity in psp.query("MTEXT"):
+        if "תוכנית" not in (entity.text or ""):
+            continue
+        box = ezbbox.extents([entity], fast=True)
+        assert box.extmax.y <= 287 + 0.5
+
+
+def test_fixed_plan_auto_views_are_placed(tmp_path):
+    """A numeric plan leaves room, and both auto views are placed at a readable scale."""
+    from sketch2cad.drawing.place import overlapping_text
+
+    spec = {
+        "units": "m", "scale": 500, "paper": "A3", "language": "both", "view": "plan",
+        "sheet": {"template": "a3_simple"},
+        "elements": [{"id": "site", "type": "rect", "status": "existing",
+                      "corners": [[0, 0], [80, 40]]}],
+        "views": _side_views(),
+    }
+    res = render(spec, tmp_path, "mv_500", formats=("dxf",))
+    assert not any("not placed" in w or "does not fit" in w for w in res["warnings"]), res["warnings"]
+    doc = ezdxf.readfile(res["dxf"])
+    windows = _sheet_windows(doc)
+    assert len(windows) >= 3, windows
+    primary = next(scale for scale, window in windows
+                   if window[0] <= 40 <= window[2] and window[1] <= 20 <= window[3])
+    sides = [scale for scale, window in windows
+             if not (window[0] <= 40 <= window[2] and window[1] <= 20 <= window[3])]
+    assert primary == pytest.approx(500, abs=1), windows
+    assert sides and max(sides) <= 100 and min(sides) <= 50, windows
+    assert overlapping_text(doc.modelspace()) == []
+    assert _outside_viewports(doc, windows) == []
 
 
 def test_nudged_dimension_text_is_stored_above_the_line(tmp_path):

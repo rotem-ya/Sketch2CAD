@@ -5,7 +5,8 @@ per view. Model space keeps every view at true size, separated so the viewports
 do not see each other. Text in a view is paper height times that view's scale
 (ezdxf has no annotative text). Titles and the scale label are paper-space text
 at ISO 3098 heights. A view scale of "NTS" is fitted to paper and labelled NTS.
-"auto" picks the smallest standard denominator that fits the free space.
+"auto" keeps each role at a readable scale (detail 1:50, section 1:100, plan 1:500)
+and grows a side view only into space the main view has left.
 """
 from __future__ import annotations
 
@@ -35,6 +36,8 @@ NTS_FIT_MM = 80.0
 TITLEBLOCK_GAP_MM = 2.0                   # viewports stay this far off the title-block rectangles
 # Denominators `scale: "auto"` may pick, and the only ones a fit warning may name.
 FIT_SCALES = (50, 100, 125, 200, 250, 500, 1000)
+# Coarsest readable denominator for a role. A detail stays at 1:50 or larger, and so on.
+_ROLE_FLOOR = (("detail", 50.0), ("section", 100.0), ("elevation", 100.0), ("profile", 100.0), ("plan", 500.0))
 
 
 def _draw_elements(ctx: DrawContext, elements) -> None:
@@ -124,12 +127,15 @@ def _resolve_scale(view: dict, unit: float, sheet_scale: float, free=None,
         longer = max(bounds[2] - bounds[0], bounds[3] - bounds[1], unit)
         return longer / (fit * unit), True
     if _is_auto(view):
+        floor = _view_floor(view)
         fw, fh = (float(free[0]), float(free[1])) if free else (1.0e6, 1.0e6)
         for candidate in FIT_SCALES:
+            if candidate > floor + 1e-6:
+                break
             slot_w, slot_h = _slot_for_scale(view, float(candidate), unit, language)
             if slot_w <= fw + 1e-6 and slot_h <= fh + 1e-6:
                 return float(candidate), False
-        return float(FIT_SCALES[-1]), False
+        return floor, False
     return float(scale), False
 
 
@@ -231,8 +237,12 @@ def _scale_label(numeric: float, nts: bool) -> str:
 
 
 def _caption_band() -> float:
-    """Paper mm from the viewport top up to the top of the title cap."""
-    return CAPTION_GAP + SCALE_H + RULE_GAP + TITLE_GAP + TITLE_H
+    """Paper mm from the viewport top up to the top of the title line box.
+
+    The title is MTEXT. Its line box is the cap height times the line pitch, so a bilingual
+    title stays inside the slot and inside the frame.
+    """
+    return CAPTION_GAP + SCALE_H + RULE_GAP + TITLE_GAP + TITLE_H * LINE_SPACING
 
 
 def _window(bbox, k: float) -> tuple[float, float, float, float]:
@@ -344,30 +354,180 @@ def _hits_titleblock(x, y, w, h, template: dict) -> bool:
     return False
 
 
+def _element_points(el: dict) -> list[tuple[float, float, float]]:
+    """(x, y, radius) of one element's geometry. `fit_mm` is not a coordinate."""
+    found = []
+    radius = float(el.get("radius") or 0)
+    for key in ("at", "center"):
+        point = el.get(key)
+        if isinstance(point, (list, tuple)) and len(point) >= 2:
+            found.append((float(point[0]), float(point[1]), radius))
+    for point in list(el.get("points") or []) + list(el.get("corners") or []):
+        if isinstance(point, (list, tuple)) and len(point) >= 2:
+            found.append((float(point[0]), float(point[1]), 0.0))
+    return found
+
+
+def _role_floor(name: str) -> float:
+    """Coarsest readable denominator named by `name` (a title or an id)."""
+    low = name.lower()
+    for role, floor in _ROLE_FLOOR:
+        if role in low:
+            return floor
+    return 500.0
+
+
+def _view_floor(view: dict) -> float:
+    title = view.get("title")
+    if isinstance(title, dict):
+        title = f"{title.get('en') or ''} {title.get('he') or ''}"
+    return _role_floor(f"{view.get('id') or ''} {title or ''}")
+
+
+def primary_floor(spec: dict) -> float:
+    """Coarsest readable denominator of the main view (`plan` unless the view name says otherwise)."""
+    raw = spec.get("view_title", spec.get("view") or "plan")
+    if isinstance(raw, dict):
+        raw = f"{raw.get('en') or ''} {raw.get('he') or ''}"
+    return _role_floor(str(raw or "plan"))
+
+
 def _estimate_bounds(view: dict, scale: float, unit: float):
-    """Model bounds used to try an auto scale, including text and a move allowance."""
-    bounds = _rough_bounds(view.get("elements"), text_scale=scale, unit=unit)
-    xs, ys = [], []
-    if bounds:
-        xs.extend((bounds[0], bounds[2]))
-        ys.extend((bounds[1], bounds[3]))
-    for dim in view.get("dimensions") or []:
-        if not isinstance(dim, dict):
+    """Model bounds used to try an auto scale.
+
+    Geometry sets the box. A callout or a label counts only when it sits next to that geometry,
+    so a note parked on the site plan does not turn a few-metre detail into a 200 m drawing.
+    `fit_mm` is an NTS paper size and is not part of the box. A move allowance is added in paper.
+    """
+    geom_x, geom_y = [], []
+    extras: list[tuple[float, float, float, float]] = []
+
+    def remember_text(el, x, y):
+        strings = _label_strings(el)
+        if not strings:
+            extras.append((x, y, 0.0, 0.0))
+            return
+        width = max(text_width(part, 2.5) for part in strings) * scale * unit
+        height = 2.5 * 2 * LINE_SPACING * scale * unit
+        extras.append((x, y, width, height))
+
+    for el in view.get("elements") or []:
+        if not isinstance(el, dict):
             continue
-        for point in dim.get("points") or []:
-            if isinstance(point, (list, tuple)) and len(point) >= 2:
-                xs.append(float(point[0]))
-                ys.append(float(point[1]))
-        base = dim.get("base")
-        if isinstance(base, (int, float)) and not isinstance(base, bool):
-            if str(dim.get("axis")) == "v":
-                xs.append(float(base))
-            else:
-                ys.append(float(base))
+        points = _element_points(el)
+        if el.get("type") == "text":
+            for x, y, _radius in points:
+                remember_text(el, x, y)
+            continue
+        for x, y, radius in points:
+            geom_x.extend((x - radius, x + radius))
+            geom_y.extend((y - radius, y + radius))
+        anchor = el.get("label_at")
+        if isinstance(anchor, (list, tuple)) and len(anchor) >= 2:
+            remember_text(el, float(anchor[0]), float(anchor[1]))
+    if not geom_x and not extras:
+        return None
+    if geom_x:
+        x0, y0, x1, y1 = min(geom_x), min(geom_y), max(geom_x), max(geom_y)
+        span = max(x1 - x0, y1 - y0, unit)
+        reach = max(span, 4.0 if unit < 1 else 4000.0)
+
+        def near(x, y) -> bool:
+            return x0 - reach <= x <= x1 + reach and y0 - reach <= y <= y1 + reach
+
+        xs, ys = list(geom_x), list(geom_y)
+        for x, y, width, height in extras:
+            if not near(x, y):
+                continue
+            xs.extend((x - width / 2, x + width / 2))
+            ys.extend((y, y + height))
+        for dim in view.get("dimensions") or []:
+            if not isinstance(dim, dict):
+                continue
+            for point in dim.get("points") or []:
+                if isinstance(point, (list, tuple)) and len(point) >= 2 and near(float(point[0]), float(point[1])):
+                    xs.append(float(point[0]))
+                    ys.append(float(point[1]))
+            base = dim.get("base")
+            if isinstance(base, (int, float)) and not isinstance(base, bool):
+                if str(dim.get("axis")) == "v" and near(float(base), (y0 + y1) / 2):
+                    xs.append(float(base))
+                elif str(dim.get("axis")) != "v" and near((x0 + x1) / 2, float(base)):
+                    ys.append(float(base))
+    else:
+        xs = [item[0] for item in extras]
+        ys = [item[1] for item in extras]
+        for _x, _y, width, height in extras:
+            xs.extend((_x - width / 2, _x + width / 2))
+            ys.extend((_y, _y + height))
     if not xs:
         return None
     pad = (place.MAX_MOVE_MM + VIEW_PAD_MM) * scale * unit
     return min(xs) - pad, min(ys) - pad, max(xs) + pad, max(ys) + pad
+
+
+def _geometry_reach(view: dict, unit: float):
+    """(x0, y0, x1, y1, reach) of the view's geometry, or None when it has none."""
+    xs, ys = [], []
+    for el in view.get("elements") or []:
+        if not isinstance(el, dict) or el.get("type") == "text":
+            continue
+        for x, y, radius in _element_points(el):
+            xs.extend((x - radius, x + radius))
+            ys.extend((y - radius, y + radius))
+    if not xs:
+        return None
+    x0, y0, x1, y1 = min(xs), min(ys), max(xs), max(ys)
+    span = max(x1 - x0, y1 - y0, unit)
+    return x0, y0, x1, y1, max(span, 4.0 if unit < 1 else 4000.0)
+
+
+def _auto_view_content(view: dict, unit: float) -> dict:
+    """The view without a callout, label or dimension base that sits far from its geometry.
+
+    Those points are not part of a few-metre detail. `fit_mm` is left untouched and is only
+    read for an NTS view.
+    """
+    reach_box = _geometry_reach(view, unit)
+    if reach_box is None:
+        return view
+    x0, y0, x1, y1, reach = reach_box
+
+    def near(x: float, y: float) -> bool:
+        return x0 - reach <= x <= x1 + reach and y0 - reach <= y <= y1 + reach
+
+    elements = []
+    for el in view.get("elements") or []:
+        if not isinstance(el, dict):
+            continue
+        if el.get("type") == "text":
+            points = _element_points(el)
+            if points and not any(near(x, y) for x, y, _radius in points):
+                continue
+            elements.append(el)
+            continue
+        anchor = el.get("label_at")
+        if isinstance(anchor, (list, tuple)) and len(anchor) >= 2 and not near(float(anchor[0]), float(anchor[1])):
+            el = {key: value for key, value in el.items() if key != "label_at"}
+        elements.append(el)
+    dimensions = []
+    for dim in view.get("dimensions") or []:
+        if not isinstance(dim, dict):
+            continue
+        points = [point for point in (dim.get("points") or [])
+                  if isinstance(point, (list, tuple)) and len(point) >= 2]
+        if points and not any(near(float(point[0]), float(point[1])) for point in points):
+            continue
+        base = dim.get("base")
+        if isinstance(base, (int, float)) and not isinstance(base, bool) and points:
+            cx = sum(float(point[0]) for point in points) / len(points)
+            cy = sum(float(point[1]) for point in points) / len(points)
+            far = (str(dim.get("axis")) == "v" and not near(float(base), cy)) or (
+                str(dim.get("axis")) != "v" and not near(cx, float(base)))
+            if far:
+                dim = {key: value for key, value in dim.items() if key != "base"}
+        dimensions.append(dim)
+    return {**view, "elements": elements, "dimensions": dimensions}
 
 
 def _next_fit_scale(scale: float) -> float | None:
@@ -398,18 +558,18 @@ def _slot_for_scale(view: dict, scale: float, unit: float, language: str,
 
 
 def _preferred_side_slot(view: dict, unit: float, language: str, area: dict) -> tuple[float, float]:
-    """Slot of one side view at the largest scale that fits in the packing area."""
+    """Slot reserved for one side view before the main view is scaled.
+
+    An auto view reserves its readable floor (the smallest paper size that stays readable).
+    A number or NTS reserves the slot that scale actually needs.
+    """
     raw = view.get("scale")
     if isinstance(raw, str) and raw.strip().upper() == "NTS":
         numeric, _ = _resolve_scale(view, unit, float(FIT_SCALES[-1]))
         return _slot_for_scale(view, numeric, unit, language, nts=True)
     if isinstance(raw, (int, float)) and not isinstance(raw, bool) and raw > 0:
         return _slot_for_scale(view, float(raw), unit, language)
-    for scale in FIT_SCALES:
-        slot = _slot_for_scale(view, float(scale), unit, language)
-        if slot[0] <= float(area["w"]) + 1e-6 and slot[1] <= float(area["h"]) + 1e-6:
-            return slot
-    return _slot_for_scale(view, float(FIT_SCALES[-1]), unit, language)
+    return _slot_for_scale(view, _view_floor(view), unit, language)
 
 
 def _packing_area(spec: dict, template: dict) -> dict:
@@ -425,10 +585,11 @@ def _packing_area(spec: dict, template: dict) -> dict:
 def primary_free_mm(spec: dict, template: dict, language: str) -> tuple[float, float] | None:
     """Paper millimetres the primary view may fill, or None when the sheet has no other views.
 
-    Side views keep the largest scale that fits the packing area. The primary then gets the
-    row under those slots, which is the layout `compose` tries first, or the column beside
-    them when a row does not fit. The returned size is the content box, after the primary
-    caption and the viewport pad, so it matches `content_extents` against `_paper_fits`.
+    Side views are reserved at their readable floor, not at the largest scale that fits.
+    The primary is scaled into what that reservation leaves: the row above those slots, which
+    is the layout `compose` tries first, or the column beside them when a row does not fit.
+    The returned size is the content box, after the primary caption and the viewport pad, so
+    it matches `content_extents` against `_paper_fits`.
     """
     views = [view for view in (spec.get("views") or []) if isinstance(view, dict)]
     if not views:
@@ -617,18 +778,32 @@ def _pack(area, items: list[dict], frame_w: float, frame_h: float) -> dict[str, 
     return placed
 
 
-def _write_caption(msp, origin: Vec2, width: float, height: float, title: str, scale_label: str) -> None:
-    """Title, an underline, and ``SCALE 1:50`` centred above the viewport."""
+def _write_caption(msp, origin: Vec2, width: float, height: float, title: str, scale_label: str,
+                   max_top: float | None = None) -> None:
+    """Title, an underline, and ``SCALE 1:50`` centred above the viewport.
+
+    The title's line box stays at or below `max_top` (the frame). A measured MTEXT width keeps
+    a bilingual title on one line, inside that box.
+    """
     top = origin.y + height
     scale_y = top + CAPTION_GAP
     rule_y = scale_y + SCALE_H + RULE_GAP
     title_y = rule_y + TITLE_GAP
+    if max_top is not None and title:
+        limit = max_top - TITLE_H * LINE_SPACING
+        if title_y > limit:
+            shift = title_y - limit
+            scale_y -= shift
+            rule_y -= shift
+            title_y -= shift
     center = origin.x + width / 2
     put_text(msp, scale_label, (center, scale_y), SCALE_H, layer="TEXT", align="CENTER", nowrap=True)
     if not title:
         return
-    put_text(msp, title, (center, title_y), TITLE_H, layer="TEXT", align="CENTER", nowrap=True)
-    half = text_width(title, TITLE_H) / 2
+    title_w = text_width(title, TITLE_H)
+    put_text(msp, title, (center, title_y), TITLE_H, layer="TEXT", align="CENTER", nowrap=True,
+             box_width=title_w)
+    half = title_w / 2
     msp.add_line((center - half, rule_y), (center + half, rule_y), dxfattribs={"layer": "TEXT"})
 
 
@@ -645,58 +820,57 @@ def _reserve_side(area: dict, template: dict, needed: bool) -> dict:
     return shrunk
 
 
-def _assign_auto_scales(auto_specs, primary_item, fixed_items, auto_item, area, frame_size,
-                        unit: float, language: str) -> dict:
-    """Smallest standard denominator per auto view that still packs with the views already sized.
+def _area_with_column(area: dict) -> dict:
+    """The packing area plus the notes column, when that column was held back."""
+    box = area.get("legend_box")
+    if not isinstance(box, dict):
+        return area
+    widened = dict(area)
+    widened["w"] = float(area["w"]) + float(box["w"])
+    widened.pop("legend_box", None)
+    return widened
 
-    When the primary is what does not fit, a side view keeps the scale `_resolve_scale` gives it
-    for the space beside that primary. It is not pushed to 1:1000 to make room for a primary
-    that cannot be placed at its own scale.
+
+def _assign_auto_scales(auto_specs, primary_item, fixed_items, auto_item, area, frame_size,
+                        unit: float, language: str) -> tuple[dict, dict]:
+    """Readable floor per auto view, then a finer scale when the sheet still packs.
+
+    The primary scale is already the largest that fits the space these floors leave. Each side
+    view starts at its own floor and grows (a smaller denominator) only while every view still
+    packs. Nothing is made coarser than its floor. When the floors do not pack, the notes
+    column is opened and tried.
     """
     if not auto_specs:
-        return {}
+        return {}, area
     fw, fh = frame_size["w"], frame_size["h"]
-    scales: dict[str, float] = {}
+    scales = {str(view.get("id")): _view_floor(view) for view in auto_specs}
 
-    def packed(scale_map: dict) -> list[dict]:
+    def fits(scale_map: dict, pack_area: dict) -> bool:
         items = [primary_item(), *fixed_items()]
         for view in auto_specs:
             vid = str(view.get("id"))
-            if vid in scale_map:
-                items.append(auto_item(view, scale_map[vid]))
-        _pack(area, items, fw, fh)
-        return items
+            items.append(auto_item(view, scale_map[vid]))
+        _pack(pack_area, items, fw, fh)
+        return not any(item.get("skip") for item in items)
 
+    pack_area = area
+    if not fits(scales, pack_area):
+        widened = _area_with_column(area)
+        if widened is not area:
+            pack_area = widened
     for view in auto_specs:
         vid = str(view.get("id"))
-        free = _side_free(area, primary_item(), fw, fh)
-        fitted, _ = _resolve_scale(view, unit, float(FIT_SCALES[-1]), free=free, language=language)
-        scales[vid] = float(FIT_SCALES[-1])
-        packed_scale = False
-        for scale in FIT_SCALES:
-            if not any(item.get("skip") for item in packed({**scales, vid: float(scale)})):
-                scales[vid] = float(scale)
-                packed_scale = True
+        floor = scales[vid]
+        for candidate in FIT_SCALES:
+            if candidate > floor + 1e-6:
                 break
-        if not packed_scale:
-            scales[vid] = fitted
-    for _ in range(len(FIT_SCALES) * len(auto_specs)):
-        items = packed(scales)
-        skipped = [item for item in items if item.get("skip")]
-        if not skipped or all(item["key"] == "primary" for item in skipped):
-            break
-        bumped = False
-        skipped_ids = {item["key"] for item in skipped}
-        targets = [vid for vid in scales if vid in skipped_ids] or list(scales)
-        for vid in targets:
-            nxt = _next_fit_scale(scales[vid])
-            if nxt is None:
-                continue
-            scales[vid] = nxt
-            bumped = True
-        if not bumped:
-            break
-    return scales
+            if candidate + 1e-6 >= floor:
+                break
+            trial = {**scales, vid: float(candidate)}
+            if fits(trial, pack_area):
+                scales[vid] = float(candidate)
+                break
+    return scales, pack_area
 
 
 def _scale_advice(item: dict, free_w: float, free_h: float) -> float | None:
@@ -734,42 +908,86 @@ def _scale_advice(item: dict, free_w: float, free_h: float) -> float | None:
     return None
 
 
-def _fit_into(area: dict, item: dict, occupied: list, template: dict):
-    """A viewport that shows all of `item` inside the free paper, or None.
+def _largest_hole(area: dict, occupied: list, gap: float = 0.0):
+    """(x, y, w, h) of the largest empty rectangle inside `area`, or None."""
+    xs = sorted({float(area["x"]), float(area["x"]) + float(area["w"])}
+                | {edge for other in occupied for edge in (other[0] - gap, other[2] + gap)})
+    ys = sorted({float(area["y"]), float(area["y"]) + float(area["h"])}
+                | {edge for other in occupied for edge in (other[1] - gap, other[3] + gap)})
+    best = None
+    x0_limit = float(area["x"]) - 1e-6
+    x1_limit = float(area["x"]) + float(area["w"]) + 1e-6
+    y0_limit = float(area["y"]) - 1e-6
+    y1_limit = float(area["y"]) + float(area["h"]) + 1e-6
+    for i, x0 in enumerate(xs):
+        if x0 < x0_limit:
+            continue
+        for x1 in xs[i + 1:]:
+            if x1 > x1_limit:
+                continue
+            for j, y0 in enumerate(ys):
+                if y0 < y0_limit:
+                    continue
+                for y1 in ys[j + 1:]:
+                    if y1 > y1_limit:
+                        continue
+                    rect = (x0, y0, x1, y1)
+                    if any(_rects_overlap(rect, other, 0) for other in occupied):
+                        continue
+                    fw, fh = x1 - x0, y1 - y0
+                    if fw < 8 or fh < 8:
+                        continue
+                    size = fw * fh
+                    if best is None or size > best[0]:
+                        best = (size, (x0, y0, fw, fh))
+    return None if best is None else best[1]
 
-    Returns (vp_x, y, pw, ph, slot_w, slot_h) in frame millimetres.
+
+def _fit_into(area: dict, item: dict, occupied: list, template: dict):
+    """A viewport that shows all of `item` inside a free rectangle, or None.
+
+    Returns (vp_x, y, pw, ph, slot_w, slot_h) in frame millimetres. The caption sits in the
+    same rectangle. A short strip and the notes column both count: the packing gap is not
+    required, so a 32 mm band can still hold a view.
     """
-    free_w, free_h = _best_free(area, 1.0, 1.0, occupied, VIEW_GAP_MM)
+    holes = []
+    hole = _largest_hole(area, occupied, 0.0)
+    if hole:
+        holes.append(hole)
+    legend = area.get("legend_box")
+    if isinstance(legend, dict):
+        holes.append((float(legend["x"]), float(legend["y"]), float(legend["w"]), float(legend["h"])))
     x0, y0, x1, y1 = item["bbox"]
     model_w = max(x1 - x0, 1e-6)
     model_h = max(y1 - y0, 1e-6)
     band = _caption_band()
-    caption_w = float(item.get("caption_w") or 0.0)
-    for shrink in (1.0, 0.85, 0.7):
-        avail_w = free_w * shrink
-        avail_h = free_h * shrink - band
-        if avail_w < 20 or avail_h < 20:
+    best = None
+    for hx, hy, fw, fh in holes:
+        content_h = fh - band
+        if fw < 8 or content_h < 8:
             continue
-        ph = avail_h
+        ph = content_h
         pw = ph * (model_w / model_h)
-        if pw > avail_w:
-            pw = avail_w
+        if pw > fw:
+            pw = fw
             ph = pw * (model_h / model_w)
-        if pw < 20 or ph < 20:
+        # A long thin view would collapse below a readable strip. Keep at least 8 mm and let the
+        # viewport show the whole model with a margin, instead of dropping the view.
+        if pw < 8 <= fw:
+            pw = min(fw, 8.0)
+        if ph < 8 <= content_h:
+            ph = min(content_h, 8.0)
+        if pw < 8 or ph < 8 or ph + band > fh + 1e-6:
             continue
-        slot_w = max(pw, min(caption_w, avail_w))
-        slot_h = ph + band
-        if slot_w > float(area["w"]) + 1e-6 or slot_h > float(area["h"]) + 1e-6:
+        slot_w, slot_h = pw, ph + band
+        x = hx + max(0.0, (fw - slot_w) / 2)
+        y = hy + max(0.0, (fh - slot_h) / 2)
+        if _hits_titleblock(x, y, pw, ph, template):
             continue
-        found = _scan(area, slot_w, slot_h, occupied, VIEW_GAP_MM)
-        if not found:
-            continue
-        x, y = found
-        vp_x = x + max(0.0, slot_w - pw) / 2
-        if _hits_titleblock(vp_x, y, pw, ph, template):
-            continue
-        return vp_x, y, pw, ph, slot_w, slot_h
-    return None
+        score = pw * ph
+        if best is None or score > best[0]:
+            best = (score, (x, y, pw, ph, slot_w, slot_h))
+    return None if best is None else best[1]
 
 
 def compose(ctx: DrawContext, spec: dict, template: dict, values: dict, language: str,
@@ -789,10 +1007,11 @@ def compose(ctx: DrawContext, spec: dict, template: dict, values: dict, language
     auto_specs = [view for view in raw if _is_auto(view)]
     views = []
 
-    def draw_at(view) -> None:
+    def draw_at(view, auto: bool = False) -> None:
         nonlocal cursor
         record = _draw_model_view(ctx, view, cursor, py0)
         if record:
+            record["auto"] = auto
             views.append(record)
             cursor = record["bbox"][2] + gap_model
 
@@ -826,18 +1045,26 @@ def compose(ctx: DrawContext, spec: dict, template: dict, values: dict, language
                         (px0, py0, px1, py1), ctx.k, spec.get("origin_on_sheet"))
 
     def fixed_items():
-        return [item_for(view["id"], view["title"], view["numeric"], view["nts"], view["bbox"],
-                         view["numeric"] * ctx.u, view["fixed"]) for view in views]
+        items = []
+        for view in views:
+            item = item_for(view["id"], view["title"], view["numeric"], view["nts"], view["bbox"],
+                            view["numeric"] * ctx.u, view["fixed"])
+            item["auto"] = bool(view.get("auto"))
+            items.append(item)
+        return items
 
     def auto_item(view, scale):
         bounds = _estimate_bounds(view, scale, ctx.u) or (0.0, 0.0, ctx.u, ctx.u)
-        return item_for(str(view.get("id")), view.get("title"), scale, False, bounds,
+        item = item_for(str(view.get("id")), view.get("title"), scale, False, bounds,
                         scale * ctx.u, view.get("origin_on_sheet"))
+        item["auto"] = True
+        return item
 
-    chosen = _assign_auto_scales(
+    chosen, area = _assign_auto_scales(
         auto_specs, primary_item, fixed_items, auto_item, area, frame_size, ctx.u, language)
     for view in auto_specs:
-        draw_at({**view, "scale": chosen.get(str(view.get("id")), float(FIT_SCALES[-1]))})
+        content = _auto_view_content(view, ctx.u)
+        draw_at({**content, "scale": chosen.get(str(view.get("id")), _view_floor(view))}, auto=True)
 
     ctx.doc.header["$PSLTSCALE"] = 1
     ctx.doc.header["$LTSCALE"] = LTSCALE_FACTOR          # paper mm; viewport scale equalises dashes
@@ -875,17 +1102,25 @@ def compose(ctx: DrawContext, spec: dict, template: dict, values: dict, language
             status=2 + index,
             dxfattribs={"layer": "VIEWPORT"},
         )
-        _write_caption(psp, frame + Vec2(vp_x, y), pw, ph, item["title"], label)
+        _write_caption(psp, frame + Vec2(vp_x, y), pw, ph, item["title"], label,
+                       max_top=frame.y + float(frame_size["h"]))
         return True
 
     rects = templates.draw_titleblock(psp, template, values, 1, "mm", origin=frame, language=language)
+    column_taken = False
     for index, item in enumerate(items):
         if item.get("skip"):
             ctx.warnings.append(_view_fit_warning(item, area))
             fitted = _fit_into(pack_area, item, occupied, template)
             if fitted is None:
+                ctx.warnings.append(
+                    f"ERROR: view {item['key']!r} could not be placed in any free rectangle. "
+                    f"Use a larger sheet")
                 continue
             vp_x, y, pw, ph, slot_w, slot_h = fitted
+            legend = pack_area.get("legend_box")
+            if isinstance(legend, dict) and vp_x >= float(legend["x"]) - 1e-6:
+                column_taken = True
             x0, y0, x1, y1 = item["bbox"]
             model_w = max(x1 - x0, 0.0)
             model_h = max(y1 - y0, 0.0)
@@ -894,7 +1129,14 @@ def compose(ctx: DrawContext, spec: dict, template: dict, values: dict, language
             if not item.get("nts") and ph > 1e-9 and item["numeric"] and item["k"]:
                 unit = item["k"] / float(item["numeric"])
                 if unit > 1e-12 and world_h > 1e-9:
-                    label = _scale_label(world_h / ph / unit, False)
+                    shown = world_h / ph / unit
+                    label = _scale_label(shown, False)
+                    floor = _role_floor(f"{item.get('key') or ''} {item.get('title') or ''}")
+                    readable = item.get("auto") or (item.get("key") == "primary" and spec.get("_s2c_auto_scale"))
+                    if readable and shown > floor + 0.5:
+                        ctx.warnings.append(
+                            f"ERROR: view {item['key']!r} is at 1:{shown:.0f}, coarser than the readable "
+                            f"1:{floor:g}. Use a larger sheet")
             left, bottom = frame.x + vp_x, frame.y + y
             if (left < -1e-4 or bottom < -1e-4 or left + pw > float(paper["w"]) + 1e-4
                     or bottom + ph > float(paper["h"]) + 1e-4):
@@ -920,7 +1162,10 @@ def compose(ctx: DrawContext, spec: dict, template: dict, values: dict, language
         world_h = max(y1 - y0, 0.0) + 2 * pad
         add_viewport(item, vp_x, y, pw, ph, index, world_h, item["scale_label"])
 
-    _place_sheet_notes(ctx, spec, template, psp, frame, area)
+    notes_area = dict(area)
+    if column_taken:
+        notes_area.pop("legend_box", None)
+    _place_sheet_notes(ctx, spec, template, psp, frame, notes_area)
     return rects, psp.name
 
 

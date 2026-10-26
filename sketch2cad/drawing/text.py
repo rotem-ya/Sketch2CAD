@@ -97,14 +97,18 @@ def alignment(name: str | None) -> TextEntityAlignment:
 
 
 def put_text(msp, s: str, at, h: float, *, layer: str = "TEXT", align: str | None = "left",
-             rotation: float = 0.0, nowrap: bool = False):
+             rotation: float = 0.0, nowrap: bool = False, box_width: float | None = None):
     """Add text: TEXT for a plain single line, MTEXT for Hebrew (right-aligned paragraph) or multi-line."""
     al = alignment(align)
     attribs = {"layer": layer, "style": STYLE}
     if has_hebrew(s) or "\\P" in s:
         content = RTL_PARA + s if has_hebrew(s) else s
         # width 0: one line, AutoCAD does not reflow it. Otherwise the column is the measured line.
-        width = 0.0 if nowrap else max(text_width(line, h) for line in s.split("\\P"))
+        # box_width gives that one line a real column, so the bbox matches the glyphs.
+        if box_width is not None:
+            width = float(box_width)
+        else:
+            width = 0.0 if nowrap else max(text_width(line, h) for line in s.split("\\P"))
         m = msp.add_mtext(content, dxfattribs={**attribs, "char_height": h, "width": width})
         m.set_location(at, rotation=rotation, attachment_point=ATTACHMENT[al.name])
         return m

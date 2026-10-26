@@ -132,9 +132,12 @@ adds further views on the same sheet. A spec with no `views` key is unchanged.
 | `origin_on_sheet` | `[x, y]` paper mm from the frame's bottom-left, the bottom-left of the view window. The same key on the spec root fixes the primary view. Omitted: the primary view stays large; the other views share a row under it (titles on one baseline) or, when that does not fit, a column beside it. Auto-placed views stay at least 10 mm inside the frame and clear of the title block. A view that does not fit at its scale is not drawn off the sheet: it is fitted into the free rectangle that is left, so its entities stay inside a viewport. The warning quotes that rectangle. When a standard scale would actually fit that rectangle, the warning names it — 1:50, 1:100, 1:125, 1:200, 1:250, 1:500 or 1:1000. An NTS view is not given a 1:n suggestion |
 | `elements`, `dimensions` | same objects as the root lists, in drawing units |
 
-`scale: "auto"` on a view picks the smallest of those denominators whose window fits in the space left beside
-the views that already have a scale. The primary view, when its sheet scale is `"auto"`, is fitted into
-the paper those side views leave. Each view chooses on its own, and a view is not left out of every viewport.
+`scale: "auto"` keeps a readable floor: a detail is 1:50 or larger, a section (also an elevation or a
+profile) is 1:100 or larger, and a plan is 1:500 or larger. The main view is scaled first, into the paper
+left after those floors. A side view then grows finer if the sheet still packs. A callout or a label that
+sits far from that view's geometry does not set its size, and `fit_mm` is only for `"NTS"`. When the floors
+do not all fit, the sheet says so and names a larger sheet; a view is still given a viewport, in the notes
+column when that is the room that is left. A view is not left out of every viewport.
 
 The sheet `scale` is the primary view. When another view uses a different scale, including `"auto"` or `"NTS"`,
 the title block reads `AS SHOWN / כמצוין` instead of `SCALE 1:n`. A bare primary title such as `plan` is drawn

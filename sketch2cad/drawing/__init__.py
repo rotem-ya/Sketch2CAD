@@ -84,7 +84,9 @@ def _resolve_sheet_scale(spec: dict, template: dict, warnings: list[str], *,
         return spec
     if isinstance(raw, str) and raw.strip().lower() == "auto":
         spec["scale"] = _auto_sheet_denominator(
-            spec, template, catalog=catalog, language=language, place_labels=place_labels)
+            spec, template, catalog=catalog, language=language, place_labels=place_labels,
+            warnings=warnings)
+        spec["_s2c_auto_scale"] = True
         return spec
     if isinstance(raw, str) and "".join(ch for ch in raw.lower() if ch.isalnum()) == "nts":
         spec["scale"] = _auto_sheet_denominator(
@@ -167,15 +169,17 @@ def _fits_area(ctx, box, area: dict) -> bool:
 
 
 def _auto_sheet_denominator(spec: dict, template: dict, *, catalog=None, language: str = "both",
-                            place_labels: bool = True) -> float:
+                            place_labels: bool = True, warnings: list | None = None) -> float:
     """Largest standard scale whose drawn sheet passes the render's own fit test.
 
     Each candidate is drawn (labels, dimension text, and on a single view the notes block)
     and measured with `content_extents`. The first scale that fits is kept. On a multi-view
-    sheet the limit is the paper left after the other views, not the whole drawing area.
+    sheet the limit is the paper left after the other views, reserved at a readable size.
+    A multi-view main view is not drawn coarser than its readable floor; the warning asks
+    for a larger sheet instead.
     """
     from .layout import STANDARD_SCALES
-    from .views import primary_free_mm
+    from .views import primary_floor, primary_free_mm
 
     free = primary_free_mm(spec, template, language)
     if free is None:
@@ -186,12 +190,22 @@ def _auto_sheet_denominator(spec: dict, template: dict, *, catalog=None, languag
         return 50.0
     import copy
     probe = copy.deepcopy(spec)
+    chosen = float(STANDARD_SCALES[-1])
     for scale in STANDARD_SCALES:
         probe["scale"] = float(scale)
         ctx, box = _content_box(probe, template, catalog, language, place_labels)
         if _fits_area(ctx, box, area):
-            return float(scale)
-    return float(STANDARD_SCALES[-1])
+            chosen = float(scale)
+            break
+    if free is not None:
+        floor = primary_floor(spec)
+        if chosen > floor + 1e-6:
+            if warnings is not None:
+                warnings.append(
+                    f"ERROR: the main view would be 1:{chosen:g} beside the other views, "
+                    f"coarser than the readable 1:{floor:g}. Use a larger sheet")
+            return floor
+    return chosen
 
 
 def _link_span(ctx, el, span) -> None:
