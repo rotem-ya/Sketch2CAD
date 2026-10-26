@@ -3,13 +3,13 @@ import hashlib
 import json
 import os
 import socket
-import subprocess
 import sys
 from pathlib import Path
 
 import pytest
 
 from sketch2cad import bridge
+from sketch2cad.procutil import run as hidden_run
 from sketch2cad.bridge import BridgeError, export_package, import_reply, main
 from sketch2cad.documents import add_source, create_document
 from sketch2cad.projects import create_project
@@ -185,7 +185,7 @@ def test_module_cli_export(tmp_path):
     env = dict(os.environ)
     env["PYTHONPATH"] = str(ROOT)
     env["SKETCH2CAD_HOME"] = str(tmp_path / "home")
-    proc = subprocess.run(
+    proc = hidden_run(
         [sys.executable, "-m", "sketch2cad.bridge", "export", str(doc.path), "--out", str(out),
          "--request", "leave the pipe where it is"],
         cwd=ROOT, env=env, capture_output=True, text=True, check=False)
@@ -331,7 +331,7 @@ def test_cli_to_outbox_and_from_inbox(tmp_path):
     env = dict(os.environ)
     env["PYTHONPATH"] = str(ROOT)
     env["SKETCH2CAD_HOME"] = str(tmp_path / "home")
-    proc = subprocess.run(
+    proc = hidden_run(
         [sys.executable, "-m", "sketch2cad.bridge", "export", str(doc.path), "--to-outbox", "--request", "note"],
         cwd=ROOT, env=env, capture_output=True, text=True, check=False)
     assert proc.returncode == 0, proc.stderr
@@ -340,7 +340,7 @@ def test_cli_to_outbox_and_from_inbox(tmp_path):
     inbox = project.path / "agent_exchange" / "inbox"
     (inbox / "reply.json").write_text(json.dumps({"spec": PIPE}), encoding="utf-8")
     original = (doc.path / "spec.json").read_bytes()
-    proc = subprocess.run(
+    proc = hidden_run(
         [sys.executable, "-m", "sketch2cad.bridge", "import", "--from-inbox", "--drawing", str(doc.path),
          "--trial", str(tmp_path / "trial")],
         cwd=ROOT, env=env, capture_output=True, text=True, check=False)
