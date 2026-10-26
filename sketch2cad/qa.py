@@ -17,10 +17,11 @@ from __future__ import annotations
 import math
 import re
 from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path
 
 from .checks import Finding
-from .drawing.text import LINE_SPACING, plain, text_width
+from .drawing.text import LINE_SPACING, has_hebrew, plain
 
 QA_DEFAULTS = {
     "min_text_mm": 2.5,
@@ -405,10 +406,9 @@ def _engineering(spec, catalog, cfg) -> list[Finding]:
         if el.get("type") != "pipe":
             continue
         eid = el.get("id") or "pipe"
-        full = _length(el.get("points") or [])
         parsed = _slope_of(el)
         ratio = _as_ratio(*parsed) if parsed else None
-        inv = _pipe_inv(el, inv_texts, units, full)
+        inv = _pipe_inv(el, _inv_for_pipe(el, elements, inv_texts, spec), spec)
         checked_fall = False
         checked_min = False
         if ratio is not None and inv is not None and inv[2] > 0:
@@ -476,39 +476,103 @@ def _metric_elevations(a, b, length, units):
     return a, b
 
 
-def _pipe_inv(el, texts, units, full_length):
-    """(start, end, length). Length is the run between the two invert points when they have positions."""
-    inv = el.get("inv")
-    if isinstance(inv, (list, tuple)) and len(inv) >= 2:
-        a, b = _metric_elevations(float(inv[0]), float(inv[1]), full_length, units)
-        return a, b, full_length
+def _model_tol(paper_mm, spec) -> float:
+    """Paper millimetres as drawing units. 10 mm on a 1:400 sheet is 4000 model-mm."""
+    scale = float(spec.get("scale") or 1)
+    units = spec.get("units", "mm")
+    return float(paper_mm) * scale * (0.001 if units == "m" else 1.0)
+
+
+def _project(points, pt):
+    """(station along the polyline, perpendicular distance) of the closest point on it."""
+    if not points or not isinstance(pt, (list, tuple)) or len(pt) < 2:
+        return None
+    px, py = float(pt[0]), float(pt[1])
+    best = None
+    station = 0.0
+    for a, b in zip(points, points[1:]):
+        ax, ay = float(a[0]), float(a[1])
+        bx, by = float(b[0]), float(b[1])
+        dx, dy = bx - ax, by - ay
+        seg = math.hypot(dx, dy)
+        if seg <= 1e-9:
+            cand = (math.hypot(px - ax, py - ay), station)
+        else:
+            t = max(0.0, min(1.0, ((px - ax) * dx + (py - ay) * dy) / (seg * seg)))
+            cand = (math.hypot(px - (ax + t * dx), py - (ay + t * dy)), station + seg * t)
+        if best is None or cand[0] < best[0]:
+            best = cand
+        station += seg
+    if best is None:
+        return None
+    return best[1], best[0]
+
+
+def _stated_run(el, points):
+    """Run between explicit invert stations or inv_at points. None when the pipe does not say where."""
+    stations = el.get("inv_stations")
+    if isinstance(stations, (list, tuple)) and len(stations) >= 2:
+        try:
+            return abs(float(stations[0]) - float(stations[1]))
+        except (TypeError, ValueError):
+            return None
+    at = el.get("inv_at")
+    if isinstance(at, (list, tuple)) and len(at) >= 2 and _project([at[0], at[1]], at[0]) is not None:
+        if len(points) >= 2:
+            p0, p1 = _project(points, at[0]), _project(points, at[1])
+            if p0 and p1:
+                return abs(p0[0] - p1[0])
+        try:
+            return math.dist(at[0], at[1])
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
+def _inv_for_pipe(el, elements, texts, spec) -> list:
+    """INV texts for this pipe: an explicit `pipe` id, or within 10 paper-mm of the centre-line."""
     eid = el.get("id")
     pts = el.get("points") or []
-    if len(pts) < 2:
-        return None
-    own = [t for t in texts if t.get("pipe") == eid]
-    pool = own or texts
-    if len(pool) < 2:
-        return None
-    start, end = pts[0], pts[-1]
-
-    def dist(text, pt):
+    limit = _model_tol(10.0, spec)
+    pipes = [e for e in elements if e.get("type") == "pipe" and len(e.get("points") or []) >= 2]
+    owned = []
+    for text in texts:
         if not text.get("at"):
-            return math.inf
-        return math.dist(text["at"], pt)
+            continue
+        if text.get("pipe"):
+            if text.get("pipe") == eid:
+                proj = _project(pts, text["at"])
+                if proj:
+                    owned.append({**text, "station": proj[0]})
+            continue
+        best = None
+        for pipe in pipes:
+            proj = _project(pipe.get("points") or [], text["at"])
+            if proj and (best is None or proj[1] < best[1]):
+                best = (pipe.get("id"), proj)
+        if best and best[0] == eid and best[1][1] <= limit:
+            owned.append({**text, "station": best[1][0]})
+    return owned
 
-    near_start = min(pool, key=lambda t: dist(t, start))
-    near_end = min(pool, key=lambda t: dist(t, end))
-    if near_start is near_end:
+
+def _pipe_inv(el, texts, spec):
+    """(start, end, length). Length is the run between the two inverts, never the whole pipe by default."""
+    units = spec.get("units", "mm")
+    inv = el.get("inv")
+    if isinstance(inv, (list, tuple)) and len(inv) >= 2:
+        length = _stated_run(el, el.get("points") or [])
+        if length is None or length <= 0:
+            return None
+        a, b = _metric_elevations(float(inv[0]), float(inv[1]), length, units)
+        return a, b, length
+    if len(texts) < 2:
         return None
-    # Unlinked texts must actually sit on the ends, otherwise they belong to another pipe.
-    limit = _du(500, units)
-    if not own and (dist(near_start, start) > limit or dist(near_end, end) > limit):
+    ordered = sorted(texts, key=lambda item: item.get("station", 0.0))
+    start, end = ordered[0], ordered[-1]
+    length = abs(float(end["station"]) - float(start["station"]))
+    if length <= 0:
         return None
-    length = full_length
-    if near_start.get("at") and near_end.get("at"):
-        length = math.dist(near_start["at"], near_end["at"])
-    a, b = _metric_elevations(near_start["value"], near_end["value"], length, units)
+    a, b = _metric_elevations(start["value"], end["value"], length, units)
     return a, b, length
 
 
@@ -797,6 +861,13 @@ def _text_standards(scene: Scene, cfg) -> list[Finding]:
             if box.height + 1e-6 < float(cfg["min_annotation_mm"]):
                 out.append(_too_small(box, cfg["min_annotation_mm"]))
             continue
+        # A section title at 3.5 mm is a title, not a second height of the captions around it.
+        # Off-series title-block heights still warn until drawing/standards.py owns them.
+        if box.role == "title":
+            below = box.height + 1e-6 < float(cfg["min_annotation_mm"])
+            if below or _outside_series(box, cfg):
+                off.setdefault(box.role, set()).add(round(box.height, 2))
+            continue
         # Notes use the engine's 2.0 mm default until standards.py. Below the annotation
         # minimum is still an error; 2.0 mm is reported as off-series, not a blocking error.
         annotation = box.role in ANNOTATION_ROLES or box.role == "notes"
@@ -806,7 +877,7 @@ def _text_standards(scene: Scene, cfg) -> list[Finding]:
             continue
         if _outside_series(box, cfg):
             off.setdefault(box.role, set()).add(round(box.height, 2))
-        if box.role not in {"title"} | SYMBOL_ROLES:
+        if box.role not in SYMBOL_ROLES:
             heights.setdefault(box.role, set()).add(round(box.height, 2))
     for role, values in sorted(off.items()):
         listed = ", ".join(f"{v:g}" for v in sorted(values))
@@ -978,6 +1049,7 @@ PAD_MM = 1.5
 MAX_MARKER_MM = 28.0
 MIN_MARKER_MM = 5.0
 MAX_GROUP_MARKERS = 3
+OVERLAY_DPI = 150
 TABLE_HEAD_MM = 12.0
 TABLE_ROW_MM = 11.2
 PANEL_W_MM = 228.0
@@ -996,6 +1068,7 @@ class OverlayMarker:
     y0: float
     x1: float
     y1: float
+    thin: bool = False
     lx: float = 0.0
     ly: float = 0.0
     lw: float = 0.0
@@ -1040,7 +1113,7 @@ def write_overlay(spec: dict, path, catalog=None, project=None) -> str | None:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     left, bottom, right, top, panel_x, panel_w = _overlay_limits(scene, markers, rows)
-    fig, ax = plt.subplots(figsize=((right - left) / 25.4, (top - bottom) / 25.4), dpi=80)
+    fig, ax = plt.subplots(figsize=((right - left) / 25.4, (top - bottom) / 25.4), dpi=OVERLAY_DPI)
     _draw_underlay(ax, scene)
     ax.set_xlim(left, right)
     ax.set_ylim(bottom, top)
@@ -1052,7 +1125,11 @@ def write_overlay(spec: dict, path, catalog=None, project=None) -> str | None:
     for marker in markers:
         color = SEVERITY_COLOR.get(marker.severity, SEVERITY_COLOR["info"])
         ax.add_patch(Rectangle((marker.x0, marker.y0), marker.x1 - marker.x0, marker.y1 - marker.y0,
-                               fill=False, ec=color, lw=1.15, zorder=3))
+                               fill=False, ec=color, lw=0.55 if marker.thin else 1.15, zorder=3))
+        tick = _tick(marker)
+        if tick is not None:
+            ax.plot([tick[0], tick[2]], [tick[1], tick[3]], color=color, lw=0.7, zorder=4,
+                    solid_capstyle="round")
         ax.add_patch(Rectangle((marker.lx, marker.ly), marker.lw, marker.lh,
                                fc="white", ec=color, lw=0.8, zorder=4))
         ax.text(marker.lx + marker.lw / 2, marker.ly + marker.lh / 2, str(marker.number),
@@ -1060,7 +1137,7 @@ def write_overlay(spec: dict, path, catalog=None, project=None) -> str | None:
                 fontproperties=font, fontweight="bold")
     _draw_table(ax, rows, panel_x, top - 2, panel_w, font)
     ax.axis("off")
-    fig.savefig(path, dpi=110, bbox_inches="tight", facecolor="white")
+    fig.savefig(path, dpi=OVERLAY_DPI, bbox_inches="tight", facecolor="white")
     plt.close(fig)
     return str(path)
 
@@ -1118,7 +1195,7 @@ def _places(finding: Finding, scene: Scene | None, cfg) -> list[tuple[str, tuple
     if finding.code == "text_height_standard":
         boxes = [box for box in boxes if _outside_series(box, cfg)]
     if boxes:
-        return [(box.eid, _capped_rect(box.x0, box.y0, box.x1, box.y1)) for box in boxes]
+        return [(box.eid, _outline(box.x0, box.y0, box.x1, box.y1)) for box in boxes]
     out = []
     for eid in ids:
         pts = [(x, y) for peid, x, y in scene.points if peid == eid]
@@ -1126,36 +1203,30 @@ def _places(finding: Finding, scene: Scene | None, cfg) -> list[tuple[str, tuple
             continue
         xs = [p[0] for p in pts]
         ys = [p[1] for p in pts]
-        out.append((eid, _capped_rect(min(xs), min(ys), max(xs), max(ys))))
+        out.append((eid, _outline(min(xs), min(ys), max(xs), max(ys))))
     return out
 
 
-def _capped_rect(x0: float, y0: float, x1: float, y1: float) -> tuple[float, float, float, float]:
+def _outline(x0: float, y0: float, x1: float, y1: float) -> tuple:
+    """Padded rectangle. A target larger than the cap keeps its full extent and is drawn thin."""
     if x1 < x0:
         x0, x1 = x1, x0
     if y1 < y0:
         y0, y1 = y1, y0
-    if x1 - x0 < 0.8 and y1 - y0 < 0.8:
-        cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
-        half = MIN_MARKER_MM / 2
-        return cx - half, cy - half, cx + half, cy + half
     x0 -= PAD_MM
     y0 -= PAD_MM
     x1 += PAD_MM
     y1 += PAD_MM
-    if x1 - x0 > MAX_MARKER_MM:
-        cx = (x0 + x1) / 2
-        x0, x1 = cx - MAX_MARKER_MM / 2, cx + MAX_MARKER_MM / 2
-    if y1 - y0 > MAX_MARKER_MM:
-        cy = (y0 + y1) / 2
-        y0, y1 = cy - MAX_MARKER_MM / 2, cy + MAX_MARKER_MM / 2
+    thin = (x1 - x0) > MAX_MARKER_MM or (y1 - y0) > MAX_MARKER_MM
+    if thin:
+        return x0, y0, x1, y1, True
     if x1 - x0 < MIN_MARKER_MM:
         cx = (x0 + x1) / 2
         x0, x1 = cx - MIN_MARKER_MM / 2, cx + MIN_MARKER_MM / 2
     if y1 - y0 < MIN_MARKER_MM:
         cy = (y0 + y1) / 2
         y0, y1 = cy - MIN_MARKER_MM / 2, cy + MIN_MARKER_MM / 2
-    return x0, y0, x1, y1
+    return x0, y0, x1, y1, False
 
 
 def _label_size(number: int) -> tuple[float, float]:
@@ -1167,24 +1238,40 @@ def _labels_hit(a, b, gap: float = 0.6) -> bool:
 
 
 def _place_labels(markers: list[OverlayMarker]) -> None:
-    """Step each number badge until it no longer touches a badge already placed."""
+    """Put each badge outside the flagged box. A short tick is drawn from the badge back to it."""
     placed: list[tuple[float, float, float, float]] = []
+    gap = 1.4
     for marker in markers:
         w, h = _label_size(marker.number)
+        box = (marker.x0, marker.y0, marker.x1, marker.y1)
         cx = (marker.x0 + marker.x1) / 2
-        base_y = marker.y1 + 0.6
+        cy = (marker.y0 + marker.y1) / 2
+        seeds = [
+            (cx - w / 2, marker.y1 + gap),
+            (cx - w / 2, marker.y0 - gap - h),
+            (marker.x1 + gap, cy - h / 2),
+            (marker.x0 - gap - w, cy - h / 2),
+            (marker.x1 + gap, marker.y1 + gap),
+            (marker.x0 - gap - w, marker.y1 + gap),
+        ]
+        for radius in (10.0, 18.0, 28.0, 40.0):
+            for step in range(8):
+                angle = math.radians(step * 45 + 20)
+                seeds.append((cx + radius * math.cos(angle) - w / 2,
+                              cy + radius * math.sin(angle) - h / 2))
         chosen = None
-        for dx, dy in _label_offsets():
-            rect = (cx - w / 2 + dx, base_y + dy, cx + w / 2 + dx, base_y + dy + h)
+        for x, y in seeds:
+            rect = (x, y, x + w, y + h)
+            if _labels_hit(rect, box, gap=0.4):
+                continue
             if any(_labels_hit(rect, other) for other in placed):
                 continue
             chosen = rect
             break
         if chosen is None:
-            x = cx - w / 2
-            y = base_y
+            x, y = marker.x1 + gap, marker.y1 + gap
             rect = (x, y, x + w, y + h)
-            while any(_labels_hit(rect, other) for other in placed):
+            while _labels_hit(rect, box, 0.4) or any(_labels_hit(rect, other) for other in placed):
                 y += h + 0.8
                 rect = (x, y, x + w, y + h)
             chosen = rect
@@ -1192,12 +1279,35 @@ def _place_labels(markers: list[OverlayMarker]) -> None:
         marker.lx, marker.ly, marker.lw, marker.lh = chosen[0], chosen[1], w, h
 
 
-def _label_offsets():
-    yield 0.0, 0.0
-    for radius in (5.0, 10.0, 16.0, 23.0, 31.0, 40.0):
-        for step in range(12):
-            angle = math.radians(step * 30)
-            yield radius * math.cos(angle), radius * math.sin(angle)
+def _rect_hit(rect, ux, uy, cx, cy) -> tuple[float, float]:
+    """Where a ray from the rectangle centre along (ux, uy) leaves the rectangle."""
+    x0, y0, x1, y1 = rect
+    times = []
+    if abs(ux) > 1e-9:
+        times.append(((x1 if ux > 0 else x0) - cx) / ux)
+    if abs(uy) > 1e-9:
+        times.append(((y1 if uy > 0 else y0) - cy) / uy)
+    positive = [t for t in times if t > 1e-6]
+    t = min(positive) if positive else 0.0
+    return cx + ux * t, cy + uy * t
+
+
+def _tick(marker: OverlayMarker):
+    """A short stroke from the badge toward the flagged box, so the number is not sitting on the text."""
+    bcx, bcy = marker.lx + marker.lw / 2, marker.ly + marker.lh / 2
+    tcx, tcy = (marker.x0 + marker.x1) / 2, (marker.y0 + marker.y1) / 2
+    dx, dy = tcx - bcx, tcy - bcy
+    dist = math.hypot(dx, dy)
+    if dist < 1e-6:
+        return None
+    ux, uy = dx / dist, dy / dist
+    sx, sy = _rect_hit((marker.lx, marker.ly, marker.lx + marker.lw, marker.ly + marker.lh), ux, uy, bcx, bcy)
+    ex, ey = _rect_hit((marker.x0, marker.y0, marker.x1, marker.y1), -ux, -uy, tcx, tcy)
+    gap = math.hypot(ex - sx, ey - sy)
+    if gap < 0.4:
+        return None
+    length = min(3.2, gap)
+    return sx, sy, sx + (ex - sx) / gap * length, sy + (ey - sy) / gap * length
 
 
 def _overlay_limits(scene: Scene, markers, rows):
@@ -1241,7 +1351,7 @@ def _draw_underlay(ax, scene: Scene) -> None:
         scene.doc.saveas(tmp)
         fig = preview.render_figure(preview.preview_doc(tmp), scene.paper_rect, scene.paper)
         buf = io.BytesIO()
-        fig.savefig(buf, format="png", dpi=110, facecolor="white")
+        fig.savefig(buf, format="png", dpi=OVERLAY_DPI, facecolor="white")
         buf.seek(0)
         image = plt.imread(buf)
         rgb = image[..., :3]
@@ -1344,15 +1454,46 @@ def _text_entities(entity) -> list:
     return []
 
 
+@lru_cache(maxsize=4)
+def _ink_font(hebrew: bool) -> str:
+    """Liberation Sans is the Arial-metric face. DejaVu Sans supplies Hebrew glyphs."""
+    from matplotlib.font_manager import FontProperties, findfont
+    family = "DejaVu Sans" if hebrew else "Liberation Sans"
+    return findfont(FontProperties(family=family), fallback_to_default=True)
+
+
+@lru_cache(maxsize=4)
+def _cap_height(fname: str) -> float:
+    from matplotlib.font_manager import FontProperties
+    from matplotlib.textpath import TextPath
+    height = float(TextPath((0, 0), "H", size=1.0, prop=FontProperties(fname=fname)).get_extents().height)
+    return height or 1.0
+
+
+def _ink_width(text: str, h: float) -> float:
+    """Width of the drawn glyphs at cap height h, without the layout safety margin."""
+    from matplotlib.font_manager import FontProperties
+    from matplotlib.textpath import TextPath
+    raw = plain(text or "")
+    if not raw or h <= 0:
+        return 0.0
+    fname = _ink_font(has_hebrew(raw))
+    size = h / _cap_height(fname)
+    return float(TextPath((0, 0), raw, size=size, prop=FontProperties(fname=fname)).get_extents().width)
+
+
 def _entity_text_box(entity, paper, k, eid, role, in_notes, leaders) -> TextBox | None:
     """Paper-mm box from the entity's insert, height, width and alignment."""
     kind = entity.dxftype()
     if kind == "MTEXT":
         raw = entity.plain_text() or ""
         h = float(entity.dxf.char_height)
-        lines = [ln for ln in raw.splitlines() if ln.strip()]
+        lines = [ln for ln in raw.splitlines() if ln.strip()] or [raw]
         nlines = max(1, len(lines))
-        width = float(entity.dxf.width or 0) or text_width(raw, h)
+        width = max((_ink_width(line, h) for line in lines), default=0.0)
+        column = float(entity.dxf.width or 0)
+        if 0 < column < width:
+            width = column
         insert = entity.dxf.insert
         attach = int(entity.dxf.attachment_point or 1)
         rotation = float(entity.dxf.rotation or 0)
@@ -1375,7 +1516,7 @@ def _entity_text_box(entity, paper, k, eid, role, in_notes, leaders) -> TextBox 
         h = float(entity.dxf.height or 0)
         if h <= 0 or not str(raw).strip():
             return None
-        width = text_width(plain(raw), h)
+        width = _ink_width(raw, h)
         nlines = 1
         halign = int(entity.dxf.halign or 0)
         valign = int(entity.dxf.valign or 0)

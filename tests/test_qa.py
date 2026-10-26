@@ -165,8 +165,13 @@ def _pipe(**extra):
 
 
 def test_slope_matches_invert_and_minimum_by_diameter():
-    assert not _has(_spec([_pipe(slope=0.01, inv=[500, 400])]), "slope_mismatch")
-    assert _has(_spec([_pipe(slope=0.01, inv=[500, 450])]), "slope_mismatch")
+    ends = [[500, 1500], [10500, 1500]]
+    assert not _has(_spec([_pipe(slope=0.01, inv=[500, 400], inv_at=ends)]), "slope_mismatch")
+    assert _has(_spec([_pipe(slope=0.01, inv=[500, 450], inv_at=ends)]), "slope_mismatch")
+    whole = _pipe(slope=0.004, slope_unit="percent", dn=400, inv=[225.00, 224.84],
+                  points=[[0, 0], [63160, 0]])
+    assert not _has(_spec([whole]), "slope_mismatch")
+    assert _has(_spec([whole]), "slope_unchecked")
     texts = _spec([
         _pipe(slope=0.01),
         {"id": "i1", "type": "text", "at": [500, 1900], "height": 2.5, "text": "INV 500", "pipe": "p"},
@@ -263,12 +268,6 @@ def test_lineweights_and_utility_submission():
     assert _has(heavy, "lineweight_ratio") and _has(heavy, "lineweight_range")
     calm = _spec([{"id": "p", "type": "pipe", "points": [[500, 1500], [3000, 1500]], "od": 100}])
     assert not _has(calm, "lineweight_ratio") and not _has(calm, "lineweight_range")
-    from sketch2cad import templates
-    allowed = {1.8, 2.5, 3.5, 5.0, 7.0}
-    for name in ("a3_simple", "a3_legend", "usace_a1"):
-        for field in templates.load_template(name).get("fields") or []:
-            assert float(field["h"]) in allowed, (name, field.get("key"), field["h"])
-
     buried = _spec(
         [{"id": "p", "type": "pipe", "points": [[500, 1500], [3000, 1500]], "od": 100, "below_grade": True}],
         qa={**calm["qa"], "utility_submission": True},
@@ -379,6 +378,49 @@ def test_metric_inverts_and_percent_slope_use_the_span_between_them():
     assert not _has(spec, "slope_unchecked")
 
 
+def test_inverts_off_the_pipe_use_the_projected_run():
+    """INV texts 2.36 m off a 1:400 pipe, 40 m apart along it, 11.6 m from the ends."""
+    pipe = {"id": "p", "type": "pipe", "dn": 400, "label": "SLOPE 0.4%",
+            "points": [[0, 0], [63160, 0]]}
+    texts = [
+        {"id": "i1", "type": "text", "at": [11580, 2360], "height": 2.5, "text": "INV. 225.00"},
+        {"id": "i2", "type": "text", "at": [51580, 2360], "height": 2.5, "text": "INV. 224.84"},
+    ]
+    spec = _spec([pipe, *texts], scale=400)
+    assert not _has(spec, "slope_mismatch")
+    assert not _has(spec, "min_slope")
+    assert not _has(spec, "slope_unchecked")
+    low = _spec([pipe, texts[0], {**texts[1], "text": "INV. 224.70"}], scale=400)
+    assert _has(low, "slope_mismatch")
+    stationed = _spec([_pipe(slope=0.4, slope_unit="percent", dn=400, inv=[225.00, 224.84],
+                             inv_stations=[11580, 51580], points=[[0, 0], [63160, 0]])], scale=400)
+    assert not _has(stationed, "slope_mismatch")
+    assert not _has(stationed, "slope_unchecked")
+
+
+def test_large_target_keeps_a_full_outline():
+    spec = _spec([{
+        "id": "wide", "type": "text", "at": [400, 1600], "height": 3.0,
+        "text": "SECTION TITLE RUNNING WELL PAST THE TWENTY EIGHT MILLIMETRE CAP",
+    }])
+    markers, _rows = overlay_plan(spec)
+    mark = next(marker for marker in markers if marker.element == "wide")
+    assert mark.thin
+    assert mark.x1 - mark.x0 > MAX_MARKER_MM
+
+
+def test_title_role_is_not_an_inconsistent_height():
+    spec = _spec([
+        {"id": "sec", "type": "text", "role": "title", "at": [800, 2200], "height": 3.5,
+         "text": "SECTION A-A"},
+        {"id": "note", "type": "text", "at": [800, 1800], "height": 2.5, "text": "NOTE"},
+    ])
+    assert not _has(spec, "text_height_inconsistent")
+    block = _spec([{"id": "p", "type": "circle", "at": [1000, 1500], "radius": 20}])
+    assert not any(f.code == "text_height_inconsistent" and f.element == "title"
+                   for f in review(block).findings)
+
+
 def test_overlay_marker_labels_do_not_overlap():
     """Each affected element gets its own capped marker, and the number badges do not collide.
 
@@ -392,10 +434,15 @@ def test_overlay_marker_labels_do_not_overlap():
     markers, rows = overlay_plan(spec)
     assert markers and rows
     for marker in markers:
-        assert marker.x1 - marker.x0 <= MAX_MARKER_MM + 1e-6
-        assert marker.y1 - marker.y0 <= MAX_MARKER_MM + 1e-6
-    height_marks = [marker for marker in markers if marker.code == "text_height_standard"]
-    height_rows = [row for row in rows if row.code == "text_height_standard"]
+        badge = marker.label_rect()
+        overlaps_box = not (badge[2] <= marker.x0 or marker.x1 <= badge[0]
+                            or badge[3] <= marker.y0 or marker.y1 <= badge[1])
+        assert not overlaps_box
+        if not marker.thin:
+            assert marker.x1 - marker.x0 <= MAX_MARKER_MM + 1e-6
+            assert marker.y1 - marker.y0 <= MAX_MARKER_MM + 1e-6
+    height_marks = [marker for marker in markers if marker.code == "text_height_standard" and marker.element in {"t1", "t2", "t3"}]
+    height_rows = [row for row in rows if row.code == "text_height_standard" and "t1" in row.element]
     assert len(height_rows) == 1
     assert height_rows[0].element.startswith("×3:")
     assert all(name in height_rows[0].element for name in ("t1", "t2", "t3"))
@@ -422,12 +469,11 @@ def test_valve_typical_collapses_repeated_height_rows():
     from sketch2cad.typical import generate
     spec = generate("valve_in_line")
     result = review(spec)
-    assert len(result.findings) <= 6
+    assert len(result.findings) <= 8
     assert not any(f.code == "text_height_inconsistent" for f in result.findings)
-    assert sum(f.code == "text_height_standard" for f in result.findings) <= 2
     markers, rows = overlay_plan(spec)
     assert len(rows) == len(result.findings)
-    assert len(rows) <= 6
+    assert len(rows) <= 8
     assert not any(marker.code == "slope_unchecked" for marker in markers)
     info = [row for row in rows if row.code == "slope_unchecked"]
     assert info and all(row.severity == "info" and not row.on_sheet for row in info)

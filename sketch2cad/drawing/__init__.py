@@ -86,7 +86,15 @@ def draw_sheet(spec: dict, *, catalog=None, project=None, document=None, warning
             warnings.append(f"element '{el.get('id', i + 1)}' ({el.get('type')}) skipped: {exc!r}")
             continue
         kind = el.get("type")
-        role = "text" if kind == "text" else ("north" if kind == "north_arrow" else "label")
+        declared = el.get("role")
+        if declared in ("title", "text", "label", "notes", "annotation"):
+            role = declared
+        elif kind == "text":
+            role = "text"
+        elif kind == "north_arrow":
+            role = "north"
+        else:
+            role = "label"
         _span(ctx, el.get("id") or f"_{i}", role, start, spans)
     start = len(list(ctx.msp))
     dims.draw_dimensions(ctx, spec.get("dimensions", []))
