@@ -445,6 +445,10 @@ def page_project() -> None:
                                      format_func=lambda x: T(f"lang_{x}"))
             disc_json = st.text_area(T("disciplines_json"), value=json.dumps(p.disciplines, ensure_ascii=False,
                                                                               indent=1), height=200)
+            qa_json = st.text_area(T("qa_settings"),
+                                   value=json.dumps(p.qa, ensure_ascii=False, indent=2) if p.qa else "",
+                                   height=180, help=T("qa_settings_help"),
+                                   placeholder='{"min_text_mm": 2.5}')
             if st.form_submit_button(T("save")):
                 try:
                     codes.seq_regex(pattern, prj=p.code)
@@ -452,6 +456,9 @@ def page_project() -> None:
                         {"he": name_he, "en": name_en}, client, pattern, lang_mode)
                     p.contractor, p.location, p.contract_no = contractor, location, contract_no
                     p.disciplines = json.loads(disc_json)
+                    p.qa = json.loads(qa_json) if qa_json.strip() else {}
+                    if not isinstance(p.qa, dict):
+                        raise ValueError("QA settings must be a JSON object")
                     p.save()
                     st.success(T("saved"))
                 except Exception as e:  # noqa: BLE001
@@ -535,7 +542,7 @@ def page_document() -> None:
         if spec is None:
             st.info(T("no_spec"))
         else:
-            findings = run_checks(spec, cat)
+            findings = run_checks(spec, cat, p)
             if not findings:
                 st.success(T("no_findings"))
             icons = {"error": "🔴", "warning": "🟠", "info": "🔵"}
@@ -892,7 +899,18 @@ def _agent_receive_body() -> None:
         if str(warning).startswith("DWG skipped"):
             continue
         st.warning(ui_notice(warning, L))
-    if st.button(T("agent_apply"), type="primary", key="agent_apply_go"):
+    overlay_name = report.get("qa_overlay")
+    if overlay_name:
+        overlay_path = Path(report.get("trial_dir") or "") / overlay_name
+        if overlay_path.is_file():
+            st.image(str(overlay_path), caption=T("qa_overlay"))
+    errors = [f for f in (report.get("checks") or []) if f.get("severity") == "error"]
+    if errors:
+        st.error(T("agent_blocked"))
+        override = st.checkbox(T("agent_override"), key="agent_qa_override")
+    else:
+        override = True
+    if st.button(T("agent_apply"), type="primary", key="agent_apply_go", disabled=not override):
         applied = import_reply(ss.agent_reply, ss.agent_doc, apply=True)
         if not (applied.get("ok") and applied.get("applied")):
             for error in applied.get("errors") or [T("agent_failed")]:

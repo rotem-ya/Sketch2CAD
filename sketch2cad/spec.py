@@ -92,6 +92,7 @@ def _normalize_elements(elements, warnings: list[str], label: str = "element") -
             continue
         el.setdefault("id", f"{el['type']}_{i}")
         if el["id"] in seen:
+            warnings.append(f"duplicate id {el['id']!r}")
             el["id"] = f"{el['id']}_{i}"
         seen.add(el["id"])
         kept.append(el)

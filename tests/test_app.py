@@ -307,6 +307,54 @@ def test_agent_panel_states_and_rollback(tmp_path):
     assert any("השרטוט שוחזר מהגיבוי" in s.value for s in at.success)
 
 
+def test_qa_errors_block_apply_until_override(tmp_path):
+    """Overlapping text is grouped under Errors and blocks Apply until the user overrides it."""
+    import json
+    from sketch2cad.config import Settings
+    from sketch2cad.i18n import t
+    lang = "he"
+    Settings(ui_language=lang, default_projects_root=str(tmp_path / "projects")).save()
+    at = AppTest.from_file(APP, default_timeout=60).run()
+    _by_label(at.text_input, t("project_code", lang)).input("20117")
+    _by_label(at.text_input, t("name_en", lang)).input("Hatzerim")
+    next(b for b in at.button if b.label == t("create", lang)).click().run()
+    _by_label(at.text_input, t("subject", lang)).input("QA").run()
+    _by_label(at.text_input, t("title_en", lang)).input("QA")
+    next(b for b in at.button if b.label == t("create", lang)).click().run()
+    next(b for b in at.button if b.label == t("generate", lang)).click().run()
+    next(b for b in at.button if b.label == t("render", lang)).click().run()
+    doc_dir = next(f.parent for f in (tmp_path / "projects").rglob("document.json"))
+    revised = json.loads((doc_dir / "spec.json").read_text(encoding="utf-8"))
+    revised["elements"] = list(revised["elements"]) + [
+        {"id": "qa1", "type": "text", "at": [400, 800], "height": 2.5, "text": {"en": "CLASH", "he": "חפיפה"}},
+        {"id": "qa2", "type": "text", "at": [420, 800], "height": 2.5, "text": {"en": "CLASH", "he": "חפיפה"}},
+    ]
+    project_dir = next(f.parent for f in (tmp_path / "projects").rglob("project.json"))
+    inbox = project_dir / "agent_exchange" / "inbox"
+    inbox.mkdir(parents=True, exist_ok=True)
+    (inbox / "reply.json").write_text(json.dumps({
+        "spec": revised, "changes": [{"en": "Two labels piled up", "he": "שתי תוויות זו על זו"}],
+        "assumptions": [], "questions": [],
+    }, ensure_ascii=False), encoding="utf-8")
+    next(b for b in at.button if b.label == t("agent_recv", lang)).click().run()
+    assert not at.exception, at.exception
+    shown = _blob(at)
+    assert t("agent_sev_error", lang) in shown
+    assert "s2c-sev-error" in shown and "text_overlap" in shown
+    assert any(t("agent_blocked", lang) in e.value for e in at.error)
+    assert any(t("qa_overlay", lang) in image.captions for image in at.image)
+    apply = next(b for b in at.button if b.label == t("agent_apply", lang))
+    assert apply.disabled
+    next(c for c in at.checkbox if c.label == t("agent_override", lang)).set_value(True).run()
+    apply = next(b for b in at.button if b.label == t("agent_apply", lang))
+    assert not apply.disabled
+    apply.click().run()
+    assert not at.exception, at.exception
+    saved = json.loads((doc_dir / "spec.json").read_text(encoding="utf-8"))
+    assert saved["elements"][-1]["id"] == "qa2"
+    assert any(s.value == t("agent_applied", lang) for s in at.success)
+
+
 def test_mail_page_opens(tmp_path):
     from sketch2cad.config import Settings
     from sketch2cad.i18n import t

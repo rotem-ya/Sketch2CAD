@@ -370,7 +370,7 @@ def draw_label(ctx: DrawContext, el: dict, anchor: Vec2, radius: float) -> None:
     lines = pick(el.get("label"), ctx.language)
     if not lines:
         return
-    h = ctx.text_h("text_height")
+    h = ctx.paper(float(el.get("label_height") or ctx.style["text_height"]))
     if el.get("label_at"):
         at = Vec2(el["label_at"])
         if el.get("leader") or el.get("leader_to"):

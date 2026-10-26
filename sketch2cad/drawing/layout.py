@@ -17,9 +17,14 @@ STANDARD_SCALES = (1, 2, 5, 10, 15, 20, 25, 50, 75, 100, 125, 150, 200, 250, 400
                    2000, 2500, 5000, 10000)
 
 
-def content_extents(ctx: DrawContext) -> tuple[float, float, float, float]:
-    """Model-space extents of everything drawn so far (0-size box at the origin when empty)."""
-    ext = bbox.extents(ctx.msp, fast=True)
+def content_extents(ctx: DrawContext, ignore=()) -> tuple[float, float, float, float]:
+    """Model-space extents of everything drawn so far (0-size box at the origin when empty).
+
+    `ignore` is entities left out of the sheet fit (free text stays put and must not push the notes off).
+    """
+    skip = set(ignore)
+    entities = [entity for entity in ctx.msp if entity not in skip] if skip else ctx.msp
+    ext = bbox.extents(entities, fast=True)
     if not ext.has_data:
         return 0.0, 0.0, 0.0, 0.0
     return ext.extmin.x, ext.extmin.y, ext.extmax.x, ext.extmax.y
@@ -57,11 +62,11 @@ def _paper_fits(size: tuple[float, float], area: dict, k: float) -> bool:
     return size[0] <= area["w"] * k + 1e-4 and size[1] <= area["h"] * k + 1e-4
 
 
-def plan_sheet(ctx: DrawContext, template: dict, side: list[Block], origin=None):
+def plan_sheet(ctx: DrawContext, template: dict, side: list[Block], origin=None, ignore=()):
     """Return (frame origin in model space, [(block, top_left)]) for the current drawing content."""
     k, g = ctx.k, GAP * ctx.k
     da = template["drawing_area"]
-    x0, y0, x1, y1 = content_extents(ctx)
+    x0, y0, x1, y1 = content_extents(ctx, ignore)
     la = template.get("legend_area")
     placements: list[tuple[Block, Vec2]] = []
     if side and la:

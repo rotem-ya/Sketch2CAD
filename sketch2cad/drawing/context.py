@@ -22,18 +22,18 @@ LAYERS = (  # name, ACI color, linetype, lineweight (1/100 mm)
     ("EXISTING_DASH", 8, "DASHED", 25),
     ("NEW_DASH", 1, "DASHED", 35),
     ("PROPOSED_DASH", 1, "DASHED", 35),
-    ("DIM", 7, "CONTINUOUS", 13),
+    ("DIM", 7, "CONTINUOUS", 18),
     ("TEXT", 7, "CONTINUOUS", 18),
     ("LEGEND", 7, "CONTINUOUS", 18),
     ("FRAME", 7, "CONTINUOUS", 25),
-    ("HATCH", 8, "CONTINUOUS", 9),
-    ("CENTER", 8, "CENTER", 13),
-    ("VIEWPORT", 7, "CONTINUOUS", 13),
-    ("VIEWPORTS", 8, "CONTINUOUS", 13),   # the paperspace main viewport; not plotted
+    ("HATCH", 8, "CONTINUOUS", 18),
+    ("CENTER", 8, "CENTER", 18),
+    ("VIEWPORT", 7, "CONTINUOUS", 18),
+    ("VIEWPORTS", 8, "CONTINUOUS", 18),   # the paperspace main viewport; not plotted
 )
 DIMSTYLE = "SKETCH2CAD"
 LTSCALE_FACTOR = 2.5                   # DASHED (1.27 dash) -> ~3 mm dashes on paper
-DEFAULT_STYLE = {                      # paper mm
+DEFAULT_STYLE = {                      # paper mm. Heights stay here until drawing/standards.py owns them.
     "text_height": 2.5,                # labels, free text
     "dim_text_height": 2.0,
     "table_text_height": 1.8,
@@ -60,7 +60,12 @@ class DrawContext:
         if self.units not in UNITS:
             raise ValueError(f"units must be 'mm' or 'm', not {self.units!r}")
         insunits, self.u = UNITS[self.units]
-        self.scale = float(spec.get("scale", 1))
+        raw_scale = spec.get("scale", 1)
+        try:
+            self.scale = float(raw_scale)
+        except (TypeError, ValueError):
+            warnings.append(f"ERROR: scale {raw_scale!r} is not a number - using 20")
+            self.scale = 20.0
         self.k = self.scale * self.u
         self.language = language
         authored_style = spec.get("style") or {}

@@ -881,6 +881,8 @@ def test_explicit_text_height_is_kept(tmp_path):
         "elements": [
             {"id": "inv", "type": "text", "at": [10, 10], "height": 2.0, "text": "INV. 225.00"},
             {"id": "note", "type": "text", "at": [10, 40], "text": "NOTE"},
+            {"id": "tag", "type": "circle", "at": [80, 10], "radius": 2,
+             "label": "TAG", "label_height": 2.0},
         ],
     }
     doc = ezdxf.readfile(render(spec, tmp_path, "heights", formats=("dxf",))["dxf"])
@@ -893,8 +895,11 @@ def test_explicit_text_height_is_kept(tmp_path):
             heights["inv"] = height
         elif "NOTE" in text:
             heights["note"] = height
+        elif "TAG" in text:
+            heights["tag"] = height
     assert heights["inv"] == pytest.approx(2.0 * k)
     assert heights["note"] == pytest.approx(2.5 * k)
+    assert heights["tag"] == pytest.approx(2.0 * k)
 
 
 def test_blocked_label_stays_and_is_drawn(tmp_path):
@@ -911,7 +916,8 @@ def test_blocked_label_stays_and_is_drawn(tmp_path):
     assert any(w.startswith("ERROR:") and "mark" in w for w in res["warnings"]), res["warnings"]
 
 
-def test_leader_is_capped_at_25_mm(tmp_path):
+def test_authored_leader_is_kept(tmp_path):
+    """A leader the spec asked for is drawn, even when it is longer than the 25 mm search cap."""
     spec = {"units": "mm", "scale": 1, "language": "en", "elements": [
         {"id": "p", "type": "circle", "at": [0, 0], "radius": 1,
          "label": "MP2", "label_at": [80, 0], "leader": True},
@@ -919,12 +925,13 @@ def test_leader_is_capped_at_25_mm(tmp_path):
     res = render(spec, tmp_path, "leader", formats=("dxf",))
     doc = ezdxf.readfile(res["dxf"])
     assert _inserts_of(doc, "MP2") == [(80, 0)]
+    lengths = []
     for entity in doc.modelspace().query("LINE"):
         if entity.dxf.layer != "TEXT":
             continue
         start, end = entity.dxf.start, entity.dxf.end
-        length = ((end.x - start.x) ** 2 + (end.y - start.y) ** 2) ** 0.5
-        assert length <= 25.5, length
+        lengths.append(((end.x - start.x) ** 2 + (end.y - start.y) ** 2) ** 0.5)
+    assert lengths and max(lengths) > 25
 
 
 def test_nts_fit_warning_quotes_space_and_no_scale(tmp_path):
@@ -994,3 +1001,82 @@ def test_auto_scale_views_stay_inside_and_off_the_title_block(tmp_path):
     assert outside == [], outside[:8]
     texts = [e.text if e.dxftype() == "MTEXT" else e.dxf.text for e in doc.modelspace().query("TEXT MTEXT")]
     assert any("WALL" in text for text in texts) and any("GRATE" in text for text in texts)
+
+
+def _overlap_count(doc) -> int:
+    from sketch2cad.drawing.place import overlapping_text
+    return len(overlapping_text(doc.modelspace()))
+
+
+def _qa_text_codes(spec, place_labels: bool) -> list[str]:
+    from sketch2cad.qa import _geometry, build_scene, resolve_qa
+    scene = build_scene(spec, place_labels=place_labels)
+    return [finding.code for finding in _geometry(scene, resolve_qa(spec))
+            if finding.code in ("text_overlap", "text_over_line")]
+
+
+def _leader_to(doc, target, tol: float = 1.5) -> bool:
+    for entity in doc.modelspace().query("LINE"):
+        if entity.dxf.layer != "TEXT":
+            continue
+        for point in (entity.dxf.start, entity.dxf.end):
+            if abs(point.x - target[0]) <= tol and abs(point.y - target[1]) <= tol:
+                return True
+    return False
+
+
+def test_placement_adds_no_overlaps_on_the_dense_fixture(tmp_path):
+    spec = dense_drainage_plan()
+    off = ezdxf.readfile(render(spec, tmp_path, "off", formats=("dxf",), place_labels=False)["dxf"])
+    on = ezdxf.readfile(render(spec, tmp_path, "on", formats=("dxf",))["dxf"])
+    assert _overlap_count(on) <= _overlap_count(off)
+    off_codes = _qa_text_codes(spec, False)
+    on_codes = _qa_text_codes(spec, True)
+    assert on_codes.count("text_overlap") <= off_codes.count("text_overlap")
+    assert on_codes.count("text_over_line") <= off_codes.count("text_over_line")
+    assert "td_ne" in {box_eid for box_eid in _qa_eids(spec)}
+
+
+def _qa_eids(spec) -> set[str]:
+    from sketch2cad.qa import build_scene
+    return {box.eid for box in build_scene(spec).boxes}
+
+
+def test_side_column_notes_do_not_cover_leader_labels(tmp_path):
+    """Notes take the side column. Leader labels near that edge keep their leaders and add no overlaps."""
+    spec = {
+        "units": "mm", "scale": 1, "paper": "A3", "language": "en", "view": "detail",
+        "sheet": {"template": "a3_simple"},
+        "notes": {"en": ["Keep the trench clear.", "Inverts as shown.", "See the detail."]},
+        "elements": [
+            {"id": "body", "type": "rect", "status": "existing", "corners": [[0, 0], [220, 200]]},
+            {"id": "d_td", "type": "circle", "at": [190, 170], "radius": 3,
+             "label": "D_TD", "label_at": [230, 180], "leader": True},
+            {"id": "d_conn", "type": "circle", "at": [190, 140], "radius": 3,
+             "label": "D_CONN", "label_at": [230, 145], "leader": True},
+        ],
+    }
+    off = ezdxf.readfile(render(spec, tmp_path, "side_off", formats=("dxf",), place_labels=False)["dxf"])
+    res = render(spec, tmp_path, "side_on", formats=("dxf",))
+    on = ezdxf.readfile(res["dxf"])
+    assert _overlap_count(on) <= _overlap_count(off)
+    assert _leader_to(on, (190, 170)) and _leader_to(on, (190, 140))
+    texts = [e.text if e.dxftype() == "MTEXT" else e.dxf.text for e in on.modelspace().query("TEXT MTEXT")]
+    assert any("D_TD" in text for text in texts) and any("trench" in text for text in texts)
+    off_codes = _qa_text_codes(spec, False)
+    on_codes = _qa_text_codes(spec, True)
+    assert on_codes.count("text_overlap") <= off_codes.count("text_overlap")
+    assert on_codes.count("text_over_line") <= off_codes.count("text_over_line")
+
+
+def test_sheet_scale_auto_renders(tmp_path):
+    spec = {"units": "mm", "scale": "auto", "paper": "A3", "language": "en", "view": "plan",
+            "sheet": {"template": "a3_simple", "fields": {"title_en": "AUTO"}},
+            "elements": [{"id": "r", "type": "rect", "status": "existing",
+                          "corners": [[0, 0], [5000, 3000]]}]}
+    res = render(spec, tmp_path, "sheet_auto", formats=("dxf",))
+    assert not any("could not convert" in w or "not a positive number" in w for w in res["warnings"])
+    doc = ezdxf.readfile(res["dxf"])
+    texts = [e.text if e.dxftype() == "MTEXT" else e.dxf.text for e in doc.modelspace().query("TEXT MTEXT")]
+    assert any(any(token in text for token in ("1:50", "1:100", "1:125", "1:200", "1:250", "1:500", "1:1000"))
+               for text in texts), texts

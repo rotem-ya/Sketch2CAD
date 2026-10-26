@@ -146,6 +146,18 @@ STRINGS: dict[str, dict[str, str]] = {
     "agent_request_title": {"en": "Request", "he": "בקשה"},
     "agent_request_send": {"en": "Send", "he": "שלח"},
     "agent_apply": {"en": "Apply to the drawing", "he": "החל על השרטוט"},
+    "agent_blocked": {"en": "QA errors block applying this drawing until you explicitly override them.",
+                      "he": "שגיאות בדיקה חוסמות החלה על השרטוט עד לאישור מפורש."},
+    "agent_override": {"en": "Apply anyway — I have reviewed the QA errors",
+                       "he": "החל בכל זאת — עברתי על שגיאות הבדיקה"},
+    "qa_overlay": {"en": "QA overlay", "he": "שכבת בדיקה"},
+    "qa_settings": {"en": "Drawing QA settings (JSON, empty = defaults)",
+                    "he": "הגדרות בקרת שרטוט (JSON, ריק = ברירת מחדל)"},
+    "qa_settings_help": {"en": "ISO 3098 text heights, ISO 128 line weights, utility-submission rules "
+                               "(Israeli water corporations), drainage slopes and SN cover. "
+                               "Empty keeps the built-in defaults.",
+                         "he": "גובהי טקסט לפי ISO 3098, עובי קו לפי ISO 128, כללי הגשה לתאגיד מים, "
+                               "שיפועי ניקוז וכיסוי לפי דרג SN. ריק משאיר את ברירת המחדל."},
     "agent_applied": {"en": "The drawing was updated. The previous version was saved.",
                       "he": "השרטוט עודכן. הגרסה הקודמת נשמרה."},
     "agent_trial": {"en": "Trial only. The drawing was not changed yet.",

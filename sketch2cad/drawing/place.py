@@ -5,9 +5,10 @@ multiplied by the view scale) and the font width estimate, including a bilingual
 pair stacked at the MTEXT line pitch. A label keeps `label_at` when that box is
 clear of other text, dimension text, drawn linework and existing leaders. A leader
 is rejected when it crosses another text box, another leader, or a dimension line.
-The search stays within about 25 mm of that spot, and a leader longer than that is
-rejected. If nothing nearby is clear, the label is drawn at the original point and
-an error is reported. A label is never omitted. Label boxes keep GAP_TEXT_MM of
+The search stays within about 25 mm of that spot, and a leader we add is rejected
+when it is longer than that. If nothing nearby is clear, the label is drawn at the
+original point with the leader the spec asked for, and an error is reported. A label
+is never omitted. Label boxes keep GAP_TEXT_MM of
 clear paper between them. `label_pinned` keeps the authored point even when it
 collides. Free `text` is not queued here. Dimension text may only slide along its
 dimension line or flip to the other side of it. The search order is fixed, so the
@@ -423,6 +424,22 @@ def _box_inside(box, bounds) -> bool:
             and box[2] <= bounds[2] + 1e-6 and box[3] <= bounds[3] + 1e-6)
 
 
+def _attach_span(ctx, item, start: int) -> None:
+    """Label entities are drawn after the element's span was opened. Add them to that span."""
+    span = item.get("span")
+    if not span:
+        return
+    span.setdefault("entities", [])
+    span["entities"].extend(list(ctx.msp)[start:])
+
+
+def _label_model_height(ctx, el) -> float:
+    """Paper height in model units. `label_height` is the spec's own size and is not snapped."""
+    if el.get("label_height") is not None:
+        return ctx.paper(float(el["label_height"]))
+    return ctx.text_h("text_height")
+
+
 def _element_paper_height(ctx, el) -> float:
     """Paper height in model units. An explicit `height` is kept; the style default is already snapped."""
     if el.get("height") is not None:
@@ -442,7 +459,7 @@ def _item_placement(ctx, item):
         target = Vec2(el["leader_to"]) if explicit else anchor
         return lines, height, at, align, explicit, target, float(el.get("rotation") or 0)
     lines = pick(el.get("label"), ctx.language)
-    height = ctx.text_h("text_height")
+    height = _label_model_height(ctx, el)
     at, align, explicit, target = _preferred(ctx, el, anchor, radius, lines, height)
     return lines, height, at, align, explicit, target, 0.0
 
@@ -460,10 +477,12 @@ def draw_fixed_text(ctx: DrawContext) -> None:
         lines = pick(el.get("text"), ctx.language)
         if not lines:
             continue
+        start = len(ctx.msp)
         if el.get("leader_to"):
             leader_label(ctx, lines, at, Vec2(el["leader_to"]), height)
         else:
             stack_text(ctx, lines, at, height, el.get("align", "left"), float(el.get("rotation") or 0))
+        _attach_span(ctx, item, start)
 
 
 def _place_one(ctx, item, texts, segments, circles, leaders, dim_lines, gap_text, gap_line, bounds,
@@ -475,10 +494,12 @@ def _place_one(ctx, item, texts, segments, circles, leaders, dim_lines, gap_text
     anchor_box = _anchor_box(item["anchor"], item["radius"])
     pinned = bool(el.get("label_pinned")) or item.get("kind") == "text"
     if pinned:
+        start = len(ctx.msp)
         if item.get("kind") == "text":
             _draw(ctx, lines, at, align, explicit, target, height, None, rotation)
         else:
             draw_label(ctx, el, item["anchor"], item["radius"])
+        _attach_span(ctx, item, start)
         box = _box(at, lines, height, align, explicit, target, ctx.k)
         texts.append(box)
         if explicit:
@@ -498,7 +519,11 @@ def _place_one(ctx, item, texts, segments, circles, leaders, dim_lines, gap_text
             if center.distance(home_c) > move_cap + 1e-6:
                 continue
             pointer = _pointer(candidate, lines, height, target, ctx.k, elbow) if cand_leader else None
-            if pointer and pointer[0].distance(pointer[1]) > leader_cap + 1e-6:
+            # The spec's own leader, from the authored point to the near end, is kept at any length.
+            # A leader we would add by moving, or the far end of the shelf, stays within the cap.
+            near = _elbow_name(at, lines, height, target, ctx.k, "near") if explicit else None
+            authored_near = candidate.distance(at) <= 1e-6 and elbow == near
+            if pointer and not authored_near and pointer[0].distance(pointer[1]) > leader_cap + 1e-6:
                 continue
             shelf = _shelf(candidate, lines, height, target, ctx.k) if cand_leader else None
             if not _in_limits(box, bounds, content):
@@ -527,20 +552,16 @@ def _place_one(ctx, item, texts, segments, circles, leaders, dim_lines, gap_text
 
     consider(_options(ctx, at, align, lines, height, explicit, target))
     if chosen is None:
-        # Never worse than the input, and never omitted: keep the spec point and say so.
-        # A leader back to the anchor is kept only when it stays inside the same cap.
+        # Never worse than the input, and never omitted: the point and the leader main would draw.
         ctx.warnings.append(f"ERROR: label {el.get('id', '?')!r} has no clear position")
         use_leader = bool(explicit)
-        elbow = None
-        if use_leader:
-            elbow = _elbow_name(at, lines, height, target, ctx.k, "near")
-            start, end = _pointer(at, lines, height, target, ctx.k, elbow)
-            if start.distance(end) > leader_cap + 1e-6:
-                use_leader, elbow = False, None
+        elbow = _elbow_name(at, lines, height, target, ctx.k, "near") if use_leader else None
         home = _box(at, lines, height, align, use_leader, target, ctx.k)
         chosen = (at, align, use_leader, elbow, home)
     candidate, cand_align, cand_leader, elbow, box = chosen
+    start = len(ctx.msp)
     _draw(ctx, lines, candidate, cand_align, cand_leader, target, height, elbow, rotation)
+    _attach_span(ctx, item, start)
     texts.append(box)
     if cand_leader:
         _remember_leader(leaders, candidate, lines, height, target, ctx.k, elbow)
@@ -548,8 +569,8 @@ def _place_one(ctx, item, texts, segments, circles, leaders, dim_lines, gap_text
 
 def place_labels(ctx: DrawContext, bounds=None, content=None) -> None:
     """Draw queued labels. `bounds` is the drawing area in model space. Free text is not moved."""
-    items = list(ctx.pending)
-    ctx.pending.clear()
+    items = [item for item in ctx.pending if item.get("kind") != "text"]
+    ctx.pending = [item for item in ctx.pending if item.get("kind") == "text"]
     if not items:
         return
     texts, segments, circles = _collect(ctx.msp)
