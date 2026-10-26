@@ -346,6 +346,15 @@ def terminate_pid(pid: int) -> None:
 
 
 # ---------------------------------------------------------------------------------------------- modes
+def _claude_tick() -> None:
+    """One pass of the local headless runner. A failure here must not stop the server."""
+    try:
+        from .claude_runner import tick
+        tick()
+    except Exception as exc:  # noqa: BLE001 - the supervisor stays up if a run cannot start
+        log(f"claude runner: {exc}")
+
+
 def _give_up(reason: str, detail: str) -> None:
     log(reason)
     report_error(f"{detail}\n\n{_log_tail()}\n\nThe full log: {log_file()}")
@@ -386,6 +395,7 @@ def serve(port: int = PORT) -> int:
             if wait_alive(port, START_TIMEOUT, child):
                 failed_starts = 0
                 log(f"serve: server {child.pid} answers at {url(port)}")
+                _claude_tick()
             else:
                 failed_starts += 1
             misses = 0
@@ -398,6 +408,7 @@ def serve(port: int = PORT) -> int:
                 next_check = time.monotonic() + HEALTH_INTERVAL
                 if server_alive(port):
                     misses = 0
+                    _claude_tick()
                     if time.monotonic() - started >= STABLE_AFTER:
                         watchdog_restarts = 0
                         failed_starts = 0

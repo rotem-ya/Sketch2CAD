@@ -12,7 +12,8 @@ PIPE = {
     "version": 1, "units": "mm", "scale": 20, "paper": "A3", "language": "both",
     "elements": [{"id": "p1", "type": "pipe", "points": [[0, 0], [1000, 0]], "od": 110}],
 }
-BANNED = re.compile(r"\b(AI|API|Claude|anthropic)\b|מפתח")
+# The status card names the local runner. It still must not talk about a model service or a key.
+BANNED = re.compile(r"\b(AI|API|anthropic)\b|מפתח")
 
 
 def _drawing(tmp_path):
