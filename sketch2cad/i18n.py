@@ -234,11 +234,11 @@ STRINGS: dict[str, dict[str, str]] = {
     "claude_runner_help": {
         "en": "Optional, and off until this is checked and claude.exe is set (empty searches PATH and the "
               "user .local\\bin) with at least one account folder. Send and receive stay as they are. "
-              "You still review the trial and apply it. If an account hits a limit, or the run ends "
-              "without a reply, the next account folder is tried once.",
+              "You still review the trial and apply it. If a run hits a limit, or ends without a valid "
+              "reply, every account folder is tried, in order.",
         "he": "רשות, וכבוי עד שמסמנים כאן, ממלאים claude.exe (ריק מחפש ב-PATH וב-.local\\bin של המשתמש) "
               "ולפחות תיקיית חשבון אחת. «שלח לסוכן» ו«קבל מהסוכן» נשארים. בודקים את הניסיון ומחילים לבד. "
-              "אם חשבון הגיע למגבלה, או שהריצה נגמרה בלי תשובה, מנסים פעם אחת את התיקייה הבאה."},
+              "אם ריצה נתקלת במגבלה, או נגמרת בלי תשובה תקינה, מנסים את כל תיקיות החשבון לפי הסדר."},
     "claude_auto": {"en": "Run Claude when a package is sent", "he": "להריץ את Claude כשנשלחת חבילה"},
     "claude_exe": {"en": "claude.exe path (empty = search PATH and .local\\bin)",
                    "he": "נתיב claude.exe (ריק = חיפוש ב-PATH וב-.local\\bin)"},
@@ -253,6 +253,27 @@ STRINGS: dict[str, dict[str, str]] = {
     "claude_status_working": {"en": "Claude working", "he": "Claude עובד"},
     "claude_status_ready": {"en": "Reply ready", "he": "התשובה מוכנה"},
     "claude_status_failed": {"en": "Failed", "he": "נכשל"},
+    "claude_exe_bad": {"en": "claude.exe was not found at {path}",
+                       "he": "claude.exe לא נמצא בנתיב {path}"},
+    "claude_exe_required": {
+        "en": "Turn on the local run only after claude.exe is installed or its path is filled in.",
+        "he": "מפעילים את הריצה המקומית רק אחרי ש-claude.exe מותקן או שהנתיב מולא."},
+    "claude_account_bad": {"en": "Account folder was not found: {path}",
+                           "he": "תיקיית החשבון לא נמצאה: {path}"},
+    "claude_account_required": {
+        "en": "Add at least one account folder before turning the local run on.",
+        "he": "לפני שמפעילים את הריצה המקומית צריך לפחות תיקיית חשבון אחת."},
+    "claude_account_env": {
+        "en": "Review {path} before a local run. It sets environment variables.",
+        "he": "לפני ריצה מקומית כדאי לבדוק את {path}. הקובץ קובע משתני סביבה."},
+    "claude_account_helper": {
+        "en": "Review {path} before a local run. It names a helper program.",
+        "he": "לפני ריצה מקומית כדאי לבדוק את {path}. הקובץ מפנה לתוכנית עזר."},
+    "claude_runner_busy": {
+        "en": "Another local run is already starting. This package will start on the next check.",
+        "he": "ריצה מקומית אחרת כבר מתחילה. החבילה הזו תתחיל בבדיקה הבאה."},
+    "claude_runner_failed": {"en": "The local run could not start: {detail}",
+                             "he": "הריצה המקומית לא התחילה: {detail}"},
     "rebuild_index": {"en": "Rebuild search index", "he": "בנה מחדש את אינדקס החיפוש"},
     "indexed": {"en": "drawings indexed", "he": "שרטוטים נוספו לאינדקס"},
     "error": {"en": "Error", "he": "שגיאה"},
