@@ -1,0 +1,59 @@
+{
+  "version": 1,
+  "units": "mm",
+  "scale": 400,
+  "paper": "A3",
+  "language": "both",
+  "view": "PLAN",
+  "sheet": {
+    "template": "a3_simple",
+    "fields": {
+      "title_en": "DRAINAGE GENERAL ARRANGEMENT",
+      "title_he": "תוכנית ניקוז כללית",
+      "line3": "SYNTHETIC"
+    }
+  },
+  "notes": {
+    "en": ["All trenches to fall to the outlets.", "Inverts as noted."],
+    "he": ["כל התעלות בניקוז למוצאים.", "רומים כמצוין."]
+  },
+  "elements": [
+    {"id": "bldg", "type": "rect", "status": "existing", "corners": [[0, 0], [94300, 52000]]},
+    {"id": "td_top", "type": "trench_drain", "status": "new", "width": 300,
+     "points": [[15570, 51000], [78730, 51000]]},
+    {"id": "td_bot", "type": "trench_drain", "status": "new", "width": 300,
+     "points": [[15570, 1000], [78730, 1000]]},
+    {"id": "pipe_top", "type": "pipe", "status": "new", "od": 200,
+     "points": [[15570, 52000], [78730, 52000]]},
+    {"id": "pipe_bot", "type": "pipe", "status": "new", "od": 200,
+     "points": [[15570, 0], [78730, 0]]},
+    {"id": "td_ne", "type": "trench_drain", "status": "new", "width": 300,
+     "points": [[78730, 51000], [78730, 37000]],
+     "label": {"en": "PERPENDICULAR TRENCH DRAIN - EAST", "he": "תעלת ניקוז ניצבת - מזרח"}},
+    {"id": "td_nw", "type": "trench_drain", "status": "new", "width": 300,
+     "points": [[15570, 51000], [15570, 37000]],
+     "label": {"en": "PERPENDICULAR TRENCH DRAIN - WEST", "he": "תעלת ניקוז ניצבת - מערב"}},
+    {"id": "td_se", "type": "trench_drain", "status": "new", "width": 300,
+     "points": [[78730, 1000], [78730, 15000]],
+     "label": {"en": "PERPENDICULAR TRENCH DRAIN - EAST", "he": "תעלת ניקוז ניצבת - מזרח"}},
+    {"id": "td_sw", "type": "trench_drain", "status": "new", "width": 300,
+     "points": [[15570, 1000], [15570, 15000]],
+     "label": {"en": "PERPENDICULAR TRENCH DRAIN - WEST", "he": "תעלת ניקוז ניצבת - מערב"}},
+    {"id": "ro_ne", "type": "circle", "status": "new", "at": [80200, 47000], "radius": 400,
+     "label": {"en": "ASPHALT ROLLOVER (15)", "he": "אספלט"}},
+    {"id": "ro_nw", "type": "circle", "status": "new", "at": [14100, 47000], "radius": 400,
+     "label": {"en": "ASPHALT ROLLOVER (15)", "he": "אספלט"}},
+    {"id": "ro_se", "type": "circle", "status": "new", "at": [80200, 5000], "radius": 400,
+     "label": {"en": "ASPHALT ROLLOVER (15)", "he": "אספלט"}},
+    {"id": "ro_sw", "type": "circle", "status": "new", "at": [14100, 5000], "radius": 400,
+     "label": {"en": "ASPHALT ROLLOVER (15)", "he": "אספלט"}},
+    {"id": "inv_nw", "type": "text", "at": [17500, 54500], "height": 2.5, "text": {"en": "INV. 225.00"}},
+    {"id": "inv_ne", "type": "text", "at": [76800, 54500], "height": 2.5, "text": {"en": "INV. 225.10"}},
+    {"id": "inv_sw", "type": "text", "at": [17500, -2500], "height": 2.5, "text": {"en": "INV. 224.90"}},
+    {"id": "inv_se", "type": "text", "at": [76800, -2500], "height": 2.5, "text": {"en": "INV. 224.80"}}
+  ],
+  "dimensions": [
+    {"type": "chain", "points": [[15570, 52000], [78730, 52000]], "axis": "h", "base": 60000},
+    {"type": "chain", "points": [[20000, 0], [60000, 0]], "axis": "h", "base": -9000}
+  ]
+}

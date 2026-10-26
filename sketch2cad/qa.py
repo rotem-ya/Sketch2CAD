@@ -151,6 +151,7 @@ def review(spec: dict, catalog=None, project=None) -> Review:
         findings += _text_standards(scene, cfg)
         findings += _lineweights(scene, cfg)
         findings += _submission(scene.doc, cfg)
+    findings += _omitted_strings(spec, catalog, project)
     return Review(cfg, scene, findings)
 
 
@@ -259,6 +260,51 @@ def _hygiene(spec, catalog) -> list[Finding]:
         for i, line in enumerate(notes.get(lang) or []):
             out += _unknown_refs(str(line), f"note:{lang}:{i + 1}", known, catalog)
     return out
+
+
+def _omitted_strings(spec, catalog, project) -> list[Finding]:
+    """Note strings that a multi-view sheet did not draw.
+
+    Single-view sheets are checked by the model-space layout. A multi-view sheet draws notes in
+    paper space, so this reads that sheet and reports every spec note that is absent.
+    """
+    if not any(isinstance(view, dict) for view in (spec.get("views") or [])):
+        return []
+    notes = spec.get("notes") or {}
+    lines = []
+    if isinstance(notes, dict):
+        for lang in ("en", "he"):
+            for line in notes.get(lang) or []:
+                text = str(line).strip()
+                if text:
+                    lines.append(text)
+    if not lines:
+        return []
+    import tempfile
+
+    import ezdxf
+
+    from .drawing import render
+
+    with tempfile.TemporaryDirectory() as tmp:
+        res = render(spec, tmp, "qa_notes", formats=("dxf",), catalog=catalog, project=project)
+        doc = ezdxf.readfile(res["dxf"])
+    chunks = []
+    layouts = [doc.modelspace()]
+    sheet = doc.layouts.get("SHEET") if "SHEET" in doc.layouts else None
+    if sheet is not None:
+        layouts.append(sheet)
+    for layout in layouts:
+        for entity in layout.query("TEXT MTEXT"):
+            chunks.append(entity.text if entity.dxftype() == "MTEXT" else entity.dxf.text)
+    blob = "\n".join(chunks).replace("\\P", " ")
+    missing = [line for line in lines if line not in blob]
+    if not missing:
+        return []
+    shown = "; ".join(missing[:8])
+    return [Finding("error", "omitted_strings",
+                     f"Notes omitted from the sheet: {shown}",
+                     f"הערות חסרות בגיליון: {shown}", "notes")]
 
 
 def _blob(value) -> str:
@@ -482,10 +528,22 @@ def _metric_elevations(a, b, length, units):
     return a, b
 
 
+def _numeric_scale(spec) -> float:
+    """Sheet denominator as a number. ``auto`` and ``NTS`` use the scale the sheet is drawn at."""
+    raw = spec.get("scale", 1) if isinstance(spec, dict) else 1
+    if isinstance(raw, (int, float)) and not isinstance(raw, bool) and raw > 0:
+        return float(raw)
+    try:
+        from .drawing import sheet_scale_number
+        return float(sheet_scale_number(spec if isinstance(spec, dict) else {}))
+    except (TypeError, ValueError, KeyError):
+        return 20.0
+
+
 def _model_tol(paper_mm, spec) -> float:
     """Paper millimetres as drawing units. 10 mm on a 1:400 sheet is 4000 model-mm."""
-    scale = float(spec.get("scale") or 1)
-    units = spec.get("units", "mm")
+    scale = _numeric_scale(spec)
+    units = spec.get("units", "mm") if isinstance(spec, dict) else "mm"
     return float(paper_mm) * scale * (0.001 if units == "m" else 1.0)
 
 
@@ -1670,12 +1728,13 @@ def _split_legend_title(boxes: list[TextBox]) -> None:
             box.role = "legend"
 
 
-def build_scene(spec: dict, catalog=None, project=None) -> Scene:
+def build_scene(spec: dict, catalog=None, project=None, *, place_labels=True) -> Scene:
     """Paper-space boxes measured from the same sheet the renderer draws."""
     from .drawing import draw_sheet
 
     warnings: list[str] = []
-    drawn = draw_sheet(spec, catalog=catalog, project=project, warnings=warnings)
+    drawn = draw_sheet(spec, catalog=catalog, project=project, warnings=warnings,
+                       place_labels=place_labels)
     ctx, template, origin, rects = drawn.ctx, drawn.template, drawn.origin, drawn.rects
     k = ctx.k or 1.0
     ox, oy = float(origin.x), float(origin.y)

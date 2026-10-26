@@ -75,7 +75,7 @@ def test_connector_along_a_leader_is_still_linework():
 def test_text_over_line_ignores_the_labels_own_leader():
     on_pipe = _spec([{
         "id": "p", "type": "pipe", "points": [[400, 1000], [3000, 1000]], "od": 40,
-        "label": {"en": "PIPE LABEL"}, "label_at": [800, 1000],
+        "label": {"en": "PIPE LABEL"}, "label_at": [800, 1000], "label_pinned": True,
     }])
     assert _has(on_pipe, "text_over_line")
 
@@ -282,7 +282,8 @@ def test_lineweights_and_utility_submission():
         [{"id": "p", "type": "pipe", "points": [[500, 1500], [3000, 1500]], "od": 100, "below_grade": True}],
         qa={**calm["qa"], "utility_submission": True},
     )
-    assert _has(buried, "not_bylayer")
+    # Below-grade work sits on a dashed layer and stays BYLAYER, so it is not an override.
+    assert not _has(buried, "not_bylayer")
     assert not _has(calm, "not_bylayer")
 
     doc = ezdxf.new()
@@ -502,9 +503,8 @@ def test_valve_typical_collapses_repeated_height_rows():
     assert not any(marker.code == "slope_unchecked" for marker in markers)
     info = [row for row in rows if row.code == "slope_unchecked"]
     assert info and all(row.severity == "info" and not row.on_sheet for row in info)
-    dim = next(row for row in rows if row.code == "text_height_standard" and "dim:" in row.element)
-    assert dim.element.startswith("×")
-    assert "dim:0" in dim.element and "dim:1" in dim.element
+    # Default dimension text is snapped onto the ISO series, so it is not a height finding.
+    assert not any(row.code == "text_height_standard" and "dim:" in row.element for row in rows)
 
 
 def test_overlay_table_shapes_hebrew_and_keeps_the_element_column():
@@ -555,3 +555,17 @@ def test_findings_carry_both_languages():
     assert {f.code for f in found} >= {"text_overlap", "text_too_small", "unknown_ref"}
     for finding in found:
         assert finding.en and finding.he and finding.severity in ("error", "warning", "info")
+
+
+def test_auto_and_nts_scales_do_not_crash_the_slope_check():
+    from sketch2cad.qa import _model_tol
+
+    elements = [
+        {"id": "p", "type": "pipe", "points": [[0, 0], [4000, 0]], "od": 200, "slope": 0.004},
+        {"id": "a", "type": "text", "at": [100, 80], "height": 2.5, "text": "INV 225.00", "pipe": "p"},
+        {"id": "b", "type": "text", "at": [3900, 80], "height": 2.5, "text": "INV 224.84", "pipe": "p"},
+    ]
+    for token in ("auto", "NTS", "N.T.S."):
+        spec = _spec(elements, scale=token)
+        review(spec)
+        assert _model_tol(10, spec) > 0

@@ -1,7 +1,7 @@
 """Chain dimensions (spec section 1.2): horizontal / vertical, per-segment text overrides."""
 from __future__ import annotations
 
-from .context import DIMSTYLE, DrawContext
+from .context import DrawContext
 
 
 def draw_chain(ctx: DrawContext, dim: dict) -> None:
@@ -22,7 +22,7 @@ def draw_chain(ctx: DrawContext, dim: dict) -> None:
         if measured < 1e-9:
             continue
         text = (texts[i] if i < len(texts) else "") or "<>"
-        ctx.msp.add_linear_dim(base=base_pt, p1=p1, p2=p2, angle=angle, text=text, dimstyle=DIMSTYLE,
+        ctx.msp.add_linear_dim(base=base_pt, p1=p1, p2=p2, angle=angle, text=text, dimstyle=ctx.dimstyle,
                                override=override, dxfattribs={"layer": "DIM"}).render()
 
 

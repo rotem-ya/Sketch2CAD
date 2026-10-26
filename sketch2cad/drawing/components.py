@@ -11,9 +11,12 @@ import math
 from ezdxf.math import Vec2
 
 from .context import DrawContext
-from .text import LINE_SPACING, pick, put_text, text_width
+from .text import LINE_SPACING, pick, put_text, snap_text_height, text_width
 
-IN_BLOCK = {"layer": "0", "linetype": "BYBLOCK"}
+
+def _on_layer(layer: str) -> dict:
+    """Symbol geometry sits on the status layer. Layer 0 is left empty."""
+    return {"layer": layer, "linetype": "BYLAYER", "color": 256, "lineweight": -1}
 HATCHES = {"sand": ("AR-SAND", 0.04), "concrete": ("AR-CONC", 0.03)}   # pattern, scale per paper mm
 DEFAULT_OD = 100.0                                                       # mm
 
@@ -127,7 +130,8 @@ def draw_polyline(ctx: DrawContext, el: dict):
     attribs = ctx.attribs(el)
     if style == "dashed":
         attribs["linetype"] = "DASHED"
-    if style in ("berm", "ground"):
+    # Grade and berm lines are 0.50 mm. An element that sets its own weight keeps that instead.
+    if style in ("berm", "ground") and attribs.get("lineweight", -1) < 0:
         attribs["lineweight"] = 50
     closed = bool(el.get("closed"))
     ctx.msp.add_lwpolyline(pts, close=closed, dxfattribs=attribs)
@@ -164,8 +168,9 @@ def draw_flange(ctx: DrawContext, el: dict):
     """Flange in section: t x D rectangle centred on `at`, thickness along the pipe axis."""
     D = ctx.size(el, "D", ("flange", "D"), 285)
     t = ctx.size(el, "t", ("flange", "t"), 24)
-    name = ctx.block(f"S2C_FLANGE_{D:g}x{t:g}", lambda b: b.add_lwpolyline(
-        _rect(-t / 2, -D / 2, t / 2, D / 2), close=True, dxfattribs=IN_BLOCK))
+    sym = _on_layer(ctx.attribs(el)["layer"])
+    name = ctx.block(f"S2C_FLANGE_{D:g}x{t:g}_{sym['layer']}", lambda b, sym=sym: b.add_lwpolyline(
+        _rect(-t / 2, -D / 2, t / 2, D / 2), close=True, dxfattribs=sym))
     _insert(ctx, el, name)
     return Vec2(el["at"]), D / 2
 
@@ -178,25 +183,26 @@ def draw_gate_valve(ctx: DrawContext, el: dict):
     D = ctx.size(el, "D", ("flange", "D"), 285)
     t = ctx.size(el, "t", ("flange", "t"), 24)
     view = el.get("view", "elevation")
+    sym = _on_layer(ctx.attribs(el)["layer"])
 
-    def build(b):
+    def build(b, sym=sym):
         h, yb = L / 2, 0.35 * D
         for sx in (-1, 1):                                                   # end flanges
-            b.add_lwpolyline(_rect(sx * h, -D / 2, sx * (h - t), D / 2), close=True, dxfattribs=IN_BLOCK)
+            b.add_lwpolyline(_rect(sx * h, -D / 2, sx * (h - t), D / 2), close=True, dxfattribs=sym)
         xi = h - t                                                           # body (bow-tie)
-        b.add_lwpolyline([(-xi, -yb), (xi, yb), (xi, -yb), (-xi, yb)], close=True, dxfattribs=IN_BLOCK)
+        b.add_lwpolyline([(-xi, -yb), (xi, yb), (xi, -yb), (-xi, yb)], close=True, dxfattribs=sym)
         cap = 0.047 * Dt
         if view == "plan":
-            b.add_circle((0, 0), Dt / 2, dxfattribs=IN_BLOCK)
-            b.add_lwpolyline(_rect(-cap, -cap, cap, cap), close=True, dxfattribs=IN_BLOCK)
+            b.add_circle((0, 0), Dt / 2, dxfattribs=sym)
+            b.add_lwpolyline(_rect(-cap, -cap, cap, cap), close=True, dxfattribs=sym)
             return
         b.add_lwpolyline([(-Dt / 2, yb), (Dt / 2, yb), (0.33 * Dt, 0.80 * H), (-0.33 * Dt, 0.80 * H)],
-                         close=True, dxfattribs=IN_BLOCK)                    # bonnet
-        b.add_lwpolyline(_rect(-0.21 * Dt, 0.80 * H, 0.21 * Dt, 0.88 * H), close=True, dxfattribs=IN_BLOCK)
-        b.add_line((0, 0.88 * H), (0, 0.915 * H), dxfattribs=IN_BLOCK)        # stem
-        b.add_lwpolyline(_rect(-cap, 0.915 * H, cap, H), close=True, dxfattribs=IN_BLOCK)
+                         close=True, dxfattribs=sym)                         # bonnet
+        b.add_lwpolyline(_rect(-0.21 * Dt, 0.80 * H, 0.21 * Dt, 0.88 * H), close=True, dxfattribs=sym)
+        b.add_line((0, 0.88 * H), (0, 0.915 * H), dxfattribs=sym)             # stem
+        b.add_lwpolyline(_rect(-cap, 0.915 * H, cap, H), close=True, dxfattribs=sym)
 
-    name = ctx.block(f"S2C_GV_{view.upper()}_{L:g}_{H:g}_{Dt:g}_{D:g}_{t:g}", build)
+    name = ctx.block(f"S2C_GV_{view.upper()}_{L:g}_{H:g}_{Dt:g}_{D:g}_{t:g}_{sym['layer']}", build)
     _insert(ctx, el, name)
     return Vec2(el["at"]), D / 2
 
@@ -207,17 +213,18 @@ def draw_connector(ctx: DrawContext, el: dict):
     t = ctx.size(el, "t", ("flange", "t"), 24)
     L = ctx.size(el, "length", ("dims", "L"), 250)
     Hb = ctx.size(el, "height", ("dims", "H"), 0.8 * D / ctx.u)
+    sym = _on_layer(ctx.attribs(el)["layer"])
 
-    def build(b):
-        b.add_lwpolyline(_rect(0, -D / 2, t, D / 2), close=True, dxfattribs=IN_BLOCK)
-        b.add_lwpolyline(_rect(t, -Hb / 2, t + L, Hb / 2), close=True, dxfattribs=IN_BLOCK)
+    def build(b, sym=sym):
+        b.add_lwpolyline(_rect(0, -D / 2, t, D / 2), close=True, dxfattribs=sym)
+        b.add_lwpolyline(_rect(t, -Hb / 2, t + L, Hb / 2), close=True, dxfattribs=sym)
         lug_w, lug_h = 0.157 * Hb, 0.109 * Hb
         for f in (0.3, 0.75):                                                # clamp bolt lugs
             xc = t + f * L
             b.add_lwpolyline(_rect(xc - lug_w / 2, Hb / 2, xc + lug_w / 2, Hb / 2 + lug_h), close=True,
-                             dxfattribs=IN_BLOCK)
+                             dxfattribs=sym)
 
-    name = ctx.block(f"S2C_CONN_{D:g}_{t:g}_{L:g}_{Hb:g}", build)
+    name = ctx.block(f"S2C_CONN_{D:g}_{t:g}_{L:g}_{Hb:g}_{sym['layer']}", build)
     _insert(ctx, el, name)
     return Vec2(el["at"]) + Vec2.from_deg_angle(float(el.get("rotation", 0)), t + L / 2), Hb / 2
 
@@ -278,7 +285,8 @@ def draw_north_arrow(ctx: DrawContext, el: dict):
     tip, left, notch, right = (c + Vec2(dx, dy) * s for dx, dy in ((0, 4), (-1.4, -1.5), (0, -0.6), (1.4, -1.5)))
     ctx.msp.add_lwpolyline([tip, left, notch, right], close=True, dxfattribs=attribs)
     ctx.msp.add_solid([tip, notch, right], dxfattribs=attribs)
-    put_text(ctx.msp, "N", c + Vec2(0, 5.2 * s), 1.6 * s, align="MIDDLE_CENTER")
+    put_text(ctx.msp, "N", c + Vec2(0, 5.2 * s),
+             ctx.paper(snap_text_height((1.6 * float(el.get("size", 14))) / 5.5)), align="MIDDLE_CENTER")
     return c, 0.0
 
 
@@ -306,14 +314,13 @@ def draw_break(ctx: DrawContext, el: dict):
 
 
 def draw_text(ctx: DrawContext, el: dict):
-    """Free text (height in paper mm); with `leader_to` it becomes a leader label."""
-    h = ctx.paper(float(el.get("height") or ctx.style["text_height"]))
-    lines = pick(el.get("text"), ctx.language)
-    if el.get("leader_to"):
-        leader_label(ctx, lines, Vec2(el["at"]), Vec2(el["leader_to"]), h)
-    else:
-        stack_text(ctx, lines, Vec2(el["at"]), h, el.get("align", "left"), float(el.get("rotation", 0)))
-    return Vec2(el["at"]), 0.0
+    """Queue free text. It is drawn later at `at` and is never moved or given a stray leader.
+
+    Queuing keeps it out of the sheet-fit measurement. `leader_to`, when set, is the only leader.
+    """
+    at = Vec2(el.get("at") or (0, 0))
+    ctx.pending.append({"kind": "text", "el": el, "anchor": at, "radius": 0.0})
+    return at, 0.0
 
 
 DRAWERS = {
@@ -332,10 +339,12 @@ def stack_text(ctx: DrawContext, lines: list[str], at: Vec2, h: float, align="le
         put_text(ctx.msp, s, at + down * i, h, align=align, rotation=rotation)
 
 
-def leader_label(ctx: DrawContext, lines: list[str], at: Vec2, target: Vec2, h: float) -> None:
-    """Reference-style label: left-aligned lines on a shelf line, leader from the shelf's nearer end to a dot.
+def leader_label(ctx: DrawContext, lines: list[str], at: Vec2, target: Vec2, h: float,
+                 elbow: str | None = None) -> None:
+    """Reference-style label: left-aligned lines on a shelf line, leader from one shelf end to a dot.
 
-    The shelf runs under the text, or over it when the target is above, so the leader never crosses the text.
+    The shelf runs under the text, or over it when the target is above, so the leader never crosses its
+    own text. `elbow` is ``"left"`` or ``"right"``; omitted, the end nearer the target is used.
     """
     if not lines:
         return
@@ -345,7 +354,12 @@ def leader_label(ctx: DrawContext, lines: list[str], at: Vec2, target: Vec2, h: 
         y = at.y + h + ctx.paper(0.8)
     else:
         y = at.y - (len(lines) - 1) * LINE_SPACING * h - ctx.paper(0.8)
-    start = Vec2(at.x + w, y) if target.x > at.x + w / 2 else Vec2(at.x, y)
+    if elbow == "left":
+        start = Vec2(at.x, y)
+    elif elbow == "right":
+        start = Vec2(at.x + w, y)
+    else:
+        start = Vec2(at.x + w, y) if target.x > at.x + w / 2 else Vec2(at.x, y)
     attribs = {"layer": "TEXT"}
     ctx.msp.add_line((at.x, y), (at.x + w, y), dxfattribs=attribs)
     ctx.msp.add_line(start, target, dxfattribs=attribs)
@@ -376,5 +390,9 @@ def draw_element(ctx: DrawContext, el: dict) -> None:
         ctx.warnings.append(f"element '{el.get('id', '?')}': unknown type {el.get('type')!r} - skipped")
         return
     anchor, radius = drawer(ctx, el)
-    if el.get("type") != "text":
+    if el.get("type") == "text" or not pick(el.get("label"), ctx.language):
+        return
+    if ctx.nudge_labels:
+        ctx.pending.append({"kind": "label", "el": el, "anchor": anchor, "radius": radius})
+    else:
         draw_label(ctx, el, anchor, radius)
