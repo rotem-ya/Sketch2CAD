@@ -10,7 +10,7 @@ import copy
 
 import ezdxf
 
-from .standards import apply_text_style
+from .standards import apply_text_style, dxf_lineweight
 from .text import STYLE
 
 STATUS_LAYERS = {"existing": "EXISTING", "new": "NEW", "proposed": "PROPOSED"}
@@ -171,8 +171,11 @@ class DrawContext:
         """BYLAYER attributes. Below-grade geometry uses a dashed status layer, not an override."""
         name = (status or el.get("status") or "new").lower()
         table = DASH_LAYERS if el.get("below_grade") else STATUS_LAYERS
-        return {"layer": table.get(name, "NEW_DASH" if el.get("below_grade") else "NEW"),
-                "color": 256, "linetype": "BYLAYER", "lineweight": -1}
+        attribs = {"layer": table.get(name, "NEW_DASH" if el.get("below_grade") else "NEW"),
+                   "color": 256, "linetype": "BYLAYER", "lineweight": -1}
+        if el.get("lineweight") is not None:
+            attribs["lineweight"] = dxf_lineweight(el["lineweight"])
+        return attribs
 
     def block(self, name: str, build) -> str:
         """Create a block once (entities on layer 0 / BYBLOCK so inserts take status layer + linetype)."""

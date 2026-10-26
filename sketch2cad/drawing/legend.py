@@ -120,10 +120,15 @@ def legend_table(ctx: DrawContext, legend: list[dict], max_width: float | None =
 
 
 # ------------------------------------------------------------------ notes
-def notes_block(ctx: DrawContext, notes: dict | None, width: float | None = None) -> Block | None:
-    """Numbered general notes; English block left-aligned, Hebrew block right-aligned below it."""
+def notes_block(ctx: DrawContext, notes: dict | None, width: float | None = None, *,
+                height: float | None = None, columns: bool = False) -> Block | None:
+    """Numbered general notes. English is left-aligned, Hebrew right-aligned.
+
+    Stacked, Hebrew sits under English. `columns=True` puts the two languages side by side
+    when both are present. `height` is the paper height in millimetres; omitted, the style is used.
+    """
     notes = notes or {}
-    th = ctx.style["notes_text_height"]
+    th = float(ctx.style["notes_text_height"] if height is None else height)
     width = width or ctx.style["notes_width"]
     langs = {"en": ["en", "he"], "he": ["he", "en"]}.get(ctx.language)
     if langs:                                    # single language: the other one only as a fallback
@@ -143,8 +148,25 @@ def notes_block(ctx: DrawContext, notes: dict | None, width: float | None = None
         return None
     line = LINE_SPACING * th
     gap = line
-    height = sum(len(lines) for _, lines in parts) * line + gap * (len(parts) - 1)
     k = ctx.k
+    side_by_side = columns and len(parts) >= 2
+    if side_by_side:
+        col_gap = 6.0
+        block_w = width * len(parts) + col_gap * (len(parts) - 1)
+        block_h = max(len(lines) for _, lines in parts) * line
+
+        def draw(top_left: Vec2) -> None:
+            for i, (lang, lines) in enumerate(parts):
+                x = top_left.x + i * (width + col_gap) * k
+                s = "\\P".join(lines)
+                if lang == "he":
+                    put_text(ctx.msp, s, (x + width * k, top_left.y), th * k, align="TOP_RIGHT")
+                else:
+                    put_text(ctx.msp, s, (x, top_left.y), th * k, align="TOP_LEFT")
+
+        return Block(block_w * k, block_h * k, draw)
+
+    block_h = sum(len(lines) for _, lines in parts) * line + gap * (len(parts) - 1)
 
     def draw(top_left: Vec2) -> None:
         y = top_left.y
@@ -156,4 +178,4 @@ def notes_block(ctx: DrawContext, notes: dict | None, width: float | None = None
                 put_text(ctx.msp, s, (top_left.x, y), th * k, align="TOP_LEFT")
             y -= (len(lines) * line + gap) * k
 
-    return Block(width * k, height * k, draw)
+    return Block(width * k, block_h * k, draw)

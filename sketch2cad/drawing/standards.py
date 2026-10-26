@@ -2,9 +2,9 @@
 
 ezdxf cannot create annotative objects, so text height is real model-space height
 (paper height x scale) or, on a multi-view sheet, paper-space text at 1:1.
-Every entity is BYLAYER. Layers 0 and DEFPOINTS hold no geometry: symbol blocks
-carry the status layer, and dimension arrow / definition-point leftovers are
-moved or removed after ezdxf builds them.
+Colour and linetype are BYLAYER. An explicit lineweight, including a ground line, is kept.
+Layers 0 and DEFPOINTS hold no geometry: symbol blocks carry the status layer, and
+dimension arrow / definition-point leftovers are moved or removed after ezdxf builds them.
 """
 from __future__ import annotations
 
@@ -61,10 +61,26 @@ def _set(entity, attr: str, value) -> None:
         return
 
 
+# DXF lineweights are hundredths of a millimetre. 0.50 mm is 50.
+_DXF_WEIGHTS = (5, 9, 13, 15, 18, 20, 25, 30, 35, 40, 50, 53, 60, 70, 80, 90,
+                100, 106, 120, 140, 158, 200, 211)
+
+
+def dxf_lineweight(value) -> int:
+    """A paper thickness in millimetres (0.50) or a DXF hundredth (50) → the nearest DXF weight."""
+    number = float(value)
+    hundredths = number * 100.0 if abs(number) <= 2.11 else number
+    return min(_DXF_WEIGHTS, key=lambda item: (abs(item - hundredths), item))
+
+
 def _bylayer(entity) -> None:
     _set(entity, "color", 256)
     _set(entity, "linetype", "BYLAYER")
-    _set(entity, "lineweight", -1)
+    # An explicit weight (a ground line at 0.50 mm, or a weight the element asked for) stays.
+    # BYLAYER (-1) and an unset weight become BYLAYER.
+    weight = entity.dxf.lineweight if entity.dxf.hasattr("lineweight") else None
+    if weight is None or weight < 0:
+        _set(entity, "lineweight", -1)
 
 
 def _replacement(block_name: str, entity) -> str:

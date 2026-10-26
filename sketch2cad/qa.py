@@ -482,10 +482,22 @@ def _metric_elevations(a, b, length, units):
     return a, b
 
 
+def _numeric_scale(spec) -> float:
+    """Sheet denominator as a number. ``auto`` and ``NTS`` use the scale the sheet is drawn at."""
+    raw = spec.get("scale", 1) if isinstance(spec, dict) else 1
+    if isinstance(raw, (int, float)) and not isinstance(raw, bool) and raw > 0:
+        return float(raw)
+    try:
+        from .drawing import sheet_scale_number
+        return float(sheet_scale_number(spec if isinstance(spec, dict) else {}))
+    except (TypeError, ValueError, KeyError):
+        return 20.0
+
+
 def _model_tol(paper_mm, spec) -> float:
     """Paper millimetres as drawing units. 10 mm on a 1:400 sheet is 4000 model-mm."""
-    scale = float(spec.get("scale") or 1)
-    units = spec.get("units", "mm")
+    scale = _numeric_scale(spec)
+    units = spec.get("units", "mm") if isinstance(spec, dict) else "mm"
     return float(paper_mm) * scale * (0.001 if units == "m" else 1.0)
 
 

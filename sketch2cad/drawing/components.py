@@ -130,7 +130,8 @@ def draw_polyline(ctx: DrawContext, el: dict):
     attribs = ctx.attribs(el)
     if style == "dashed":
         attribs["linetype"] = "DASHED"
-    if style in ("berm", "ground"):
+    # Grade and berm lines are 0.50 mm. An element that sets its own weight keeps that instead.
+    if style in ("berm", "ground") and attribs.get("lineweight", -1) < 0:
         attribs["lineweight"] = 50
     closed = bool(el.get("closed"))
     ctx.msp.add_lwpolyline(pts, close=closed, dxfattribs=attribs)

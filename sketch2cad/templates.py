@@ -113,7 +113,8 @@ def build_values(spec: dict, project=None, document=None) -> dict:
         "contract": value_of(project, "contract_no", ""), "contractor": value_of(project, "contractor", ""),
         "location": value_of(project, "location", ""),
         "date": date.today().strftime("%d/%m/%Y"),
-        "scale": AS_SHOWN if mixed_scales(spec) else format_scale(spec.get("scale", 1)),
+        "scale": "NTS" if spec.get("nts") else (
+            AS_SHOWN if mixed_scales(spec) else format_scale(spec.get("scale", 1))),
         "units": spec.get("units", "mm"), "view": spec.get("view", ""), "paper": spec.get("paper", ""),
     }
     values.update((spec.get("sheet") or {}).get("fields") or {})

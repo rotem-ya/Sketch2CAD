@@ -555,3 +555,17 @@ def test_findings_carry_both_languages():
     assert {f.code for f in found} >= {"text_overlap", "text_too_small", "unknown_ref"}
     for finding in found:
         assert finding.en and finding.he and finding.severity in ("error", "warning", "info")
+
+
+def test_auto_and_nts_scales_do_not_crash_the_slope_check():
+    from sketch2cad.qa import _model_tol
+
+    elements = [
+        {"id": "p", "type": "pipe", "points": [[0, 0], [4000, 0]], "od": 200, "slope": 0.004},
+        {"id": "a", "type": "text", "at": [100, 80], "height": 2.5, "text": "INV 225.00", "pipe": "p"},
+        {"id": "b", "type": "text", "at": [3900, 80], "height": 2.5, "text": "INV 224.84", "pipe": "p"},
+    ]
+    for token in ("auto", "NTS", "N.T.S."):
+        spec = _spec(elements, scale=token)
+        review(spec)
+        assert _model_tol(10, spec) > 0

@@ -52,6 +52,8 @@ def _finish_labels(ctx: DrawContext) -> None:
     if ctx.nudge_labels:
         place.nudge_dimensions(ctx)
         place.place_labels(ctx)
+        # A label that fell back onto its spec point can cover dimension text. Slide that text off it.
+        place.nudge_dimensions(ctx)
 
 
 def _label_strings(el: dict) -> list[str]:

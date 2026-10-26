@@ -63,7 +63,9 @@ def assert_submission(doc) -> None:
                 assert entity.dxf.linetype.upper() == "BYLAYER", (
                     block.name, entity.dxftype(), entity.dxf.linetype)
             if entity.dxf.hasattr("lineweight"):
-                assert entity.dxf.lineweight == -1, (block.name, entity.dxftype(), entity.dxf.lineweight)
+                # BYLAYER, or an explicit weight such as a 0.50 mm ground line.
+                assert entity.dxf.lineweight == -1 or entity.dxf.lineweight >= 5, (
+                    block.name, entity.dxftype(), entity.dxf.lineweight)
 
 
 def dimension_texts(doc) -> list[str]:
@@ -1078,5 +1080,133 @@ def test_sheet_scale_auto_renders(tmp_path):
     assert not any("could not convert" in w or "not a positive number" in w for w in res["warnings"])
     doc = ezdxf.readfile(res["dxf"])
     texts = [e.text if e.dxftype() == "MTEXT" else e.dxf.text for e in doc.modelspace().query("TEXT MTEXT")]
-    assert any(any(token in text for token in ("1:50", "1:100", "1:125", "1:200", "1:250", "1:500", "1:1000"))
-               for text in texts), texts
+    # 5000 x 3000 mm on the A3 drawing area fits at 1:15 and not at 1:10.
+    assert any("1:15" in text for text in texts), texts
+    assert not any("1:1000" in text or "1:50" in text for text in texts), texts
+
+
+def _sheet_texts(doc) -> list[str]:
+    return [e.text if e.dxftype() == "MTEXT" else e.dxf.text for e in doc.modelspace().query("TEXT MTEXT")]
+
+
+def test_notes_are_never_dropped(tmp_path):
+    """A notes block that does not fit at 2.5 mm is redrawn smaller, and every sentence is on the sheet."""
+    en = [f"English note {i} about the trench cover." for i in range(1, 13)]
+    he = [f"הערה {i} על הכיסוי." for i in range(1, 13)]
+    spec = {
+        "units": "mm", "scale": 1, "paper": "A3", "language": "both", "view": "plan",
+        "sheet": {"template": "a3_simple"},
+        "notes": {"en": en, "he": he},
+        "elements": [{"id": "pad", "type": "rect", "status": "existing", "corners": [[0, 0], [300, 150]]}],
+    }
+    res = render(spec, tmp_path, "notes", formats=("dxf",))
+    assert not any("not drawn" in w for w in res["warnings"]), res["warnings"]
+    blob = "\n".join(_sheet_texts(ezdxf.readfile(res["dxf"]))).replace("\\P", " ")
+    for line in en + he:
+        assert line in blob, line
+    heights = [e.dxf.char_height for e in ezdxf.readfile(res["dxf"]).modelspace().query("MTEXT")
+               if "NOTES" in e.text or "הערות" in e.text]
+    assert heights and max(heights) <= 2.0 + 1e-6
+
+
+def test_two_column_notes_when_a_single_column_does_not_fit(tmp_path):
+    en = [f"English column note {i} stays readable." for i in range(1, 16)]
+    he = [f"טור עברי {i} נשאר קריא." for i in range(1, 16)]
+    spec = {
+        "units": "mm", "scale": 1, "paper": "A3", "language": "both", "view": "plan",
+        "sheet": {"template": "a3_simple"},
+        "notes": {"en": en, "he": he},
+        "elements": [{"id": "pad", "type": "rect", "status": "existing", "corners": [[0, 0], [300, 180]]}],
+    }
+    res = render(spec, tmp_path, "cols", formats=("dxf",))
+    assert not any("not drawn" in w for w in res["warnings"]), res["warnings"]
+    notes = [e for e in ezdxf.readfile(res["dxf"]).modelspace().query("MTEXT")
+             if "NOTES" in e.text or "הערות" in e.text]
+    assert len(notes) == 2
+    tops = sorted(e.dxf.insert.y for e in notes)
+    assert tops[1] - tops[0] < 5.0
+
+
+def test_pinned_label_does_not_sit_on_dimension_text(tmp_path):
+    from sketch2cad.drawing.place import overlapping_text
+
+    spec = {
+        "units": "mm", "scale": 10, "paper": "A3", "language": "en", "view": "plan",
+        "sheet": {"template": "a3_simple"},
+        "elements": [{
+            "id": "mp1", "type": "pipe", "status": "new", "od": 400,
+            "points": [[0, 0], [6000, 0]],
+            "label": "MAIN DRAIN", "label_at": [3000, 280], "label_pinned": True,
+        }],
+        "dimensions": [{"type": "chain", "axis": "h", "points": [[0, 0], [6000, 0]], "base": 200}],
+    }
+    res = render(spec, tmp_path, "dimlab", formats=("dxf",))
+    doc = ezdxf.readfile(res["dxf"])
+    assert overlapping_text(doc.modelspace()) == []
+    label = next(e for e in doc.modelspace().query("TEXT MTEXT") if "MAIN DRAIN" in (
+        e.text if e.dxftype() == "MTEXT" else e.dxf.text))
+    point = label.dxf.insert
+    assert point.x == pytest.approx(3000, abs=1)
+    assert point.y == pytest.approx(280, abs=1)
+
+
+def test_callout_below_the_detail_stays_inside_the_frame(tmp_path):
+    spec = {
+        "units": "mm", "scale": 1, "paper": "A3", "language": "en", "view": "detail",
+        "sheet": {"template": "a3_simple"},
+        "elements": [
+            {"id": "body", "type": "rect", "status": "existing", "corners": [[0, 0], [220, 100]]},
+            {"id": "d_inv_t", "type": "text", "at": [110, -108], "height": 2.5, "text": "INV 225.00"},
+        ],
+    }
+    doc = ezdxf.readfile(render(spec, tmp_path, "inv", formats=("dxf",))["dxf"])
+    fx0, fy0, _fx1, _fy1 = _frame_limits(doc)
+    text = next(e for e in doc.modelspace().query("TEXT MTEXT") if "INV 225" in (
+        e.text if e.dxftype() == "MTEXT" else e.dxf.text))
+    from ezdxf import bbox as ezbbox
+    box = ezbbox.extents([text], fast=True)
+    assert box.extmin.y - fy0 > 8.0
+
+
+def test_ground_and_explicit_lineweight_are_kept(tmp_path):
+    spec = {
+        "units": "mm", "scale": 10, "paper": "A3", "language": "en", "view": "section",
+        "sheet": {"template": "a3_simple"},
+        "elements": [
+            {"id": "sec_grade", "type": "polyline", "status": "existing", "style": "ground",
+             "points": [[0, 0], [4000, 0]]},
+            {"id": "heavy", "type": "polyline", "status": "new", "lineweight": 0.70,
+             "points": [[0, 800], [4000, 800]]},
+        ],
+    }
+    doc = ezdxf.readfile(render(spec, tmp_path, "grade", formats=("dxf",))["dxf"])
+    weights = {}
+    for poly in doc.modelspace().query("LWPOLYLINE"):
+        ys = [p[1] for p in poly.get_points()]
+        if not ys:
+            continue
+        weights[round(sum(ys) / len(ys), 3)] = poly.dxf.lineweight
+    assert weights[0] == 50
+    assert weights[800] == 70
+
+
+def test_auto_scale_is_the_largest_that_fits_and_ignores_a_far_offset(tmp_path):
+    def title_scale(name, spec):
+        doc = ezdxf.readfile(render(spec, tmp_path, name, formats=("dxf",))["dxf"])
+        return " ".join(_sheet_texts(doc))
+
+    detail = {
+        "units": "m", "scale": "auto", "paper": "A3", "language": "en", "view": "detail",
+        "sheet": {"template": "a3_simple", "fields": {"title_en": "DETAIL"}},
+        "elements": [{"id": "fit", "type": "rect", "status": "existing", "corners": [[0, 0], [4, 2]]}],
+    }
+    shown = title_scale("detail_auto", detail)
+    assert "1:15" in shown
+    far = {**detail, "dimensions": [
+        {"type": "chain", "axis": "h", "points": [[0, 0], [4, 0]], "base": 500}]}
+    assert "1:15" in title_scale("detail_far", far)
+    site = {**detail, "view": "plan", "elements": [
+        {"id": "site", "type": "rect", "status": "existing", "corners": [[0, 0], [200, 150]]}]}
+    site_text = title_scale("site_auto", site)
+    assert "1:750" in site_text
+    assert "1:15" not in site_text

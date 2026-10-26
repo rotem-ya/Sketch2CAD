@@ -12,7 +12,8 @@ is never omitted. Label boxes keep GAP_TEXT_MM of
 clear paper between them. `label_pinned` keeps the authored point even when it
 collides. Free `text` is not queued here. Dimension text may only slide along its
 dimension line or flip to the other side of it. The search order is fixed, so the
-same spec always lands on the same sheet.
+same spec always lands on the same sheet. After labels are placed, dimension text
+slides again so a label that kept its spec point does not sit on the measurement.
 """
 from __future__ import annotations
 
@@ -632,6 +633,11 @@ def nudge_dimensions(ctx: DrawContext, bounds=None) -> None:
             along0 = rel.dot(direction)
             across0 = rel.dot(normal)
             window = span if span is not None else (along0 - ctx.paper(20), along0 + ctx.paper(20))
+            # A label that kept its spec point can sit on this text. Search past the 25 mm
+            # label cap, including a short run beyond the dimension line, before giving up.
+            if _hits_text(box, others, gap_text):
+                extra = ctx.paper(40.0)
+                window = (window[0] - extra, window[1] + extra)
 
             def candidate_at(along, across):
                 delta = direction * (along - along0) + normal * (across - across0)

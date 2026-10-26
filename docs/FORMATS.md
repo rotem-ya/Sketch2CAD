@@ -1,8 +1,11 @@
 # Sketch2CAD – internal formats and module APIs (developer reference)
 
 All geometry is in **drawing units** (`units`: `"mm"` or `"m"`); a sheet is drawn at `1:scale`, so
-one paper-mm = `scale` mm of model space (or `scale/1000` m). `scale` may be `"auto"`: the smallest of
-1:50, 1:100, 1:125, 1:200, 1:250, 1:500 or 1:1000 whose geometry fits the drawing area.
+one paper-mm = `scale` mm of model space (or `scale/1000` m). `scale` may be `"auto"`: the largest
+standard scale that fits the drawing area (smallest denominator of 1:1, 1:2, 1:5, 1:10, 1:15, 1:20,
+1:25, 1:50, 1:75, 1:100, 1:125, 1:150, 1:200, 1:250, 1:400, 1:500, 1:750, 1:1000, …). A callout or a
+dimension-line offset far from the geometry does not force a smaller scale. `"NTS"` is drawn at that
+same fitted scale and labelled NTS.
 
 ## 1. Drawing spec – `spec.json` (one per document)
 
