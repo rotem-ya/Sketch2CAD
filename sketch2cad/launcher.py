@@ -328,15 +328,17 @@ def _windows_process_facts(pid: int) -> tuple[str | None, str | None]:
 
 
 def _process_listed(pid: int) -> bool | None:
-    """Whether the OS still lists this pid. None when the query itself failed.
+    """Whether ``Win32_Process`` still lists this pid. None when that cannot be answered.
 
-    On Windows an empty ``Win32_Process`` result means the process is gone. A CIM error does not:
-    a live process must not be treated as stopped because the query failed.
+    An empty result means the process is gone. A failed query, a machine that is not Windows,
+    or a missing ``/proc`` does not: unknown must not be reported as stopped.
     """
     if not isinstance(pid, int) or pid <= 0:
         return False
+    # Win32_Process is the only listing that means "gone". Off Windows there is no such query,
+    # and a missing /proc must not be read as "not listed" either: both stay None.
     if os.name != "nt":
-        return Path(f"/proc/{pid}").exists()
+        return None
     script = (
         "try {\r\n"
         f"  $p = Get-CimInstance -ClassName Win32_Process -Filter 'ProcessId = {pid}' -ErrorAction Stop\r\n"
