@@ -158,6 +158,30 @@ def _log_tail(n: int = 1500) -> str:
     return path.read_text(encoding="utf-8", errors="replace")[-n:].strip() if path.exists() else ""
 
 
+# GetExitCodeProcess: a process that has already exited, while its parent still holds a handle.
+_STILL_ACTIVE = 259
+
+
+def _windows_process_running(kernel, pid: int) -> bool:
+    """True only while Windows says the process is still running.
+
+    ``OpenProcess`` succeeds for an exited process whose parent has not closed its handle.
+    ``GetExitCodeProcess`` then returns the exit code; anything other than ``STILL_ACTIVE`` (259) is dead.
+    A failed exit-code call keeps the process (a live one must not be reported dead).
+    """
+    import ctypes
+    handle = kernel.OpenProcess(0x1000, 0, pid)            # PROCESS_QUERY_LIMITED_INFORMATION
+    if not handle:
+        return False
+    try:
+        code = ctypes.c_uint32()
+        if not kernel.GetExitCodeProcess(handle, ctypes.byref(code)):
+            return True
+        return int(code.value) == _STILL_ACTIVE
+    finally:
+        kernel.CloseHandle(handle)
+
+
 def pid_alive(pid: int) -> bool:
     """True when a process with this pid exists. A dead pid (the usual orphan after a crash) is False."""
     if not isinstance(pid, int) or pid <= 0:
@@ -167,13 +191,11 @@ def pid_alive(pid: int) -> bool:
         kernel = ctypes.WinDLL("kernel32", use_last_error=True)
         kernel.OpenProcess.argtypes = [ctypes.c_uint32, ctypes.c_int, ctypes.c_uint32]
         kernel.OpenProcess.restype = ctypes.c_void_p
+        kernel.GetExitCodeProcess.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint32)]
+        kernel.GetExitCodeProcess.restype = ctypes.c_int
         kernel.CloseHandle.argtypes = [ctypes.c_void_p]
         kernel.CloseHandle.restype = ctypes.c_int
-        handle = kernel.OpenProcess(0x1000, 0, pid)            # PROCESS_QUERY_LIMITED_INFORMATION
-        if not handle:
-            return False
-        kernel.CloseHandle(handle)
-        return True
+        return _windows_process_running(kernel, pid)
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
@@ -303,6 +325,30 @@ def _windows_process_facts(pid: int) -> tuple[str | None, str | None]:
         return (None, None)
     name, _, started = line[0].partition("\t")
     return (name.strip() or None, started.strip() or None)
+
+
+def _process_listed(pid: int) -> bool | None:
+    """Whether the OS still lists this pid. None when the query itself failed.
+
+    On Windows an empty ``Win32_Process`` result means the process is gone. A CIM error does not:
+    a live process must not be treated as stopped because the query failed.
+    """
+    if not isinstance(pid, int) or pid <= 0:
+        return False
+    if os.name != "nt":
+        return Path(f"/proc/{pid}").exists()
+    script = (
+        "try {\r\n"
+        f"  $p = Get-CimInstance -ClassName Win32_Process -Filter 'ProcessId = {pid}' -ErrorAction Stop\r\n"
+        "} catch {\r\n"
+        "  exit 2\r\n"
+        "}\r\n"
+        "if ($p) { Write-Output $p.ProcessId }\r\n"
+    )
+    proc = _windows_cim(script)
+    if proc is None or proc.returncode not in (0, None):
+        return None
+    return bool((proc.stdout or "").strip())
 
 
 def _windows_child_facts(pid: int) -> list[tuple[int, str | None, str | None]]:
@@ -542,6 +588,9 @@ def _kill_succeeded(returncode: int | None, pid: int, recorded_start: str | None
         return True
     if not pid_alive(pid):
         return True
+    # Win32_Process drops an exited process even while OpenProcess still succeeds.
+    if _process_listed(pid) is False:
+        return True
     if recorded_start:
         _image, started = _process_facts(pid)
         if started is not None and not _same_start(started, recorded_start):
@@ -697,7 +746,9 @@ def stop(port: int = PORT) -> int:
     ``taskkill`` without the tree leaves the Streamlit child running, and a forced kill does not
     run the supervisor's cleanup. Each pid is killed only after its image is Python and it was
     created after its parent. Children first. ``taskkill`` 128 counts as stopped only when that
-    pid is gone, or a new process has reused the number. A live pid keeps the pid file.
+    pid is gone, or a new process has reused the number. An exited process whose parent still
+    holds a handle counts as gone, and so does a pid ``Win32_Process`` no longer lists. A live
+    pid keeps the pid file, and this command then exits 1.
     """
     record = _supervisor_record()
     stopped = False
@@ -728,6 +779,7 @@ def stop(port: int = PORT) -> int:
         print("Sketch2CAD was not running.")
     else:
         print("Sketch2CAD's process could not be confirmed, so it was left running.")
+        return 1
     return 0
 
 
