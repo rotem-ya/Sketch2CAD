@@ -15,9 +15,19 @@ if __name__ == "__main__" and "streamlit" not in sys.modules:
     # browser shows "connection refused". Start the real app with the program's own Python instead.
     import subprocess
     _root = Path(__file__).resolve().parents[1]
-    _venv = _root / ".venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
-    sys.exit(subprocess.call([str(_venv if _venv.exists() else sys.executable), "-m", "streamlit", "run",
-                              str(Path(__file__).resolve()), "--server.port", "8517"], cwd=_root))
+    _script = str(Path(__file__).resolve())
+    _cmd = ["-m", "streamlit", "run", _script, "--server.port", "8517", "--server.headless", "true"]
+    if os.name == "nt":
+        _py = _root / ".venv" / "Scripts" / "pythonw.exe"
+        if not _py.exists():
+            _py = _root / ".venv" / "Scripts" / "python.exe"
+        _flags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000) | getattr(subprocess, "DETACHED_PROCESS", 8)
+        subprocess.Popen([str(_py if _py.exists() else sys.executable), *_cmd], cwd=_root,
+                         creationflags=_flags, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL, close_fds=True)
+        sys.exit(0)
+    _venv = _root / ".venv" / "bin" / "python"
+    sys.exit(subprocess.call([str(_venv if _venv.exists() else sys.executable), *_cmd], cwd=_root))
 
 import streamlit as st
 import yaml
