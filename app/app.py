@@ -80,6 +80,7 @@ def _theme_css() -> None:
     .s2c-wait { background: #FDEBD0; color: #6E4B00; }
     .s2c-ready { background: #D6EAF8; color: #1A5276; }
     .s2c-done { background: #D5F5E3; color: #0E6655; }
+    .s2c-fail { background: #FADBD8; color: #7B241C; }
     .s2c-q, .s2c-sev-error, .s2c-sev-warning, .s2c-sev-info {
       border-inline-start: 4px solid #B7950B; background: #FEF9E7;
       padding: 0.4rem 0.75rem; margin: 0.28rem 0; border-radius: 6px;
@@ -725,8 +726,18 @@ def _text_of(item) -> str:
 
 def agent_status_card(p: Project, d: Document) -> None:
     """What was sent, whether a reply is waiting, and what was last applied."""
+    from sketch2cad.claude_runner import configured, status_for_document, tick_from_ui
     from sketch2cad.workflow import workflow_view
+    if configured(settings):
+        try:
+            tick_from_ui(settings, projects=[p.path])
+        except Exception:  # noqa: BLE001 - the status card still renders if a run cannot advance
+            pass
     view = workflow_view(p.path, d.path, d.code)
+    try:
+        run = status_for_document(p.path, d.code)
+    except Exception:  # noqa: BLE001
+        run = None
     badge = {"none": "s2c-idle", "awaiting": "s2c-wait", "reply": "s2c-ready", "applied": "s2c-done"}[view["state"]]
     with st.container(border=True):
         st.markdown(
@@ -760,6 +771,17 @@ def agent_status_card(p: Project, d: Document) -> None:
                 applied.caption(isolate(Path(backup).name))
         else:
             applied.caption(T("agent_never_applied"))
+        if run and run.get("status") in ("queued", "working", "ready", "failed"):
+            kind = {"queued": "s2c-idle", "working": "s2c-wait", "ready": "s2c-ready",
+                    "failed": "s2c-fail"}[run["status"]]
+            st.markdown(
+                f'<span class="s2c-badge {kind}">{html.escape(T("claude_status_" + run["status"]))}</span>',
+                unsafe_allow_html=True)
+            if run["status"] == "failed" and run.get("log_tail"):
+                st.caption(run["log_tail"])
+            for item in run.get("warnings") or []:
+                if isinstance(item, (list, tuple)) and len(item) == 2:
+                    st.caption(T(item[0]).format(path=item[1]))
 
 
 def _composer(prefix: str):
@@ -813,9 +835,8 @@ def _agent_send_body() -> None:
         notice = T("agent_sent").format(path=path)
         if paths:
             notice = f"{notice} ({T('agent_extra_added').format(n=len(paths))})"
-        ss.agent_notice = ("success", notice)
         ss.rev_open = True
-        st.rerun()
+        _note_package_sent(path, notice)
 
 
 def _trial_pair(report: dict) -> None:
@@ -959,6 +980,23 @@ def _remember_markup(d: Document, preview: Path, strokes) -> None:
     compose(preview, strokes, d.path / "markups" / f"markup_{stamp}.png")
 
 
+def _note_package_sent(path: Path, notice: str) -> None:
+    """Start the local run when it is configured, and show a send or start error."""
+    from sketch2cad.claude_runner import RunnerError, watch_package
+    try:
+        watch_package(path)
+    except RunnerError as exc:
+        text = T(exc.code)
+        if "{detail}" in text:
+            text = text.format(detail=exc.detail)
+        ss.agent_notice = ("error", text)
+    except OSError as exc:
+        ss.agent_notice = ("error", str(exc))
+    else:
+        ss.agent_notice = ("success", notice)
+    st.rerun()
+
+
 def _send_work_package(d: Document, request: str, uploads=None) -> None:
     """Write a work package. An empty request opens the form; nothing is applied here."""
     from sketch2cad.bridge import BridgeError, export_to_outbox
@@ -972,8 +1010,7 @@ def _send_work_package(d: Document, request: str, uploads=None) -> None:
         notice = T("agent_sent").format(path=path)
         if paths:
             notice = f"{notice} ({T('agent_extra_added').format(n=len(paths))})"
-        ss.agent_notice = ("success", notice)
-        st.rerun()
+        _note_package_sent(path, notice)
         return
     ss.agent_doc = str(d.path)
     ss.agent_dialog = "send"
@@ -1380,12 +1417,44 @@ def page_settings() -> None:
     ss.setdefault("set_root", settings.default_projects_root)
     root = folder_input(T("default_root"), "set_root")
     oda = st.text_input(T("oda_path"), value=settings.oda_converter_path)
+    st.subheader(T("claude_runner"))
+    st.caption(T("claude_runner_help"))
+    claude_auto = st.checkbox(T("claude_auto"), value=bool(settings.claude_auto_run))
+    claude_exe = st.text_input(T("claude_exe"), value=settings.claude_exe)
+    from sketch2cad.claude_runner import detect_claude_exe
+    detected = detect_claude_exe()
+    if detected and not settings.claude_exe.strip():
+        st.caption(T("claude_exe_detected").format(path=detected))
+    elif not settings.claude_exe.strip():
+        st.caption(T("claude_exe_missing"))
+    accounts_text = st.text_area(T("claude_accounts"), value="\n".join(settings.claude_accounts), height=96)
+    timeout = st.number_input(T("claude_timeout"), min_value=30, max_value=7200,
+                              value=int(settings.claude_timeout_s or 600), step=30)
     if st.button(T("save"), key="settings_save", type="primary"):
         if oda.strip() and not (oda.strip().lower().endswith(".exe") and Path(oda.strip()).is_file()):
             st.error(T("oda_not_exe"))
             return
+        from sketch2cad.claude_runner import account_warnings, arm, validate_settings
+        accounts = [line.strip() for line in accounts_text.splitlines() if line.strip()]
+        problems = validate_settings(claude_exe.strip(), accounts, auto=bool(claude_auto))
+        if problems:
+            for code, detail in problems:
+                text = T(code)
+                if "{path}" in text:
+                    text = text.format(path=detail)
+                st.error(text)
+            return
         settings.default_projects_root, settings.oda_converter_path = root, oda
+        settings.claude_auto_run = bool(claude_auto)
+        settings.claude_exe = claude_exe.strip()
+        settings.claude_accounts = accounts
+        settings.claude_timeout_s = int(timeout)
         settings.save()
+        if settings.claude_auto_run:
+            arm(settings)
+        for account in accounts:
+            for code, detail in account_warnings(account):
+                st.warning(T(code).format(path=detail))
         if data_home.strip() and Path(data_home).expanduser().resolve() != app_home().resolve():
             try:
                 config.set_data_home(data_home)

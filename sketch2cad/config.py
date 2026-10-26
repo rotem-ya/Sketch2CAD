@@ -74,12 +74,43 @@ def set_data_home(folder: str | os.PathLike, *, copy_from: Path | None = None) -
     return new
 
 
+def _drop_api_keys(data: dict) -> dict:
+    """Drop leftover model-key fields. The program does not store or read them."""
+    return {key: value for key, value in data.items() if "api_key" not in str(key).lower()}
+
+
+def _coerce_runner(known: dict) -> dict:
+    """Keep a hand-edited settings file from crashing on the runner fields."""
+    if "claude_accounts" in known:
+        raw = known["claude_accounts"]
+        if isinstance(raw, str):
+            raw = raw.splitlines()
+        if isinstance(raw, list):
+            known["claude_accounts"] = [str(item).strip() for item in raw if str(item).strip()]
+        else:
+            known["claude_accounts"] = []
+    if "claude_auto_run" in known:
+        known["claude_auto_run"] = bool(known["claude_auto_run"])
+    if "claude_exe" in known and not isinstance(known["claude_exe"], str):
+        known["claude_exe"] = "" if known["claude_exe"] is None else str(known["claude_exe"])
+    if "claude_timeout_s" in known:
+        try:
+            known["claude_timeout_s"] = max(30, int(known["claude_timeout_s"]))
+        except (TypeError, ValueError):
+            known["claude_timeout_s"] = 600
+    return known
+
+
 @dataclass
 class Settings:
     ui_language: str = "he"                    # "he" | "en"
     default_projects_root: str = ""            # where new project folders are created by default
     oda_converter_path: str = ""               # ODAFileConverter.exe (DWG <-> DXF)
     projects: list[str] = field(default_factory=list)   # registered project folders
+    claude_exe: str = ""                       # empty: look on PATH and in %USERPROFILE%\.local\bin
+    claude_accounts: list[str] = field(default_factory=list)  # CLAUDE_CONFIG_DIR dirs, in try order
+    claude_auto_run: bool = False              # off until an exe path and an account folder are set
+    claude_timeout_s: int = 600                # seconds for one headless run
 
     @classmethod
     def load(cls) -> "Settings":
@@ -87,12 +118,21 @@ class Settings:
         if not path.exists():
             return cls()
         data = json.loads(path.read_text(encoding="utf-8"))
-        known = {k: v for k, v in data.items() if k in cls.__dataclass_fields__}
-        return cls(**known)
+        if not isinstance(data, dict):
+            return cls()
+        cleaned = _drop_api_keys(data)
+        if set(cleaned) != set(data):
+            try:
+                path.write_text(json.dumps(cleaned, ensure_ascii=False, indent=2), encoding="utf-8")
+            except OSError:
+                pass
+        known = {key: value for key, value in cleaned.items() if key in cls.__dataclass_fields__}
+        return cls(**_coerce_runner(known))
 
     def save(self) -> None:
         path = app_home() / "settings.json"
-        path.write_text(json.dumps(asdict(self), ensure_ascii=False, indent=2), encoding="utf-8")
+        payload = _drop_api_keys(asdict(self))
+        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
     def register_project(self, folder: Path | str) -> None:
         folder = str(Path(folder).resolve())
