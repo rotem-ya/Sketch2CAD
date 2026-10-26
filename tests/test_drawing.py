@@ -779,6 +779,86 @@ def test_measurement_ignores_system_fonts(monkeypatch):
         drawing_text.font.cache_clear()
 
 
+def test_measurement_ignores_a_mapped_system_txt_ttf(tmp_path):
+    """A system ``txt_____.ttf`` (the Windows stand-in for ``txt``) is not the file bbox opens."""
+    import shutil
+
+    from ezdxf.fonts import fonts as ezfonts
+    from ezdxf.fonts.font_face import FontFace
+    from ezdxf.fonts.font_manager import CacheEntry, FontCache
+    from sketch2cad.drawing import text as drawing_text
+    from sketch2cad.drawing.place import _entity_box, _overlaps
+    from sketch2cad.templates import draw_titleblock, load_template
+
+    from matplotlib import font_manager
+
+    sample = "תוכנית ניקוז כללית"
+    bundled = drawing_text._BUNDLED_FONT.resolve()
+    bundled_width = ezfonts.make_font(drawing_text.FONT, 3.5).text_width(sample)
+    # matplotlib ships DejaVu on Windows and Linux. It is not the bundled face.
+    different = Path(font_manager.findfont("DejaVu Sans", fallback_to_default=False))
+    assert different.is_file()
+    assert different.read_bytes() != bundled.read_bytes()
+    folder = tmp_path / "Windows" / "Fonts"
+    folder.mkdir(parents=True)
+    fake = folder / "txt_____.ttf"
+    shutil.copyfile(different, fake)
+    manager = ezfonts.font_manager
+    key = FontCache.key("txt_____.ttf")
+    previous = manager._font_cache._cache.get(key)
+    try:
+        manager.scan_folder(folder)
+        # Windows maps the missing style "txt" onto this filename and matches the family "Txt".
+        manager._font_cache._cache[key] = CacheEntry(
+            fake, FontFace(filename="txt_____.ttf", family="Txt", style="Regular", weight=400, width=5))
+        assert ezfonts.map_shx_to_ttf("txt") == "txt_____.ttf"
+        assert ezfonts.map_shx_to_ttf("TXT.SHX") == "txt_____.ttf"
+        raw = manager._font_cache._cache[key]
+        assert Path(raw.file_path).resolve() == fake.resolve()
+        manager._match_cache.clear()
+        manager._loaded_ttf_fonts.clear()
+        ezfonts.TrueTypeFont._glyph_caches.clear()
+        for name in ("txt", "TXT", "txt_____.ttf", "TXT.SHX"):
+            assert ezfonts.make_font(name, 3.5).text_width(sample) == bundled_width
+        opened = Path(manager.get_ttf_font("txt_____.ttf").reader.file.name).resolve()
+        assert opened == bundled
+        doc = ezdxf.new()
+        narrow = load_template("a3_simple")
+        narrow["fields"] = [{**field, "h": 3.5, "w": 80} if field["key"] == "title" else field
+                            for field in narrow["fields"]]
+        draw_titleblock(doc.modelspace(), narrow, {
+            "title_en": "DRAINAGE GENERAL ARRANGEMENT", "title_he": sample,
+            "scale": "400", "view": "PLAN"}, 1, "mm", language="both")
+        en_box = he_box = None
+        for entity in doc.modelspace().query("TEXT MTEXT"):
+            text = entity.text if entity.dxftype() == "MTEXT" else entity.dxf.text
+            if "DRAINAGE" in text:
+                en_box = _entity_box(entity)
+            if "ניקוז" in text:
+                he_box = _entity_box(entity)
+        assert en_box and he_box
+        assert not _overlaps(en_box, he_box, 1.0)
+    finally:
+        if previous is None:
+            manager._font_cache._cache.pop(key, None)
+        else:
+            manager._font_cache._cache[key] = previous
+        manager._match_cache.clear()
+        manager._loaded_ttf_fonts.clear()
+        ezfonts.TrueTypeFont._glyph_caches.clear()
+
+
+def test_shape_font_names_fall_back_to_the_bundled_face():
+    """``.lff`` and ``.shx`` names must not be opened as the bundled TrueType file."""
+    from ezdxf.fonts import fonts as ezfonts
+    from sketch2cad.drawing import text as drawing_text
+
+    sample = "DRAINAGE"
+    bundled = ezfonts.make_font(drawing_text.FONT, 3.5).text_width(sample)
+    for name in ("x.lff", "x.shx", "x.shp"):
+        assert ezfonts.make_font(name, 3.5).text_width(sample) == bundled
+
+
 def test_title_height_rounds_up_and_is_not_shrunk():
     from sketch2cad.drawing.standards import snap_text_height
     from sketch2cad.templates import draw_titleblock, load_template

@@ -61,8 +61,8 @@ def plain(s: str) -> str:
     return s
 
 
-# Names ezdxf uses when a style is missing ("txt") or when it picks a default face.
-# Each one is pointed at the bundled file so bbox never opens a system font.
+# Names ezdxf asks for when a style is missing. The live gate below is what stops a system
+# file: these aliases only cover the names we already know.
 _PINNED_FONT_NAMES = (
     FONT,
     "txt",
@@ -74,24 +74,70 @@ _PINNED_FONT_NAMES = (
     "OpenSans-Regular.ttf",
     "LiberationSans-Regular.ttf",
 )
+# The one CacheEntry every resolution returns. A list so the gate can be installed once.
+_BUNDLED_ENTRY: list = []
 
 
 def _pin_measurement_font() -> None:
     """Measure every text lookup with the bundled Liberation Sans.
 
-    The DXF style name stays ``arial.ttf``. A document that never created that style is measured
-    as ``txt``, and ezdxf then opens its default face (DejaVu on Linux, Arial Unicode on Windows).
-    Those names, and the font manager's fallback, all resolve to the bundled file.
+    The DXF style name stays ``arial.ttf``. A document with no such style is measured as ``txt``.
+    On Windows ezdxf maps that to ``txt_____.ttf`` and would open ``C:\\WINDOWS\\Fonts\\txt_____.ttf``.
+    Font resolution itself — any name, any SHX-to-TTF mapping — returns the bundled file, and the
+    TrueType open never reads another path.
     """
+    from fontTools.ttLib import TTFont, TTLibError
+    from ezdxf.fonts.font_manager import FontCache, FontNotFoundError
+
     manager = fonts.font_manager
     manager.scan_folder(_BUNDLED_FONT.parent)
-    cache = manager._font_cache
-    entry = cache.get(_BUNDLED_FONT.name, manager.fallback_font_name())
-    if Path(entry.file_path).resolve() != _BUNDLED_FONT.resolve():
+    raw = manager._font_cache._cache
+    entry = raw.get(FontCache.key(_BUNDLED_FONT.name))
+    if entry is None or Path(entry.file_path).resolve() != _BUNDLED_FONT.resolve():
         raise FileNotFoundError(_BUNDLED_FONT)
+    _BUNDLED_ENTRY[:] = [entry]
     for name in _PINNED_FONT_NAMES:
-        cache[name] = entry
+        raw[FontCache.key(name)] = entry
     manager._fallback_font_name = _BUNDLED_FONT.name
+
+    if not getattr(FontCache, "_sketch2cad_resolves_to_bundle", False):
+        def _is_shape_name(font_name: str) -> bool:
+            return Path(str(font_name)).suffix.lower() in {".lff", ".shx", ".shp"}
+
+        def _resolve(self, font_name: str, fallback: str = ""):
+            del self, fallback
+            # A shape file is not the bundled TrueType face. Raising here is what make_font
+            # already catches, so it falls through to that face instead of decoding the TTF as text.
+            if _is_shape_name(font_name):
+                raise FontNotFoundError(font_name)
+            return _BUNDLED_ENTRY[0]
+
+        def _resolve_item(self, item: str):
+            del self
+            if _is_shape_name(item):
+                raise FontNotFoundError(item)
+            return _BUNDLED_ENTRY[0]
+
+        FontCache.get = _resolve          # type: ignore[method-assign]
+        FontCache.__getitem__ = _resolve_item  # type: ignore[method-assign]
+        FontCache._sketch2cad_resolves_to_bundle = True
+
+    if not getattr(manager, "_sketch2cad_ttf_pinned", False):
+        def get_ttf_font(font_name: str, font_number: int = 0):
+            try:
+                return manager._loaded_ttf_fonts[font_name]
+            except KeyError:
+                pass
+            try:
+                font = TTFont(str(_BUNDLED_FONT), fontNumber=font_number)
+            except (OSError, TTLibError) as exc:
+                raise FontNotFoundError(str(exc)) from exc
+            manager._loaded_ttf_fonts[font_name] = font
+            return font
+
+        manager.get_ttf_font = get_ttf_font
+        manager._sketch2cad_ttf_pinned = True
+
     match_cache = getattr(manager, "_match_cache", None)
     if isinstance(match_cache, dict):
         match_cache.clear()
