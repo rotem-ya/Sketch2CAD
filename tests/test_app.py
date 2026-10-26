@@ -213,10 +213,17 @@ def test_agent_revision_and_undo(tmp_path):
     (inbox / "reply.json").write_text(json.dumps({
         "spec": revised,
         "changes": [{"en": "Legend 1 renamed", "he": "שם פריט 1 שונה"}],
-        "assumptions": [], "questions": [],
+        "assumptions": [{"en": "Scale kept", "he": "קנה המידה נשמר"}],
+        "questions": [{"en": "Confirm the invert", "he": "לאשר את רום התחתית"}],
     }, ensure_ascii=False), encoding="utf-8")
     next(b for b in at.button if b.label == t("agent_recv", lang)).click().run()
     assert not at.exception, at.exception
+    shown = _blob(at)
+    assert t("agent_before", lang) in shown and t("agent_after", lang) in shown
+    assert "שם פריט 1 שונה" in shown and "קנה המידה נשמר" in shown
+    assert "לאשר את רום התחתית" in shown and "s2c-q" in shown
+    assert t("agent_questions_need", lang) in shown
+    assert t("agent_sev_warning", lang) in shown or t("agent_sev_error", lang) in shown or t("no_findings", lang) in shown
     next(b for b in at.button if b.label == t("agent_apply", lang)).click().run()
     assert not at.exception, at.exception
     saved = json.loads((doc_dir / "spec.json").read_text(encoding="utf-8"))
@@ -230,6 +237,74 @@ def test_agent_revision_and_undo(tmp_path):
     assert json.loads((doc_dir / "spec.json").read_text(encoding="utf-8")) == original
     assert not list((doc_dir / "spec_history").glob("spec_*.json"))
     assert any(s.value == t("revise_undone", lang) for s in at.success)
+
+
+def _blob(at) -> str:
+    parts = [m.value for m in at.markdown]
+    parts += [c.value for c in at.caption]
+    parts += [s.value for s in list(at.success) + list(at.info) + list(at.warning)]
+    return "\n".join(parts)
+
+
+def test_agent_panel_states_and_rollback(tmp_path):
+    """No package, sent, reply waiting, applied, then one-click restore of a saved spec."""
+    import json
+    from sketch2cad.config import Settings
+    from sketch2cad.documents import create_document
+    from sketch2cad.i18n import t
+    from sketch2cad.projects import create_project
+    from sketch2cad.workflow import record_applied
+    lang = "he"
+    project = create_project(tmp_path / "projects", "20117", "חצרים", "Hatzerim")
+    doc = create_document(project, title_he="גמל", title_en="Camel", discipline="W", subject="CAMEL")
+    spec = {
+        "version": 1, "units": "mm", "scale": 20, "paper": "A3", "language": "both",
+        "elements": [{"id": "p1", "type": "pipe", "points": [[0, 0], [1000, 0]], "od": 110}],
+    }
+    (doc.path / "spec.json").write_text(json.dumps(spec), encoding="utf-8")
+    Settings(ui_language=lang, default_projects_root=str(tmp_path / "projects")).save()
+    at = AppTest.from_file(APP, default_timeout=120)
+    at.session_state["page"] = "document"
+    at.session_state["project_folder"] = project.folder
+    at.session_state["doc_folder"] = doc.folder
+    at.run()
+    assert not at.exception, at.exception
+    assert t("agent_status_none", lang) in _blob(at)
+    assert t("agent_opt_section", lang) in {c.label for c in at.checkbox}
+    assert t("agent_opt_inv", lang) in {c.label for c in at.checkbox}
+
+    _by_label(at.text_area, t("revise_request", lang)).input("להוסיף שוחה")
+    _by_label(at.checkbox, t("agent_opt_section", lang)).check()
+    next(b for b in at.button if b.label == t("agent_send", lang)).click().run()
+    assert not at.exception, at.exception
+    package = next((project.path / "agent_exchange" / "outbox").iterdir())
+    request = (package / "request.txt").read_text(encoding="utf-8")
+    assert request.startswith("להוסיף שוחה")
+    assert "- הוסף חתך" in request
+    assert t("agent_status_awaiting", lang) in _blob(at)
+    assert "להוסיף שוחה" in _blob(at)
+
+    reply = project.path / "agent_exchange" / "inbox" / "reply.json"
+    reply.write_text("{}\n", encoding="utf-8")
+    at.run()
+    assert t("agent_status_reply", lang) in _blob(at)
+    assert t("agent_inbox_waiting", lang) in _blob(at)
+
+    record_applied(doc.path, reply=reply, backup="spec_history/spec_kept.json")
+    at.run()
+    assert t("agent_status_applied", lang) in _blob(at)
+    assert t("agent_inbox_waiting", lang) not in _blob(at)
+
+    restored = dict(spec)
+    restored["scale"] = 50
+    backup = doc.path / "spec_history" / "spec_20260102_080000_000000.json"
+    backup.parent.mkdir(exist_ok=True)
+    backup.write_text(json.dumps(restored), encoding="utf-8")
+    at.run()
+    next(b for b in at.button if b.label == t("agent_rollback", lang)).click().run()
+    assert not at.exception, at.exception
+    assert json.loads((doc.path / "spec.json").read_text(encoding="utf-8"))["scale"] == 50
+    assert any("השרטוט שוחזר מהגיבוי" in s.value for s in at.success)
 
 
 def test_mail_page_opens(tmp_path):

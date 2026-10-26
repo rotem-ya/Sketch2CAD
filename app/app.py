@@ -40,7 +40,7 @@ from sketch2cad.checks import run_checks  # noqa: E402
 from sketch2cad.config import Settings, app_home  # noqa: E402
 from sketch2cad.documents import (DOC_TYPES, STATUSES, Document, add_source, create_document,  # noqa: E402
                                   list_documents, new_revision)
-from sketch2cad.i18n import t  # noqa: E402
+from sketch2cad.i18n import notice as ui_notice, t  # noqa: E402
 from sketch2cad.projects import Project, create_project, is_project_folder, relocate_project  # noqa: E402
 
 ICON = Path(__file__).with_name("icon.png")
@@ -62,12 +62,43 @@ def T(key: str) -> str:
     return t(key, L)
 
 
-if L == "he":
+def _theme_css() -> None:
+    """Local theme only: no fonts or images from the network."""
     st.markdown("""<style>
-    .stApp, .stMarkdown, [data-testid="stSidebar"], [data-testid="stForm"], .stTabs, label, p, h1, h2, h3
-    { direction: rtl; text-align: right; }
-    [data-testid="stDataFrame"], code, input, textarea { direction: ltr; }
+    .block-container { padding-top: 1.15rem; padding-bottom: 2.4rem; max-width: 1120px; }
+    [data-testid="stSidebar"] { border-inline-end: 1px solid #DDD4C6; }
+    h1, h2, h3 { font-weight: 650; letter-spacing: 0; }
+    [data-testid="stCaptionContainer"] p { color: #3D4C5C; }
+    div.stButton > button { border-radius: 8px; min-height: 2.35rem; }
+    [data-testid="stImage"] img { border: 1px solid #DDD4C6; border-radius: 8px; background: #fff; }
+    .s2c-kicker { font-size: 0.78rem; color: #5D6D7E; margin: 0 0 0.35rem; }
+    .s2c-badge {
+      display: inline-block; border-radius: 999px; padding: 0.16rem 0.7rem;
+      font-weight: 650; margin: 0 0 0.15rem;
+    }
+    .s2c-idle { background: #E5E8EB; color: #1C2833; }
+    .s2c-wait { background: #FDEBD0; color: #6E4B00; }
+    .s2c-ready { background: #D6EAF8; color: #1A5276; }
+    .s2c-done { background: #D5F5E3; color: #0E6655; }
+    .s2c-q, .s2c-sev-error, .s2c-sev-warning, .s2c-sev-info {
+      border-inline-start: 4px solid #B7950B; background: #FEF9E7;
+      padding: 0.4rem 0.75rem; margin: 0.28rem 0; border-radius: 6px;
+    }
+    .s2c-sev-error { border-color: #C0392B; background: #FDEDEC; }
+    .s2c-sev-warning { border-color: #D68910; background: #FEF5E7; }
+    .s2c-sev-info { border-color: #2471A3; background: #EAF2F8; }
     </style>""", unsafe_allow_html=True)
+    if L == "he":
+        st.markdown("""<style>
+        .stApp, .stMarkdown, [data-testid="stSidebar"], [data-testid="stForm"], .stTabs,
+        [data-testid="stDialog"], label, p, h1, h2, h3, li
+        { direction: rtl; text-align: right; }
+        [data-testid="stDataFrame"], code { direction: ltr; text-align: left; }
+        input, textarea { unicode-bidi: plaintext; text-align: start; }
+        </style>""", unsafe_allow_html=True)
+
+
+_theme_css()
 
 
 def go(page: str, project: str | None = None, doc: str | None = None) -> None:
@@ -186,7 +217,7 @@ def download(label: str, path: Path, key: str) -> None:
 
 def show_converter_error(e: Exception) -> None:
     from sketch2cad.io.oda import ConverterNotFound
-    st.warning(T("no_converter") if isinstance(e, ConverterNotFound) else f"{T('error')}: {e}")
+    st.warning(T("no_converter") if isinstance(e, ConverterNotFound) else ui_notice(str(e), L))
 
 
 def check_updates(silent: bool = False) -> None:
@@ -476,6 +507,7 @@ def page_document() -> None:
             st.success(T("saved"))
 
     with tab_src:
+        st.caption(T("sources_help"))
         files = st.file_uploader(T("upload"), accept_multiple_files=True)
         if files and st.button(T("add")):
             warnings = []
@@ -511,6 +543,7 @@ def page_document() -> None:
                 el = f" - {ltr(f.element)}" if f.element else ""
                 st.markdown(f"{icons[f.severity]} {getattr(f, L)}{el}", unsafe_allow_html=True)
     with tab_bom:
+        st.caption(T("bom_title"))
         if spec is None:
             st.info(T("no_spec"))
         else:
@@ -558,10 +591,25 @@ def page_document() -> None:
 
 
 def tab_drawing(p: Project, d: Document, cat: Catalog) -> None:
-    """Spec from a typical detail, a sketch sent to the agent, or JSON, then render with a title block."""
-    from sketch2cad.templates import list_templates
+    """Spec from a typical detail or a sketch sent to the agent, then render. JSON stays collapsed."""
     spec = load_spec(d)
-    mode = st.radio(T("spec_source"), ["typical", "sketch", "json"], horizontal=True, index=2 if spec else 0,
+    agent_status_card(p, d)
+    rendered = ss.pop("render_note", None)
+    if rendered:
+        st.success(rendered[0])
+        for warning in rendered[1]:
+            st.warning(ui_notice(warning, L))
+    for kind, msg in ss.pop("rev_msgs", []):
+        getattr(st, kind)(ui_notice(msg, L) if kind == "warning" else msg)
+    sent = ss.pop("agent_notice", None)
+    if sent:
+        getattr(st, sent[0])(sent[1])
+    shown = d.path / d.outputs.get("preview", "-")
+    if shown.is_file():
+        st.image(str(shown), width="stretch")
+    else:
+        shown = None
+    mode = st.radio(T("spec_source"), ["typical", "sketch"], horizontal=True, key="spec_mode",
                     format_func=lambda m: T(f"src_{m}"))
     lang_mode = d.language_mode or p.language_mode
     if mode == "typical":
@@ -593,15 +641,14 @@ def tab_drawing(p: Project, d: Document, cat: Catalog) -> None:
             st.caption(T("sketch_sources").format(names=", ".join(usable)))
         else:
             st.info(T("sketch_no_sources"))
-        notes = st.text_area(T("sketch_notes"), key=f"sketch_req_{Path(d.folder).name}",
-                             placeholder=T("sketch_placeholder"))
-        st.caption(T("agent_help"))
-        a1, a2 = st.columns(2)
-        if a1.button(T("agent_send"), key="sketch_agent_send"):
-            _send_work_package(d, notes)
-        if a2.button(T("agent_recv"), key="sketch_agent_recv"):
-            _open_inbox(p, d)
+        st.caption(T("sketch_use_panel"))
+
+    st.divider()
+    if spec is None:
+        st.info(T("no_spec"))
     else:
+        _sheet_form(p, d, spec, cat)
+    with st.expander(T("spec_advanced"), expanded=False):
         text = st.text_area(T("spec_json"), value=json.dumps(spec, ensure_ascii=False, indent=1) if spec else "",
                             height=400)
         if st.button(T("save"), key="spec_save"):
@@ -611,12 +658,18 @@ def tab_drawing(p: Project, d: Document, cat: Catalog) -> None:
                 st.success(T("saved"))
             except json.JSONDecodeError as e:
                 st.error(f"{T('invalid_json')}: {e}")
+    agent_workbench(p, d, cat, shown)
+    _show_agent_dialog(d)
 
-    st.divider()
-    if spec is None:
-        st.info(T("no_spec"))
-        _show_agent_dialog(d)
-        return
+
+AGENT_OPTIONS = ("agent_opt_scale", "agent_opt_units", "agent_opt_section", "agent_opt_detail", "agent_opt_inv")
+_ATTACH_TYPES = ["pdf", "dwg", "dxf", "png", "jpg", "jpeg", "webp", "gif", "bmp", "tif", "tiff"]
+
+
+def _sheet_form(p: Project, d: Document, spec: dict, cat: Catalog) -> None:
+    """Title block and render. The agent panel below is separate."""
+    from sketch2cad.templates import list_templates
+    lang_mode = d.language_mode or p.language_mode
     st.subheader(T("sheet"))
     templates = {x["id"]: x for x in list_templates()}
     current = d.titleblock or spec.get("sheet", {}).get("template") or p.default_titleblock
@@ -641,68 +694,209 @@ def tab_drawing(p: Project, d: Document, cat: Catalog) -> None:
         except Exception as e:  # noqa: BLE001 - show render errors (bad spec) to the user
             st.error(f"{T('error')}: {e}")
             return
-        st.success(T("rendered"))
-        for w in warnings:
-            st.warning(w)
-    for kind, msg in ss.pop("rev_msgs", []):
-        getattr(st, kind)(msg)
-    notice = ss.pop("agent_notice", None)
-    if notice:
-        getattr(st, notice[0])(notice[1])
-    preview = d.path / d.outputs.get("preview", "-")
-    if preview.exists():
-        st.image(str(preview), width="stretch")
-        revise_panel(p, d, spec, cat, preview)
-    _show_agent_dialog(d)
+        ss.render_note = (T("rendered"), warnings)
+        st.rerun()
+
+
+def _show_time(value: str) -> str:
+    return (value or "").replace("T", " ")[:19]
+
+
+def _history_label(path: Path) -> str:
+    parts = path.stem.removeprefix("spec_").split("_")
+    if len(parts) >= 2 and len(parts[0]) == 8 and len(parts[1]) == 6:
+        day, clock = parts[0], parts[1]
+        return f"{day[:4]}-{day[4:6]}-{day[6:8]} {clock[:2]}:{clock[2:4]}:{clock[4:6]}"
+    return path.name
+
+
+def _text_of(item) -> str:
+    if isinstance(item, dict):
+        return str(item.get(L) or item.get("en") or item.get("he") or "")
+    return str(item)
+
+
+def agent_status_card(p: Project, d: Document) -> None:
+    """What was sent, whether a reply is waiting, and what was last applied."""
+    from sketch2cad.workflow import workflow_view
+    view = workflow_view(p.path, d.path, d.code)
+    badge = {"none": "s2c-idle", "awaiting": "s2c-wait", "reply": "s2c-ready", "applied": "s2c-done"}[view["state"]]
+    with st.container(border=True):
+        st.markdown(
+            f'<p class="s2c-kicker">{html.escape(T("agent_panel"))}</p>'
+            f'<span class="s2c-badge {badge}">{html.escape(T("agent_status_" + view["state"]))}</span>',
+            unsafe_allow_html=True)
+        sent, inbox, applied = st.columns(3)
+        sent.markdown(f"**{T('agent_last_sent')}**")
+        last = view["last_sent"]
+        if last:
+            sent.caption(_show_time(last["at"]))
+            text = (last.get("request") or "").strip() or T("agent_no_request")
+            sent.markdown(html.escape(text).replace("\n", "  \n"))
+        else:
+            sent.caption(T("agent_no_package"))
+        inbox.markdown(f"**{T('agent_inbox')}**")
+        if view["reply_waiting"]:
+            inbox.markdown(
+                f'<span class="s2c-badge s2c-ready">{html.escape(T("agent_inbox_waiting"))}</span>',
+                unsafe_allow_html=True)
+            if view.get("reply_name"):
+                inbox.caption(isolate(view["reply_name"]))
+        else:
+            inbox.caption(T("agent_inbox_empty"))
+        applied.markdown(f"**{T('agent_last_applied')}**")
+        done = view["last_applied"]
+        if done:
+            applied.caption(_show_time(done.get("at") or ""))
+            backup = done.get("backup") or ""
+            if backup:
+                applied.caption(isolate(Path(backup).name))
+        else:
+            applied.caption(T("agent_never_applied"))
+
+
+def _composer(prefix: str):
+    """Free text, optional instructions, and extra source files. Nothing is sent yet."""
+    from sketch2cad.workflow import compose_request
+    text = st.text_area(T("revise_request"), key=f"{prefix}_text", height=110,
+                        placeholder=T("revise_placeholder"))
+    st.caption(T("agent_compose_note"))
+    picked = []
+    cols = st.columns(3)
+    for i, key in enumerate(AGENT_OPTIONS):
+        if cols[i % 3].checkbox(T(key), key=f"{prefix}_{key}"):
+            picked.append(T(key))
+    uploads = st.file_uploader(T("agent_extra"), type=_ATTACH_TYPES, accept_multiple_files=True,
+                               key=f"{prefix}_files")
+    return compose_request(text, picked), list(uploads or [])
+
+
+def _staged_uploads(uploads) -> list[Path]:
+    if not uploads:
+        return []
+    folder = Path(tempfile.mkdtemp(prefix="s2c_attach_"))
+    paths = []
+    for item in uploads:
+        name = Path(getattr(item, "name", "source")).name or "source"
+        dest = folder / name
+        stem, suffix, n = dest.stem, dest.suffix, 1
+        while dest.exists():
+            dest = dest.with_name(f"{stem}_{n}{suffix}")
+            n += 1
+        dest.write_bytes(item.getvalue())
+        paths.append(dest)
+    return paths
 
 
 def _agent_send_body() -> None:
-    """Short request when the revision field is empty. Sends only; nothing is applied."""
+    """Request form when the panel was empty. Sends only; nothing is applied."""
     from sketch2cad.bridge import BridgeError, export_to_outbox
-    text = st.text_area(T("agent_request_title"), key="agent_send_text")
+    request, uploads = _composer("dlg")
     if st.button(T("agent_request_send"), type="primary", key="agent_send_go"):
+        paths = _staged_uploads(uploads)
+        if not request.strip() and not paths:
+            st.warning(T("revise_empty"))
+            return
         try:
-            path = export_to_outbox(ss.agent_doc, request=text)
+            path = export_to_outbox(ss.agent_doc, request=request, extra_sources=paths or None)
         except BridgeError as exc:
-            st.error(str(exc))
+            st.error(ui_notice(str(exc), L))
             return
         ss.agent_dialog = None
-        ss.agent_notice = ("success", T("agent_sent").format(path=path))
+        notice = T("agent_sent").format(path=path)
+        if paths:
+            notice = f"{notice} ({T('agent_extra_added').format(n=len(paths))})"
+        ss.agent_notice = ("success", notice)
         ss.rev_open = True
         st.rerun()
 
 
+def _trial_pair(report: dict) -> None:
+    d = Document.load(ss.agent_doc)
+    current = d.path / d.outputs.get("preview", "")
+    trial = Path(report.get("trial_dir") or "")
+    name = (report.get("outputs") or {}).get("png")
+    trial_png = trial / name if name else None
+    left, right = st.columns(2)
+    left.markdown(f"**{T('agent_before')}**")
+    if current.is_file():
+        left.image(str(current), width="stretch")
+    else:
+        left.caption(T("agent_no_preview"))
+    right.markdown(f"**{T('agent_after')}**")
+    if trial_png is not None and trial_png.is_file():
+        right.image(str(trial_png), width="stretch")
+    else:
+        right.caption(T("agent_no_preview"))
+
+
+def _reply_lists(report: dict) -> None:
+    for key in ("changes", "assumptions"):
+        st.markdown(f"**{T(key)}**")
+        items = report.get(key) or []
+        if not items:
+            st.caption(T("agent_none_listed"))
+            continue
+        for item in items:
+            st.markdown(f"- {_text_of(item)}")
+    st.markdown(f"**{T('questions')}**")
+    st.caption(T("agent_questions_need"))
+    questions = report.get("questions") or []
+    if not questions:
+        st.caption(T("agent_no_questions"))
+    for item in questions:
+        st.markdown(f'<div class="s2c-q">{html.escape(_text_of(item))}</div>', unsafe_allow_html=True)
+
+
+def _checks_grouped(findings: list) -> None:
+    st.markdown(f"**{T('checks')}**")
+    if not findings:
+        st.caption(T("no_findings"))
+        return
+    grouped: dict[str, list] = {"error": [], "warning": [], "info": []}
+    for finding in findings:
+        grouped.setdefault(finding.get("severity") or "info", []).append(finding)
+    for severity in ("error", "warning", "info"):
+        rows = grouped.get(severity) or []
+        if not rows:
+            continue
+        st.markdown(f"**{T(f'agent_sev_{severity}')}**")
+        for finding in rows:
+            text = html.escape(_text_of(finding))
+            extra = " ".join(part for part in (finding.get("code") or "", finding.get("element") or "") if part)
+            if extra:
+                text += f' <span dir="ltr">({html.escape(extra)})</span>'
+            st.markdown(f'<div class="s2c-sev-{severity}">{text}</div>', unsafe_allow_html=True)
+
+
 def _agent_receive_body() -> None:
-    """Show the trial report. The spec changes only when the user presses Apply."""
+    """Trial preview and checks. The spec changes only when the user presses Apply."""
     from sketch2cad.bridge import import_reply
+    from sketch2cad.workflow import record_applied, record_restore
     report = ss.agent_report
     st.caption(T("agent_trial"))
     if not report.get("ok"):
         for error in report.get("errors") or []:
-            st.error(error)
+            st.error(ui_notice(error, L))
         return
+    _trial_pair(report)
     st.markdown(T("agent_elements").format(n=report.get("element_count", 0)))
     dwg = report.get("dwg") or {}
     if dwg.get("produced"):
         st.success(T("agent_dwg_ok").format(name=dwg.get("file", "trial.dwg")))
     else:
-        st.warning(T("agent_dwg_skip").format(reason=dwg.get("reason", "")))
+        st.warning(ui_notice(dwg.get("reason", ""), L))
+    _reply_lists(report)
+    _checks_grouped(list(report.get("checks") or []))
     for warning in list(report.get("warnings") or []) + list(report.get("render_warnings") or []):
         if str(warning).startswith("DWG skipped"):
             continue
-        st.warning(warning)
-    for finding in report.get("checks") or []:
-        text = finding.get(L) or finding.get("en", "")
-        line = f"{finding.get('severity', '')} {finding.get('code', '')}: {text}"
-        if finding.get("severity") == "error":
-            st.error(line)
-        else:
-            st.warning(line)
+        st.warning(ui_notice(warning, L))
     if st.button(T("agent_apply"), type="primary", key="agent_apply_go"):
         applied = import_reply(ss.agent_reply, ss.agent_doc, apply=True)
         if not (applied.get("ok") and applied.get("applied")):
             for error in applied.get("errors") or [T("agent_failed")]:
-                st.error(error)
+                st.error(ui_notice(error, L))
             return
         p = current_project()
         d = Document.load(ss.agent_doc)
@@ -710,11 +904,13 @@ def _agent_receive_body() -> None:
             warnings = render_document(p, d, load_spec(d), load_catalog(p), last_formats(d))
         except Exception as exc:  # noqa: BLE001 - a spec that does not render is rolled back
             restore_last_spec(d)
+            record_restore(d.path, "render")
             st.error(f"{T('revise_failed')}: {exc}")
             return
+        record_applied(d.path, reply=ss.agent_reply, backup=applied.get("backup"))
         ss.agent_dialog = None
         ss.agent_notice = ("success", T("agent_applied"))
-        ss.rev_msgs = [("warning", w) for w in warnings]
+        ss.rev_msgs = [("warning", ui_notice(w, L)) for w in warnings]
         ss.rev_open = True
         st.rerun()
 
@@ -726,7 +922,7 @@ def _dismiss_agent_dialog() -> None:
 def _open_agent_dialog(kind: str) -> None:
     title = T("agent_send") if kind == "send" else T("agent_recv")
     body = _agent_send_body if kind == "send" else _agent_receive_body
-    st.dialog(title, on_dismiss=_dismiss_agent_dialog)(body)()
+    st.dialog(title, width="large", on_dismiss=_dismiss_agent_dialog)(body)()
 
 
 def _show_agent_dialog(d: Document) -> None:
@@ -745,16 +941,21 @@ def _remember_markup(d: Document, preview: Path, strokes) -> None:
     compose(preview, strokes, d.path / "markups" / f"markup_{stamp}.png")
 
 
-def _send_work_package(d: Document, request: str) -> None:
-    """Write a work package. An empty request opens the short dialog; nothing is applied here."""
+def _send_work_package(d: Document, request: str, uploads=None) -> None:
+    """Write a work package. An empty request opens the form; nothing is applied here."""
     from sketch2cad.bridge import BridgeError, export_to_outbox
-    if request.strip():
+    paths = _staged_uploads(uploads)
+    if request.strip() or paths:
         try:
-            path = export_to_outbox(d.path, request=request)
+            path = export_to_outbox(d.path, request=request, extra_sources=paths or None)
         except BridgeError as exc:
-            st.error(str(exc))
-        else:
-            st.success(T("agent_sent").format(path=path))
+            st.error(ui_notice(str(exc), L))
+            return
+        notice = T("agent_sent").format(path=path)
+        if paths:
+            notice = f"{notice} ({T('agent_extra_added').format(n=len(paths))})"
+        ss.agent_notice = ("success", notice)
+        st.rerun()
         return
     ss.agent_doc = str(d.path)
     ss.agent_dialog = "send"
@@ -768,7 +969,7 @@ def _open_inbox(p: Project, d: Document) -> None:
         reply = latest_inbox_reply(p.path)
         report = import_reply(reply, d.path, apply=False)
     except BridgeError as exc:
-        st.error(str(exc))
+        st.error(ui_notice(str(exc), L))
         return
     ss.agent_doc = str(d.path)
     ss.agent_reply = str(reply)
@@ -777,53 +978,85 @@ def _open_inbox(p: Project, d: Document) -> None:
     st.rerun()
 
 
-def revise_panel(p: Project, d: Document, spec: dict, cat: Catalog, preview: Path) -> None:
-    """Mark the rendered sheet, then send it to the agent or apply the agent's reply."""
+def _rollback_to(p: Project, d: Document, cat: Catalog, backup: Path) -> None:
+    """Put one saved spec back and render it. The spec that was on screen is kept in the history."""
+    from sketch2cad.workflow import record_restore
+    current = d.path / "spec.json"
+    snapshot = current.read_bytes() if current.is_file() else None
+    if snapshot is not None:
+        backup_spec(d)
+    shutil.copy2(backup, current)
+    try:
+        warnings = render_document(p, d, load_spec(d), cat, last_formats(d))
+    except Exception as exc:  # noqa: BLE001 - leave the drawing as it was
+        if snapshot is not None:
+            current.write_bytes(snapshot)
+            history = spec_history(d)
+            if history:
+                history[-1].unlink(missing_ok=True)
+        st.error(f"{T('error')}: {exc}")
+        return
+    record_restore(d.path, backup.name)
+    ss.rev_msgs = [("success", T("agent_rolled_back").format(name=_history_label(backup)))]
+    ss.rev_msgs += [("warning", w) for w in warnings]
+    st.rerun()
+
+
+def agent_workbench(p: Project, d: Document, cat: Catalog, preview: Path | None) -> None:
+    """Markup, the request form, and one-click restore of a saved spec."""
     from sketch2cad.markup import markup_canvas
-    with st.expander(f"✏️ {T('revise')}", expanded=bool(ss.get("rev_open"))):
-        st.caption(T("revise_help"))
-        labels = {k: T(f"mk_{k}") for k in ("pen", "line", "undo", "clear", "red", "blue", "green", "count")}
-        strokes = markup_canvas(preview, key=f"mk_{Path(d.folder).name}_{preview.stat().st_mtime_ns}",
-                                labels=labels, rtl=L == "he")
-        if strokes:
-            st.caption(T("mk_will_send").format(n=len(strokes)))
-        request = st.text_area(T("revise_request"), key=f"rev_req_{Path(d.folder).name}",
-                               placeholder=T("revise_placeholder"))
-        history = spec_history(d)
-        st.caption(T("agent_help"))
-        a1, a2, a3 = st.columns(3)
-        send = a1.button(T("agent_send"), key="agent_send")
-        recv = a2.button(T("agent_recv"), key="agent_recv")
-        undo = a3.button(f"↶ {T('revise_undo')}", key="rev_undo", disabled=not history)
-        review = d.path / "ai_revision.json"
-        if review.exists():
-            data = json.loads(review.read_text(encoding="utf-8"))
-            st.markdown(f"**{T('revise_last')}:** {data.get('request', '')}")
-            for key in ("changes", "assumptions", "questions"):
-                if data.get(key):
-                    st.markdown(f"**{T(key)}**")
-                    for a in data[key]:
-                        st.markdown(f"- {a.get(L) or a.get('en', '') if isinstance(a, dict) else a}")
-            for w in data.get("warnings", []):
-                st.warning(w)
+    from sketch2cad.workflow import record_restore
+    strokes = None
+    if preview is not None:
+        with st.expander(f"✏️ {T('revise')}", expanded=bool(ss.get("rev_open"))):
+            st.caption(T("revise_help"))
+            labels = {k: T(f"mk_{k}") for k in ("pen", "line", "undo", "clear", "red", "blue", "green", "count")}
+            strokes = markup_canvas(preview, key=f"mk_{Path(d.folder).name}_{preview.stat().st_mtime_ns}",
+                                    labels=labels, rtl=L == "he")
+            if strokes:
+                st.caption(T("mk_will_send").format(n=len(strokes)))
+    st.subheader(T("agent_compose_title"))
+    st.caption(T("agent_help"))
+    request, uploads = _composer(f"rev_{Path(d.folder).name}")
+    history = spec_history(d)
+    send_col, recv_col, undo_col = st.columns(3)
+    send = send_col.button(T("agent_send"), key="agent_send", type="primary")
+    recv = recv_col.button(T("agent_recv"), key="agent_recv")
+    undo = undo_col.button(f"↶ {T('revise_undo')}", key="rev_undo", disabled=not history)
+    st.subheader(T("agent_history"))
+    backups = list(reversed(history))
+    chosen = None
+    if not backups:
+        st.caption(T("agent_history_empty"))
+    for path in backups:
+        label_col, button_col = st.columns([5, 1])
+        label_col.markdown(ltr(_history_label(path)), unsafe_allow_html=True)
+        if button_col.button(T("agent_rollback"), key=f"rb_{path.name}"):
+            chosen = path
     if undo:
         ss.rev_open = True
+        name = spec_history(d)[-1].name
         restore_last_spec(d)
-        review.unlink(missing_ok=True)
         try:
             warnings = render_document(p, d, load_spec(d), cat, last_formats(d))
-        except Exception as e:  # noqa: BLE001
-            st.error(f"{T('error')}: {e}")
+        except Exception as exc:  # noqa: BLE001
+            st.error(f"{T('error')}: {exc}")
             return
+        record_restore(d.path, name)
         ss.rev_msgs = [("success", T("revise_undone"))] + [("warning", w) for w in warnings]
         st.rerun()
+    if chosen is not None:
+        ss.rev_open = True
+        _rollback_to(p, d, cat, chosen)
     if send:
         ss.rev_open = True
-        _remember_markup(d, preview, strokes)
-        _send_work_package(d, request)
+        if preview is not None:
+            _remember_markup(d, preview, strokes)
+        _send_work_package(d, request, uploads)
     if recv:
         ss.rev_open = True
-        _remember_markup(d, preview, strokes)
+        if preview is not None:
+            _remember_markup(d, preview, strokes)
         _open_inbox(p, d)
 
 
