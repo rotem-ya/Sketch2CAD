@@ -52,10 +52,15 @@ Extra keys supported by the renderer:
 
 Element labels are placed deterministically. `label_at` is the first candidate, in drawing units. It is kept when the
 text box (real paper height × scale, font-width estimate, both lines of an en/he label) is clear of other text,
-dimension text and drawn linework; otherwise the label is nudged and a leader is added or extended. `label_pinned: true`
-keeps that point even when it collides. A `text` element is not nudged. The same spec always produces the same sheet.
+dimension text, drawn linework and other leaders; otherwise the label is nudged and a leader is added or extended.
+Label boxes keep about 1.5 mm of clear paper between them, and a leader is not drawn across another text box.
+Free text is nudged the same way unless `label_pinned` is set, and dimension text moves off linework.
+Nothing is placed outside the drawing area: a candidate past that rectangle is rejected.
+`label_pinned: true` keeps that point even when it collides. A `text` element is not nudged. The same spec always
+produces the same sheet.
 
-Paper text heights snap to the ISO 3098 set **2.5 / 3.5 / 5 / 7 mm** (a tie takes the larger size). ezdxf cannot
+Paper text heights snap to the ISO 3098 set **2.5 / 3.5 / 5 / 7 mm** (a tie takes the larger size). The
+title-block title rounds up and is not shrunk to fit the field (3.29 stays 3.5, 4.1 becomes 5). ezdxf cannot
 create annotative text, so model-space text height is that paper height times the view's scale denominator.
 Entities are BYLAYER. Layers `0` and `DEFPOINTS` hold no geometry: below-grade work goes on `EXISTING_DASH`,
 `NEW_DASH` or `PROPOSED_DASH` instead of a per-entity linetype.
@@ -75,6 +80,8 @@ Each balloon i gets a leader to targets[i]. The legend table lists No | DESCRIPT
 Table placement: `legend_at` [x, y] in the spec root (top-left of the table), optional.
 On a multi-view sheet (1.4) `legend_at` and `notes_at` are paper millimetres from the frame's bottom-left,
 because the legend and the notes are drawn in paper space.
+On a single-view sheet the notes go below the drawing when a column beside it would leave the sheet,
+and they are left undrawn (with an error warning) rather than placed past the frame.
 
 ### 1.4 Views – more than one scale on a sheet
 `scale` on the spec root is the **primary** view (the root `elements` and `dimensions`). Optional `views`
@@ -97,15 +104,17 @@ adds further views on the same sheet. A spec with no `views` key is unchanged.
 | key | meaning |
 |---|---|
 | `id` | unique on the sheet |
-| `title` | string or `{en, he}`, drawn above the view |
+| `title` | string or `{en, he}`, drawn above the view as one underlined line (`SECTION A-A / חתך א-א` when both languages are on), with `SCALE 1:50` or `SCALE NTS` centred underneath |
 | `scale` | positive number, or `"NTS"` |
 | `fit_mm` | longer side on paper when `scale` is `NTS` (default 80) |
-| `origin_on_sheet` | `[x, y]` paper mm from the frame's bottom-left, the bottom-left of the view window. Omitted: packed into free drawing-area space, primary view centred |
+| `origin_on_sheet` | `[x, y]` paper mm from the frame's bottom-left, the bottom-left of the view window. The same key on the spec root fixes the primary view. Omitted: the primary view stays large; the other views share a row under it (titles on one baseline) or, when that does not fit, a column beside it. Auto-placed views stay at least 10 mm inside the frame. A view that does not fit is not drawn off the sheet; the warning names a larger scale or a larger sheet |
 | `elements`, `dimensions` | same objects as the root lists, in drawing units |
 
+The sheet `scale` is the primary view. When another view uses a different scale, the title block reads
+`AS SHOWN / כמצוין` instead of `SCALE 1:n`. A bare primary title such as `plan` is drawn `PLAN / תוכנית`.
 Each view is real model-space geometry (text height = paper height × that view's scale). The sheet is one
-paper-space layout plotted 1:1: a `VIEWPORT` per view at that scale, plus the title block, view titles,
-scale labels (`1:50` or `NTS`), legend and notes in paper space. Single-view sheets stay in model space,
+paper-space layout plotted 1:1: a `VIEWPORT` per view at that scale, plus the title block, view titles
+(underlined, `SCALE 1:50` or `SCALE NTS` on the line below), legend and notes in paper space. Single-view sheets stay in model space,
 which is what existing specs already produce.
 
 ## 2. Catalog – `catalog/*.yaml` (repo) + optional `<project>/catalog.yaml`

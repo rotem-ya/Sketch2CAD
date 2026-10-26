@@ -77,6 +77,28 @@ def format_scale(scale: float) -> str:
     return f"{float(scale):g}"
 
 
+AS_SHOWN = "AS SHOWN / כמצוין"
+
+
+def _scale_token(value) -> str | float:
+    if isinstance(value, str):
+        return value.strip().upper()
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return round(float(value), 6)
+    return ""
+
+
+def mixed_scales(spec: dict) -> bool:
+    """True when the sheet shows more than one scale (including NTS)."""
+    found = []
+    if spec.get("scale") is not None:
+        found.append(_scale_token(spec.get("scale")))
+    for view in spec.get("views") or []:
+        if isinstance(view, dict) and view.get("scale") is not None:
+            found.append(_scale_token(view.get("scale")))
+    return len(set(found)) > 1
+
+
 def build_values(spec: dict, project=None, document=None) -> dict:
     """Placeholder values: project/document data < spec.sheet.fields < document.title_overrides."""
     pname = value_of(project, "name") or {}
@@ -88,7 +110,8 @@ def build_values(spec: dict, project=None, document=None) -> dict:
         "project_name_he": pname.get("he", ""), "client": value_of(project, "client", ""),
         "contract": value_of(project, "contract_no", ""), "contractor": value_of(project, "contractor", ""),
         "location": value_of(project, "location", ""),
-        "date": date.today().strftime("%d/%m/%Y"), "scale": format_scale(spec.get("scale", 1)),
+        "date": date.today().strftime("%d/%m/%Y"),
+        "scale": AS_SHOWN if mixed_scales(spec) else format_scale(spec.get("scale", 1)),
         "units": spec.get("units", "mm"), "view": spec.get("view", ""), "paper": spec.get("paper", ""),
     }
     values.update((spec.get("sheet") or {}).get("fields") or {})
@@ -99,6 +122,8 @@ def build_values(spec: dict, project=None, document=None) -> dict:
 def _format(template: str, values: dict) -> str:
     """Fill {placeholders} (missing -> ""), then drop empty ' | ' segments."""
     s = template.format_map(values)
+    if values.get("scale") == AS_SHOWN:
+        s = s.replace("SCALE 1:" + AS_SHOWN, AS_SHOWN).replace("1:" + AS_SHOWN, AS_SHOWN)
     if "|" in s:
         s = " | ".join(part.strip() for part in s.split("|") if part.strip())
     return s.strip()
@@ -145,12 +170,14 @@ def draw_titleblock(msp, template: dict, values: dict, scale: float, units: str,
 
     filled = defaultdict(str, {key: "" if v is None else str(v) for key, v in values.items()})
     for field in template["fields"]:
-        h = snap_text_height(field.get("h", 2.5))
+        authored = float(field.get("h", 2.5))
+        title = field.get("key") == "title"
+        h = snap_text_height(authored, up=title)
         w = field.get("w", fw - field["x"] - 2)
         texts = {lang: _format(field[lang], filled) for lang in _pick_field(field, language)}
         texts = {lang: s for lang, s in texts.items() if s}
         both = len(texts) == 2
-        if both and "he_y" not in field:          # en left + he right on one line: largest ISO size that fits
+        if both and "he_y" not in field and not title:   # en left + he right: largest ISO size that fits
             unit = text_width(texts["en"], 1.0) + text_width(texts["he"], 1.0)
             fit = (w - SAME_LINE_GAP) / unit if unit else h
             choices = [size for size in (2.5, 3.5, 5.0, 7.0) if size <= min(h, fit) + 1e-6]

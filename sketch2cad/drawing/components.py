@@ -313,14 +313,21 @@ def draw_break(ctx: DrawContext, el: dict):
 
 
 def draw_text(ctx: DrawContext, el: dict):
-    """Free text (height in paper mm); with `leader_to` it becomes a leader label."""
+    """Free text (height in paper mm); with `leader_to` it becomes a leader label.
+
+    Unless `label_pinned`, the text is queued and moved off linework and other text.
+    """
+    at = Vec2(el.get("at") or (0, 0))
+    if ctx.nudge_labels and not el.get("label_pinned"):
+        ctx.pending.append({"kind": "text", "el": el, "anchor": at, "radius": 0.0})
+        return at, 0.0
     h = ctx.paper(snap_text_height(float(el.get("height") or ctx.style["text_height"])))
     lines = pick(el.get("text"), ctx.language)
     if el.get("leader_to"):
-        leader_label(ctx, lines, Vec2(el["at"]), Vec2(el["leader_to"]), h)
+        leader_label(ctx, lines, at, Vec2(el["leader_to"]), h)
     else:
-        stack_text(ctx, lines, Vec2(el["at"]), h, el.get("align", "left"), float(el.get("rotation", 0)))
-    return Vec2(el["at"]), 0.0
+        stack_text(ctx, lines, at, h, el.get("align", "left"), float(el.get("rotation", 0)))
+    return at, 0.0
 
 
 DRAWERS = {
@@ -339,10 +346,12 @@ def stack_text(ctx: DrawContext, lines: list[str], at: Vec2, h: float, align="le
         put_text(ctx.msp, s, at + down * i, h, align=align, rotation=rotation)
 
 
-def leader_label(ctx: DrawContext, lines: list[str], at: Vec2, target: Vec2, h: float) -> None:
-    """Reference-style label: left-aligned lines on a shelf line, leader from the shelf's nearer end to a dot.
+def leader_label(ctx: DrawContext, lines: list[str], at: Vec2, target: Vec2, h: float,
+                 elbow: str | None = None) -> None:
+    """Reference-style label: left-aligned lines on a shelf line, leader from one shelf end to a dot.
 
-    The shelf runs under the text, or over it when the target is above, so the leader never crosses the text.
+    The shelf runs under the text, or over it when the target is above, so the leader never crosses its
+    own text. `elbow` is ``"left"`` or ``"right"``; omitted, the end nearer the target is used.
     """
     if not lines:
         return
@@ -352,7 +361,12 @@ def leader_label(ctx: DrawContext, lines: list[str], at: Vec2, target: Vec2, h: 
         y = at.y + h + ctx.paper(0.8)
     else:
         y = at.y - (len(lines) - 1) * LINE_SPACING * h - ctx.paper(0.8)
-    start = Vec2(at.x + w, y) if target.x > at.x + w / 2 else Vec2(at.x, y)
+    if elbow == "left":
+        start = Vec2(at.x, y)
+    elif elbow == "right":
+        start = Vec2(at.x + w, y)
+    else:
+        start = Vec2(at.x + w, y) if target.x > at.x + w / 2 else Vec2(at.x, y)
     attribs = {"layer": "TEXT"}
     ctx.msp.add_line((at.x, y), (at.x + w, y), dxfattribs=attribs)
     ctx.msp.add_line(start, target, dxfattribs=attribs)
@@ -386,6 +400,6 @@ def draw_element(ctx: DrawContext, el: dict) -> None:
     if el.get("type") == "text" or not pick(el.get("label"), ctx.language):
         return
     if ctx.nudge_labels:
-        ctx.pending.append((el, anchor, radius))
+        ctx.pending.append({"kind": "label", "el": el, "anchor": anchor, "radius": radius})
     else:
         draw_label(ctx, el, anchor, radius)

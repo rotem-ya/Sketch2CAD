@@ -10,7 +10,8 @@ import copy
 
 import ezdxf
 
-from .text import STYLE, snap_text_height
+from .standards import apply_text_style
+from .text import STYLE
 
 STATUS_LAYERS = {"existing": "EXISTING", "new": "NEW", "proposed": "PROPOSED"}
 DASH_LAYERS = {"existing": "EXISTING_DASH", "new": "NEW_DASH", "proposed": "PROPOSED_DASH"}
@@ -62,9 +63,7 @@ class DrawContext:
         self.scale = float(spec.get("scale", 1))
         self.k = self.scale * self.u
         self.language = language
-        raw_style = {**DEFAULT_STYLE, **(spec.get("style") or {})}
-        self.style = {key: snap_text_height(value) if "height" in key else value
-                      for key, value in raw_style.items()}
+        self.style = apply_text_style({**DEFAULT_STYLE, **(spec.get("style") or {})})
         self.catalog = catalog or _NoCatalog()
         self.warnings = warnings
         self._missing: set[str] = set()

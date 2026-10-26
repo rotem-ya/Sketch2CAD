@@ -79,13 +79,14 @@ def render(spec: dict, out_dir, basename: str, *, project=None, document=None, c
     dims.draw_dimensions(ctx, spec.get("dimensions", []))
     entries = spec.get("legend", [])
     legend.draw_balloons(ctx, entries)
-    if place_labels:
-        from . import place
-        place.place_labels(ctx)
 
     values = templates.build_values(spec, project, document)
     sheet_layout = None
     if spec.get("views"):
+        if place_labels:
+            from . import place
+            place.nudge_dimensions(ctx)
+            place.place_labels(ctx)
         rects, sheet_layout = sheet_views.compose(ctx, spec, template, values, language)
     else:
         # legend table / notes: explicit positions are drawn now (they count as content), the rest is laid out
@@ -98,9 +99,18 @@ def render(spec: dict, out_dir, basename: str, *, project=None, document=None, c
                 block.draw(Vec2(at))
             elif block:
                 side.append(block)
+        content = layout.content_extents(ctx)
         origin, placements = layout.plan_sheet(ctx, template, side, sheet.get("origin"))
         for block, top_left in placements:
             block.draw(top_left)
+        if place_labels:
+            from . import place
+            area = template["drawing_area"]
+            k = ctx.k
+            bounds = (origin.x + area["x"] * k, origin.y + area["y"] * k,
+                      origin.x + (area["x"] + area["w"]) * k, origin.y + (area["y"] + area["h"]) * k)
+            place.nudge_dimensions(ctx, bounds)
+            place.place_labels(ctx, bounds, content=content)
         rects = templates.draw_titleblock(ctx.msp, template, values, ctx.scale, ctx.units, origin=origin,
                                           language=language)
 

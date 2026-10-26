@@ -33,15 +33,23 @@ def _stack(blocks: list[Block], top_left: Vec2, gap: float, vertical: bool) -> l
     return out
 
 
+def _suggest_scale(scale: float, fill: float) -> int:
+    needed = scale * fill
+    return next((s for s in STANDARD_SCALES if s + 1e-9 >= needed), round(needed))
+
+
 def _check_fit(ctx: DrawContext, size: tuple[float, float], area: dict, what: str) -> None:
     fill = max(size[0] / (area["w"] * ctx.k), size[1] / (area["h"] * ctx.k))
     if fill <= 1.0 + 1e-6:
         return
-    needed = ctx.scale * fill
-    better = next((s for s in STANDARD_SCALES if s >= needed), round(needed))
+    better = _suggest_scale(ctx.scale, fill)
     ctx.warnings.append(
-        f"{what} ({size[0] / ctx.k:.0f} x {size[1] / ctx.k:.0f} paper mm) does not fit the "
+        f"ERROR: {what} ({size[0] / ctx.k:.0f} x {size[1] / ctx.k:.0f} paper mm) does not fit the "
         f"{area['w']:.0f} x {area['h']:.0f} mm area at 1:{ctx.scale:g} - consider 1:{better}")
+
+
+def _paper_fits(size: tuple[float, float], area: dict, k: float) -> bool:
+    return size[0] <= area["w"] * k + 1e-4 and size[1] <= area["h"] * k + 1e-4
 
 
 def plan_sheet(ctx: DrawContext, template: dict, side: list[Block], origin=None):
@@ -55,21 +63,33 @@ def plan_sheet(ctx: DrawContext, template: dict, side: list[Block], origin=None)
         size = (max(b.width for b in side), sum(b.height for b in side) + g * (len(side) - 1))
         _check_fit(ctx, size, la, "legend / notes")
     elif side:
-        w, h = x1 - x0, y1 - y0
-        right = (max(b.width for b in side), sum(b.height for b in side) + g * (len(side) - 1))
-        below = (sum(b.width for b in side) + g * (len(side) - 1), max(b.height for b in side))
+        # One block at a time. A block that does not fit beside the drawing goes below it.
+        # A block that fits neither is left undrawn instead of hanging past the frame.
+        for block in side:
+            bw, bh = block.width, block.height
+            side_size = ((x1 - x0) + g + bw, max(y1 - y0, bh))
+            below_size = (max(x1 - x0, bw), (y1 - y0) + g + bh)
+            side_ok = _paper_fits(side_size, da, k)
+            below_ok = _paper_fits(below_size, da, k)
 
-        def fill(s):
-            return max(s[0] / (da["w"] * k), s[1] / (da["h"] * k))
+            def fill(size):
+                return max(size[0] / (da["w"] * k), size[1] / (da["h"] * k))
 
-        if fill((max(w, below[0]), h + g + below[1])) <= fill((w + g + right[0], max(h, right[1]))):
-            placements = _stack(side, Vec2(x0, y0 - g), g, vertical=False)
-            y0 -= g + below[1]
-            x1 = max(x1, x0 + below[0])
-        else:
-            placements = _stack(side, Vec2(x1 + g, y1), g, vertical=True)
-            x1 += g + right[0]
-            y0 = min(y0, y1 - right[1])
+            if below_ok and (not side_ok or fill(below_size) <= fill(side_size)):
+                placements.append((block, Vec2(x0, y0 - g)))
+                y0 -= g + bh
+                x1 = max(x1, x0 + bw)
+            elif side_ok:
+                placements.append((block, Vec2(x1 + g, y1)))
+                x1 += g + bw
+                y0 = min(y0, y1 - bh)
+            else:
+                overflow = min(fill(side_size), fill(below_size))
+                better = _suggest_scale(ctx.scale, overflow)
+                ctx.warnings.append(
+                    f"ERROR: notes ({bw / k:.0f} x {bh / k:.0f} paper mm) do not fit beside or below "
+                    f"the drawing in the {da['w']:.0f} x {da['h']:.0f} mm area at 1:{ctx.scale:g} - "
+                    f"not drawn off the sheet. Consider 1:{better:g} or a larger sheet")
     _check_fit(ctx, (x1 - x0, y1 - y0), da, "drawing")
     if origin is None:
         centre = Vec2((x0 + x1) / 2, (y0 + y1) / 2)
