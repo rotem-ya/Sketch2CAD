@@ -484,7 +484,14 @@ def import_reply(reply_path: Path | str, drawing: Path | str, *, package: Path |
     report["changes"] = _bilingual_list(reply, "changes", warnings)
     report["warnings"] = warnings
     catalog = load_catalog(project)
-    report["checks"] = [finding.to_dict() for finding in run_checks(spec, catalog)]
+    report["checks"] = [finding.to_dict() for finding in run_checks(spec, catalog, project)]
+    try:
+        from .qa import write_overlay
+        overlay = write_overlay(spec, trial / "qa_overlay.png", catalog, project)
+        if overlay:
+            report["qa_overlay"] = Path(overlay).name
+    except Exception as exc:  # noqa: BLE001 - the trial report is still useful without the picture
+        report["warnings"].append(f"QA overlay skipped: {exc}")
     try:
         from .drawing import render
         rendered = render(spec, trial, "trial", project=project, document=doc, catalog=catalog,
@@ -498,6 +505,8 @@ def import_reply(reply_path: Path | str, drawing: Path | str, *, package: Path |
     report["render_warnings"] = list(rendered.get("warnings") or [])
     report["outputs"] = {key: Path(value).name for key, value in rendered.items()
                          if key != "warnings" and isinstance(value, Path)}
+    if report.get("qa_overlay"):
+        report["outputs"]["qa_overlay"] = report["qa_overlay"]
     report["dwg"] = _dwg_status(rendered, report["render_warnings"])
     if apply:
         report["backup"] = backup_spec(doc)

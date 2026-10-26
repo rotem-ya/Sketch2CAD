@@ -43,6 +43,7 @@ class Project:
     doc_code_pattern: str = DEFAULT_PATTERN
     default_titleblock: str = "a3_simple"
     disciplines: dict = field(default_factory=lambda: dict(DEFAULT_DISCIPLINES))
+    qa: dict = field(default_factory=dict)       # drawing-QA overrides; empty = built-in defaults
     created: str = field(default_factory=lambda: date.today().isoformat())
 
     # ------------------------------------------------------------------ paths

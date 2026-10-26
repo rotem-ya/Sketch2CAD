@@ -63,7 +63,7 @@ def normalize_spec(spec: dict, *, units: str = "mm", language: str = "both") -> 
             continue
         el.setdefault("id", f"{el['type']}_{i}")
         if el["id"] in seen:
-            el["id"] = f"{el['id']}_{i}"
+            warnings.append(f"duplicate id {el['id']!r}")
         seen.add(el["id"])
         kept.append(el)
     spec["elements"] = kept

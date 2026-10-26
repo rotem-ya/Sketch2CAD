@@ -24,12 +24,12 @@ LAYERS = (  # name, ACI color, linetype, lineweight (1/100 mm)
 )
 DIMSTYLE = "SKETCH2CAD"
 LTSCALE_FACTOR = 2.5                   # DASHED (1.27 dash) -> ~3 mm dashes on paper
-DEFAULT_STYLE = {                      # paper mm
+DEFAULT_STYLE = {                      # paper mm, ISO 3098 series (2.5 / 3.5 / 5 / 7)
     "text_height": 2.5,                # labels, free text
-    "dim_text_height": 2.0,
-    "table_text_height": 1.8,
-    "legend_title_height": 3.0,
-    "notes_text_height": 2.0,
+    "dim_text_height": 2.5,
+    "table_text_height": 1.8,          # small annotation, not the general-note minimum
+    "legend_title_height": 3.5,
+    "notes_text_height": 2.5,
     "notes_width": 100.0,
     "balloon_radius": 3.0,
 }

@@ -80,7 +80,7 @@ def build_package(project, document, catalog, out_pdf, *, lang: str | None = Non
     t = lambda s: pdfdoc.txt(s, rtl)
     spec = spec if spec is not None else load_spec(document) or {}
     items = _items(spec, catalog) if catalog else []
-    findings = run_checks(spec, catalog) if spec else []
+    findings = run_checks(spec, catalog, project) if spec else []
     bom = build_bom(spec, catalog) if spec else []
     sheets = {i["id"]: find_source_file((i.get("source") or {}).get("file", ""), project, document) for i in items}
 
