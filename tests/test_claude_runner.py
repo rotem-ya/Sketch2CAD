@@ -325,6 +325,7 @@ def test_wmi_error_is_unknown_and_does_not_start_the_next_account(tmp_path, monk
     project, doc = _drawing(tmp_path)
     settings = _settings(project)
     real_status = runner.process_status
+    real_name = runner.os.name
     launched, _killed, _alive, _scripts = _patch_launch(monkeypatch)
     package = export_to_outbox(doc.path, request="move the note")
     task = runner.watch_package(package, settings)
@@ -342,13 +343,15 @@ def test_wmi_error_is_unknown_and_does_not_start_the_next_account(tmp_path, monk
     assert "SilentlyContinue" not in seen["script"]
 
     def status_from_failed_query(pid, image, created):
+        # CIM is asked only for this call. Path() must stay the real class afterwards
+        # (WindowsPath on Windows, PosixPath on Linux). Forcing the other name raises.
         runner.os.name = "nt"
         try:
             return real_status(pid, image, created)
         finally:
-            runner.os.name = "posix"
+            runner.os.name = real_name
 
-    monkeypatch.setattr(runner.os, "name", "posix")
+    monkeypatch.setattr(runner.os, "name", real_name)
     monkeypatch.setattr(runner, "process_status", status_from_failed_query)
     (task / "run.log").write_text("session limit\n", encoding="utf-8")
     runner.tick(settings, projects=[str(project.path)])
@@ -778,23 +781,54 @@ def test_launch_uses_showwindow_and_headless_conhost(monkeypatch):
         assert seen["kw"]["startupinfo"].wShowWindow == 0
 
 
+def _source_files() -> list[Path]:
+    """Tracked source when this tree is a checkout, otherwise the package files on disk."""
+    suffixes = {".py", ".ps1", ".bat", ".md", ".txt", ".json"}
+    listed = None
+    try:
+        listed = subprocess.run(
+            ["git", "ls-files", "-z"], cwd=ROOT, capture_output=True, check=False,
+        )
+    except OSError:
+        listed = None
+    if listed is not None and listed.returncode == 0:
+        found = []
+        for raw in listed.stdout.split(b"\0"):
+            if not raw:
+                continue
+            path = ROOT / raw.decode("utf-8", errors="surrogateescape")
+            if path.suffix.lower() in suffixes and path.is_file():
+                found.append(path)
+        return found
+    skip = {".git", ".venv", "venv", "__pycache__", ".pytest_cache", "node_modules"}
+    found = []
+    for dirpath, dirnames, filenames in os.walk(ROOT):
+        dirnames[:] = [name for name in dirnames if name not in skip and not name.startswith(".")]
+        for name in filenames:
+            path = Path(dirpath) / name
+            if path.suffix.lower() in suffixes:
+                found.append(path)
+    return found
+
+
 def test_repository_has_no_scheduled_task_command():
     needle = "sch" + "tasks"
-    suffixes = {".py", ".ps1", ".bat", ".md", ".txt", ".json"}
-    listed = subprocess.run(
-        ["git", "ls-files", "-z"], cwd=ROOT, capture_output=True, check=True,
-    ).stdout.split(b"\0")
     hits = []
-    for raw in listed:
-        if not raw:
-            continue
-        rel = raw.decode("utf-8", errors="surrogateescape")
-        path = ROOT / rel
-        if path.suffix.lower() not in suffixes or not path.is_file():
-            continue
+    for path in _source_files():
         if needle in path.read_text(encoding="utf-8", errors="ignore").lower():
-            hits.append(rel)
+            hits.append(str(path.relative_to(ROOT)))
     assert hits == []
+
+
+def test_scheduled_task_scan_works_without_a_checkout(monkeypatch):
+    def missing(*_args, **_kwargs):
+        raise FileNotFoundError("git")
+
+    monkeypatch.setattr(subprocess, "run", missing)
+    files = _source_files()
+    assert any(path.name == "claude_runner.py" for path in files)
+    needle = "sch" + "tasks"
+    assert [path for path in files if needle in path.read_text(encoding="utf-8", errors="ignore").lower()] == []
 
 
 def test_detects_claude_exe_on_path_or_in_user_local_bin(tmp_path, monkeypatch):
