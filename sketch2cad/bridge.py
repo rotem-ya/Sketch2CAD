@@ -248,13 +248,14 @@ def _project_of(folder: Path | str) -> Project:
     raise BridgeError(f"folder has neither {PROJECT_FILE} nor {DOC_FILE}")
 
 
-def export_to_outbox(folder: Path | str, *, drawing: str | None = None, request: str = "") -> Path:
+def export_to_outbox(folder: Path | str, *, drawing: str | None = None, request: str = "",
+                     extra_sources: list[Path] | None = None) -> Path:
     """Write one work package under `<project>/agent_exchange/outbox/<time>_<code>/`."""
     project, doc = open_drawing(folder, drawing)
     dest = project.path / EXCHANGE_OUTBOX / f"{datetime.now():%Y%m%d_%H%M%S_%f}_{doc.code}"
     dest.parent.mkdir(parents=True, exist_ok=True)
     (project.path / EXCHANGE_INBOX).mkdir(parents=True, exist_ok=True)
-    return export_package(doc.path, dest, request=request)
+    return export_package(doc.path, dest, request=request, extra_sources=extra_sources)
 
 
 def latest_inbox_reply(project_dir: Path | str) -> Path:
@@ -269,7 +270,7 @@ def latest_inbox_reply(project_dir: Path | str) -> Path:
 
 
 def export_package(folder: Path | str, out: Path | str, *, drawing: str | None = None,
-                   request: str = "") -> Path:
+                   request: str = "", extra_sources: list[Path] | None = None) -> Path:
     """Build a work package for `folder`. Raises BridgeError and leaves no package folder on failure."""
     project, doc = open_drawing(folder, drawing)
     out = Path(out)
@@ -277,7 +278,7 @@ def export_package(folder: Path | str, out: Path | str, *, drawing: str | None =
         raise BridgeError(f"output folder is not empty: {out}")
     out.mkdir(parents=True, exist_ok=True)
     try:
-        _fill_package(project, doc, out, request.strip())
+        _fill_package(project, doc, out, request.strip(), extra_sources)
         _assert_no_secrets(out)
     except Exception:
         shutil.rmtree(out, ignore_errors=True)
@@ -285,7 +286,8 @@ def export_package(folder: Path | str, out: Path | str, *, drawing: str | None =
     return out
 
 
-def _fill_package(project: Project, doc: Document, out: Path, request: str) -> None:
+def _fill_package(project: Project, doc: Document, out: Path, request: str,
+                  extra_sources: list[Path] | None = None) -> None:
     spec = read_spec(doc)
     catalog = load_catalog(project)
     units, language = _units_language(spec, {}, project, doc)
@@ -308,6 +310,7 @@ def _fill_package(project: Project, doc: Document, out: Path, request: str) -> N
             continue
         dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src, dest)
+    _take_extra_sources(out, extra_sources, excluded)
     if spec is not None:
         spec_path = out / "spec.json"
         shutil.copy2(doc.path / "spec.json", spec_path)
@@ -350,6 +353,30 @@ def _fill_package(project: Project, doc: Document, out: Path, request: str) -> N
     }
     (out / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
                                        encoding="utf-8")
+
+
+def _take_extra_sources(out: Path, extras: list[Path] | None, excluded: list) -> None:
+    """Copy attached PDF, DWG and image files into the package sources."""
+    allowed = SOURCE_SUFFIXES | {".dwg", ".dxf"}
+    for raw in extras or []:
+        src = Path(raw)
+        label = src.name or str(raw)
+        if not src.is_file():
+            excluded.append({"name": label, "reason": "missing"})
+            continue
+        if src.suffix.lower() not in allowed:
+            excluded.append({"name": label, "reason": "not a PDF, DWG or image"})
+            continue
+        if _has_secret(src.read_bytes()):
+            excluded.append({"name": label, "reason": "secret marker"})
+            continue
+        dest = out / "sources" / src.name
+        stem, suffix, n = dest.stem, dest.suffix, 1
+        while dest.exists():
+            dest = dest.with_name(f"{stem}_{n}{suffix}")
+            n += 1
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dest)
 
 
 def _role_for(name: str, marked: bool) -> str:
