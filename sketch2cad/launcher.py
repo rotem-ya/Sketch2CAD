@@ -185,54 +185,248 @@ def pid_alive(pid: int) -> bool:
     return True
 
 
+# Exact interpreter names. A prefix match would also accept an unrelated image.
+_OWNED_IMAGES = {"python", "python.exe", "pythonw", "pythonw.exe"}
+
+
+def _is_owned_image(name: str | None) -> bool:
+    """True only for python, python.exe, pythonw, or pythonw.exe."""
+    if not name:
+        return False
+    return Path(name).name.lower() in _OWNED_IMAGES
+
+
+def _linux_stat_fields(stat: str) -> list[str] | None:
+    """Fields of ``/proc/<pid>/stat`` after the comm field (field 3 onward)."""
+    end = stat.rfind(")")
+    if end < 0:
+        return None
+    return stat[end + 2:].split()
+
+
+def _linux_start_token(stat: str) -> str | None:
+    """Clock ticks since boot, ``/proc/<pid>/stat`` field 22. None when the line is short."""
+    fields = _linux_stat_fields(stat)
+    if not fields or len(fields) < 20:
+        return None
+    token = fields[19]
+    return token if token.isdigit() else None
+
+
+def _same_start(left: str | None, right: str | None) -> bool:
+    if not left or not right:
+        return False
+    if left.isdigit() and right.isdigit():
+        return int(left) == int(right)
+    return left == right
+
+
+def _started_after(child: str | None, parent: str | None) -> bool:
+    """True when the child process was created after the parent."""
+    if not child or not parent:
+        return False
+    if child.isdigit() and parent.isdigit():
+        return int(child) > int(parent)
+    return child > parent
+
+
+def _process_facts(pid: int) -> tuple[str | None, str | None]:
+    """``(image basename, start token)``. ``(None, None)`` when the process cannot be read."""
+    if not isinstance(pid, int) or pid <= 0:
+        return (None, None)
+    if os.name == "nt":
+        return _windows_process_facts(pid)
+    try:
+        image = Path(f"/proc/{pid}/comm").read_text(encoding="utf-8").strip()
+        stat = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return (None, None)
+    return (image or None, _linux_start_token(stat))
+
+
+def _child_facts(pid: int) -> list[tuple[int, str | None, str | None]]:
+    """Direct children as ``(pid, image, start)``. An unreadable query returns none."""
+    if not isinstance(pid, int) or pid <= 0:
+        return []
+    if os.name == "nt":
+        return _windows_child_facts(pid)
+    found = []
+    proc_root = Path("/proc")
+    if not proc_root.is_dir():
+        return []
+    for entry in proc_root.iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            stat = (entry / "stat").read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        fields = _linux_stat_fields(stat)
+        if not fields or len(fields) < 2 or fields[1] != str(pid):
+            continue
+        child = int(entry.name)
+        image, started = _process_facts(child)
+        found.append((child, image, started))
+    return found
+
+
+def _windows_cim(script: str) -> subprocess.CompletedProcess | None:
+    """One hidden PowerShell CIM query. None when it cannot be run."""
+    try:
+        return run(
+            ["powershell.exe", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden",
+             "-ExecutionPolicy", "Bypass", "-Command", script],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            check=False, timeout=20,
+        )
+    except (OSError, subprocess.TimeoutExpired, ValueError):
+        return None
+
+
+def _windows_process_facts(pid: int) -> tuple[str | None, str | None]:
+    script = (
+        "try {\r\n"
+        f"  $p = Get-CimInstance -ClassName Win32_Process -Filter 'ProcessId = {pid}' -ErrorAction Stop\r\n"
+        "} catch {\r\n"
+        "  exit 2\r\n"
+        "}\r\n"
+        "if (-not $p) { exit 0 }\r\n"
+        "$when = ''\r\n"
+        "if ($p.CreationDate) { $when = ([datetime]$p.CreationDate).ToUniversalTime().ToString('o') }\r\n"
+        "Write-Output ($p.Name + \"`t\" + $when)\r\n"
+    )
+    proc = _windows_cim(script)
+    if proc is None or proc.returncode not in (0, None):
+        return (None, None)
+    line = (proc.stdout or "").strip().splitlines()
+    if not line:
+        return (None, None)
+    name, _, started = line[0].partition("\t")
+    return (name.strip() or None, started.strip() or None)
+
+
+def _windows_child_facts(pid: int) -> list[tuple[int, str | None, str | None]]:
+    script = (
+        "try {\r\n"
+        f"  $rows = Get-CimInstance -ClassName Win32_Process -Filter 'ParentProcessId = {pid}' -ErrorAction Stop\r\n"
+        "} catch {\r\n"
+        "  exit 2\r\n"
+        "}\r\n"
+        "foreach ($row in @($rows)) {\r\n"
+        "  if (-not $row) { continue }\r\n"
+        "  $when = ''\r\n"
+        "  if ($row.CreationDate) { $when = ([datetime]$row.CreationDate).ToUniversalTime().ToString('o') }\r\n"
+        "  Write-Output ($row.ProcessId.ToString() + \"`t\" + $row.Name + \"`t\" + $when)\r\n"
+        "}\r\n"
+    )
+    proc = _windows_cim(script)
+    if proc is None or proc.returncode not in (0, None):
+        return []
+    children = []
+    for line in (proc.stdout or "").splitlines():
+        pid_text, sep, rest = line.strip().partition("\t")
+        if not sep or not pid_text.isdigit():
+            continue
+        name, _, started = rest.partition("\t")
+        children.append((int(pid_text), name.strip() or None, started.strip() or None))
+    return children
+
+
 def _process_is_python(pid: int) -> bool:
     """False only when the process is visibly not Python. Unknown (cannot read the image) stays True,
-    so a supervisor we failed to identify is not treated as stale."""
-    try:
-        if os.name == "nt":
-            import ctypes
-            from ctypes import wintypes
-            kernel = ctypes.WinDLL("kernel32", use_last_error=True)
-            kernel.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
-            kernel.OpenProcess.restype = wintypes.HANDLE
-            kernel.QueryFullProcessImageNameW.argtypes = [
-                wintypes.HANDLE, wintypes.DWORD, wintypes.LPWSTR, ctypes.POINTER(wintypes.DWORD)]
-            kernel.QueryFullProcessImageNameW.restype = wintypes.BOOL
-            kernel.CloseHandle.argtypes = [wintypes.HANDLE]
-            handle = kernel.OpenProcess(0x1000, False, pid)
-            if not handle:
-                return True
-            try:
-                size = wintypes.DWORD(32768)
-                buf = ctypes.create_unicode_buffer(size.value)
-                if not kernel.QueryFullProcessImageNameW(handle, 0, buf, ctypes.byref(size)):
-                    return True
-                return Path(buf.value).name.lower() in ("python.exe", "pythonw.exe")
-            finally:
-                kernel.CloseHandle(handle)
-        raw = Path(f"/proc/{pid}/cmdline").read_bytes().lower()
-    except OSError:
+    so a supervisor we failed to identify is not treated as stale and its pid file is kept."""
+    image, _started = _process_facts(pid)
+    if image is None:
         return True
-    return b"python" in raw
+    return _is_owned_image(image)
 
 
-def read_live_supervisor() -> int | None:
-    """Pid recorded in server.pid when that process is still a live Python. Anything else is removed."""
+def _owned_tree(root: int, recorded_start: str | None) -> list[int]:
+    """Python descendants created after their parent, then the root, children first.
+
+    A child older than its parent is an orphan whose original parent pid was reused. A non-Python
+    process is not entered, so its own children are not treated as ours. The root is included only
+    when its image is Python and, when the pid file recorded a start time, that time still matches.
+    """
+    image, started = _process_facts(root)
+    if not _is_owned_image(image):
+        return []
+    if recorded_start is not None and not _same_start(started, recorded_start):
+        return []
+    ordered: list[int] = []
+    seen: set[int] = {root}
+
+    def walk(pid: int, parent_started: str | None) -> None:
+        for child, child_image, child_started in _child_facts(pid):
+            if child in seen or not _is_owned_image(child_image):
+                continue
+            if not _started_after(child_started, parent_started):
+                continue
+            seen.add(child)
+            walk(child, child_started)
+            ordered.append(child)
+
+    walk(root, started)
+    ordered.append(root)
+    return ordered
+
+
+def _parse_pid_record(raw: str) -> tuple[int, str | None] | None:
+    parts = raw.split()
+    if not parts:
+        return None
+    try:
+        pid = int(parts[0])
+    except ValueError:
+        return None
+    started = parts[1] if len(parts) > 1 and parts[1] else None
+    return pid, started
+
+
+def _write_supervisor_pid() -> None:
+    pid = os.getpid()
+    _image, started = _process_facts(pid)
+    text = str(pid) if not started else f"{pid} {started}"
+    pid_file().write_text(text + "\n", encoding="utf-8")
+
+
+def _supervisor_record() -> tuple[int, str | None] | None:
+    """Live supervisor pid and the start time recorded with it.
+
+    A dead pid, a pid that is visibly not Python, or a pid whose start time no longer matches
+    (the number was reused) is removed. A process whose image cannot be read is left in the file
+    and returned, so a permission error does not drop the only handle we have.
+    """
     path = pid_file()
     if not path.exists():
         return None
     raw = path.read_text(encoding="utf-8").strip()
-    try:
-        pid = int(raw)
-    except ValueError:
+    parsed = _parse_pid_record(raw)
+    if parsed is None:
         path.unlink(missing_ok=True)
         log(f"removed unreadable pid file {raw!r}")
         return None
-    if pid_alive(pid) and _process_is_python(pid):
-        return pid
-    path.unlink(missing_ok=True)
-    log(f"removed stale pid {pid}")
-    return None
+    pid, recorded = parsed
+    if not pid_alive(pid):
+        path.unlink(missing_ok=True)
+        log(f"removed stale pid {pid}")
+        return None
+    if not _process_is_python(pid):
+        path.unlink(missing_ok=True)
+        log(f"removed stale pid {pid}")
+        return None
+    _image, started = _process_facts(pid)
+    if recorded is not None and started is not None and not _same_start(started, recorded):
+        path.unlink(missing_ok=True)
+        log(f"removed stale pid {pid}")
+        return None
+    return pid, recorded
+
+
+def read_live_supervisor() -> int | None:
+    """Pid recorded in server.pid when that process is still a live Python. Anything else is removed."""
+    record = _supervisor_record()
+    return None if record is None else record[0]
 
 
 # ------------------------------------------------------------------------------------------- shortcut
@@ -337,12 +531,16 @@ def _stop(proc, grace: float = 5.0) -> None:
         proc.kill()
 
 
-def terminate_pid(pid: int) -> None:
-    """Stop another process: taskkill on Windows (SIGTERM cannot be caught there), SIGTERM elsewhere."""
+def terminate_pid(pid: int) -> bool:
+    """Stop one verified process. Hidden on Windows. False when the signal is refused."""
     if os.name == "nt":
-        run(["taskkill", "/PID", str(pid), "/F"], capture_output=True)
-    else:
+        proc = run(["taskkill", "/PID", str(pid), "/F"], capture_output=True, text=True, check=False)
+        return proc.returncode in (0, None)
+    try:
         os.kill(pid, signal.SIGTERM)
+    except PermissionError:
+        return False
+    return True
 
 
 # ---------------------------------------------------------------------------------------------- modes
@@ -375,7 +573,7 @@ def serve(port: int = PORT) -> int:
     if server_alive(port):
         log("serve: a server already answers; nothing to do")
         return 0
-    pid_file().write_text(str(os.getpid()), encoding="utf-8")
+    _write_supervisor_pid()
     state = {"stopping": False, "child": None}
 
     def on_signal(signum, frame):            # noqa: ARG001 - signal handler signature
@@ -447,8 +645,10 @@ def serve(port: int = PORT) -> int:
         state["stopping"] = True
     finally:
         _stop(state["child"])
-        if pid_file().exists() and pid_file().read_text(encoding="utf-8").strip() == str(os.getpid()):
-            pid_file().unlink()
+        if pid_file().exists():
+            recorded = _parse_pid_record(pid_file().read_text(encoding="utf-8").strip())
+            if recorded is not None and recorded[0] == os.getpid():
+                pid_file().unlink()
         log("serve: supervisor stopped")
     return code
 
@@ -471,17 +671,28 @@ def open_app(port: int = PORT) -> int:
 
 
 def stop(port: int = PORT) -> int:
-    """Stop the supervisor (so it does not restart the server) and then the server.
+    """Stop the supervisor and the server it started.
 
-    A pid file whose process is already gone is deleted and not killed (it may have been reused).
+    ``taskkill`` without the tree leaves the Streamlit child running, and a forced kill does not
+    run the supervisor's cleanup. Each pid is killed only after its image is Python and it was
+    created after its parent. Children first. A permission error keeps the pid file.
     """
-    pid = read_live_supervisor()
-    if pid is not None:
-        try:
-            terminate_pid(pid)
-        except OSError:                      # already gone
-            pass
-        pid_file().unlink(missing_ok=True)
+    record = _supervisor_record()
+    stopped = False
+    if record is not None:
+        pid, recorded = record
+        owned = _owned_tree(pid, recorded)
+        refused = False
+        for item in owned:
+            try:
+                delivered = terminate_pid(item)
+            except OSError:
+                delivered = False
+            if delivered is False:
+                refused = True
+        if owned and not refused:
+            pid_file().unlink(missing_ok=True)
+            stopped = True
     deadline = time.monotonic() + 15
     while server_alive(port) and time.monotonic() < deadline:
         _sleep(0.5)
@@ -489,7 +700,12 @@ def stop(port: int = PORT) -> int:
         print(f"A server still answers at {url(port)}; it was not started by the launcher (run-debug.bat?). "
               "Close its window.")
         return 1
-    print("Sketch2CAD is stopped." if pid is not None else "Sketch2CAD was not running.")
+    if stopped:
+        print("Sketch2CAD is stopped.")
+    elif record is None:
+        print("Sketch2CAD was not running.")
+    else:
+        print("Sketch2CAD's process could not be confirmed, so it was left running.")
     return 0
 
 
