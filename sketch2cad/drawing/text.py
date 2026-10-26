@@ -101,12 +101,21 @@ def _pin_measurement_font() -> None:
     manager._fallback_font_name = _BUNDLED_FONT.name
 
     if not getattr(FontCache, "_sketch2cad_resolves_to_bundle", False):
+        def _is_shape_name(font_name: str) -> bool:
+            return Path(str(font_name)).suffix.lower() in {".lff", ".shx", ".shp"}
+
         def _resolve(self, font_name: str, fallback: str = ""):
-            del self, font_name, fallback
+            del self, fallback
+            # A shape file is not the bundled TrueType face. Raising here is what make_font
+            # already catches, so it falls through to that face instead of decoding the TTF as text.
+            if _is_shape_name(font_name):
+                raise FontNotFoundError(font_name)
             return _BUNDLED_ENTRY[0]
 
         def _resolve_item(self, item: str):
-            del self, item
+            del self
+            if _is_shape_name(item):
+                raise FontNotFoundError(item)
             return _BUNDLED_ENTRY[0]
 
         FontCache.get = _resolve          # type: ignore[method-assign]

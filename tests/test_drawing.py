@@ -848,6 +848,17 @@ def test_measurement_ignores_a_mapped_system_txt_ttf(tmp_path):
         ezfonts.TrueTypeFont._glyph_caches.clear()
 
 
+def test_shape_font_names_fall_back_to_the_bundled_face():
+    """``.lff`` and ``.shx`` names must not be opened as the bundled TrueType file."""
+    from ezdxf.fonts import fonts as ezfonts
+    from sketch2cad.drawing import text as drawing_text
+
+    sample = "DRAINAGE"
+    bundled = ezfonts.make_font(drawing_text.FONT, 3.5).text_width(sample)
+    for name in ("x.lff", "x.shx", "x.shp"):
+        assert ezfonts.make_font(name, 3.5).text_width(sample) == bundled
+
+
 def test_title_height_rounds_up_and_is_not_shrunk():
     from sketch2cad.drawing.standards import snap_text_height
     from sketch2cad.templates import draw_titleblock, load_template
