@@ -1,5 +1,7 @@
 """Local headless Claude runner. Process launch is mocked; Linux CI never starts claude.exe."""
 import json
+import os
+import shutil
 import subprocess
 import time
 from pathlib import Path
@@ -44,6 +46,7 @@ ACCOUNTS = [r"C:\accounts\one", r"C:\accounts\two", r"C:\accounts\three"]
 def isolated_home(tmp_path, monkeypatch):
     monkeypatch.setenv("SKETCH2CAD_HOME", str(tmp_path / "home"))
     runner._restricted_cache.clear()
+    runner._ui_tick_at = 0.0
 
 
 def _drawing(tmp_path, code="20117"):
@@ -79,15 +82,19 @@ def _patch_launch(monkeypatch, *, alive_after=True):
         scripts.append(Path(ps1).read_text(encoding="utf-8-sig"))
         return {"pid": pid, "image": "conhost.exe", "created": f"2026-01-01T00:00:{pid % 60:02d}+00:00"}
 
-    def matches(pid, image, created):
-        return bool(image and created and alive.get(int(pid), False) and str(image).lower() == "conhost.exe")
+    def status(pid, image, created):
+        if not (str(image or "").strip() and str(created or "").strip()):
+            return "unknown" if runner._numeric_alive(pid) else "gone"
+        if alive.get(int(pid), False) and str(image).lower() == "conhost.exe":
+            return "alive"
+        return "gone"
 
     def kill(pid):
         killed.append(pid)
         alive[pid] = False
 
     monkeypatch.setattr(runner, "launch_hidden", launch)
-    monkeypatch.setattr(runner, "process_matches", matches)
+    monkeypatch.setattr(runner, "process_status", status)
     monkeypatch.setattr(runner, "_kill_tree", kill)
     monkeypatch.setattr(runner, "supports_restricted", lambda _exe: False)
     return launched, killed, alive, scripts
@@ -121,10 +128,11 @@ def test_task_states_the_rules_and_the_script_clears_the_key(tmp_path, monkeypat
         assert f"Remove-Item Env:{name} -ErrorAction SilentlyContinue" in script
     assert "$ErrorActionPreference='Stop'" in script
     assert "try {" in script and "} catch {" in script
-    assert "exit=$LASTEXITCODE" in script
-    assert "exit $LASTEXITCODE" in script
+    assert "$code = $LASTEXITCODE" in script
+    assert "exit $code" in script
     assert "[Console]::OutputEncoding" in script and "$OutputEncoding" in script
-    assert "Out-File -FilePath $log -Encoding utf8" in script
+    assert "Out-File -FilePath $log -Append -Encoding utf8" in script
+    assert "$ErrorActionPreference='Continue'" in script
     assert "*>" not in script
     assert str(task / "run.log") in script
     assert script.count("--add-dir") == 1
@@ -246,15 +254,186 @@ def test_taskkill_uses_the_tree_and_checks_identity(monkeypatch):
     monkeypatch.setattr(runner.os, "name", "nt")
     monkeypatch.setattr(runner, "hidden_run", run)
     state = {"pid": 501, "image": "conhost.exe", "created": "2026-01-01T00:00:00+00:00"}
-    answers = iter([True, False])
-    monkeypatch.setattr(runner, "process_matches", lambda *_args: next(answers))
+    answers = iter(["alive", "gone"])
+    monkeypatch.setattr(runner, "process_status", lambda *_args: next(answers))
     assert runner._stop_tracked(state) is True
     assert calls == [["taskkill", "/PID", "501", "/T", "/F"]]
 
     calls.clear()
-    monkeypatch.setattr(runner, "process_matches", lambda *_args: False)
+    monkeypatch.setattr(runner, "process_status", lambda *_args: "gone")
     assert runner._stop_tracked(state) is True
     assert calls == []
+
+    monkeypatch.setattr(runner, "process_status", lambda *_args: "unknown")
+    assert runner._stop_tracked(state) is False
+    assert calls == []
+
+
+def test_native_stderr_does_not_abort_the_script(tmp_path):
+    task = tmp_path / "task"
+    script = runner.render_run_ps1(task, r"C:\Tools\claude.exe", r"C:\accounts\one", restricted=False)
+    outer = script.index("\ntry {")
+    encoding_at = script.index("$OutputEncoding")
+    continue_at = script.index("$ErrorActionPreference='Continue'")
+    call_at = script.index('2>&1 | ForEach-Object { "$_" }')
+    finally_at = script.index("} finally {")
+    code_at = script.index("$code = $LASTEXITCODE")
+    exit_at = script.index("\n    exit $code")
+    assert outer < encoding_at < script.index("[Console]::OutputEncoding") < continue_at
+    assert continue_at < call_at < finally_at < code_at < exit_at
+    assert "exit=$code" in script
+    assert script.index("$ErrorActionPreference='Stop'") < outer
+
+
+def test_pwsh_treats_stderr_and_exit_zero_as_success(tmp_path):
+    pwsh = shutil.which("pwsh")
+    if not pwsh:
+        pytest.skip("pwsh is not installed")
+    fake = tmp_path / "claude"
+    fake.write_text("#!/bin/sh\necho 'progress on stderr' >&2\nexit 0\n", encoding="utf-8")
+    fake.chmod(0o755)
+    task.mkdir()
+    (task / "p.txt").write_text("hello\n", encoding="utf-8-sig")
+    runner._write_ps1(task / "run.ps1", runner.render_run_ps1(
+        task, str(fake), str(tmp_path / "account"), restricted=False))
+    proc = subprocess.run(
+        [pwsh, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", str(task / "run.ps1")],
+        capture_output=True, text=True, timeout=60, check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+    log = runner.read_log_text(task / "run.log")
+    assert "progress on stderr" in log
+    assert "exit=0" in log
+    assert "ERROR:" not in log
+
+
+def test_unknown_query_does_not_start_the_next_account(tmp_path, monkeypatch):
+    project, doc = _drawing(tmp_path)
+    settings = _settings(project)
+    launched, _killed, _alive, _scripts = _patch_launch(monkeypatch)
+    package = export_to_outbox(doc.path, request="move the note")
+    task = runner.watch_package(package, settings)
+    (task / "run.log").write_text("session limit\n", encoding="utf-8")
+    monkeypatch.setattr(runner, "process_status", lambda *_args: "unknown")
+    runner.tick(settings, projects=[str(project.path)])
+    assert len(launched) == 1
+    assert runner.status_for_document(project.path, doc.code)["status"] == "working"
+
+
+def test_run_timeout_advances_when_identity_is_missing(tmp_path, monkeypatch):
+    project, doc = _drawing(tmp_path)
+    settings = _settings(project)
+    launched, killed, _alive, _scripts = _patch_launch(monkeypatch)
+    monkeypatch.setattr(runner, "_numeric_alive", lambda pid: pid > 0)
+    package = export_to_outbox(doc.path, request="move the note")
+    task = runner.watch_package(package, settings)
+    state = json.loads((task / "state.json").read_text(encoding="utf-8"))
+    state["image"] = ""
+    state["created"] = ""
+    state["started"] = time.time()
+    (task / "state.json").write_text(json.dumps(state), encoding="utf-8")
+    runner.tick(settings, projects=[str(project.path)])
+    assert len(launched) == 1
+    assert runner.status_for_document(project.path, doc.code)["status"] == "working"
+    state["started"] = time.time() - 10_000
+    (task / "state.json").write_text(json.dumps(state), encoding="utf-8")
+    runner.tick(settings, projects=[str(project.path)])
+    assert killed == []
+    assert len(launched) == 2
+
+
+def test_query_timeout_is_unknown_and_silence_is_gone(monkeypatch):
+    monkeypatch.setattr(runner.os, "name", "nt")
+
+    def timed_out(_argv, **_kwargs):
+        raise subprocess.TimeoutExpired(_argv, 20)
+
+    monkeypatch.setattr(runner, "hidden_run", timed_out)
+    assert runner.query_process(40)["status"] == "unknown"
+
+    def empty(argv, **_kwargs):
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr(runner, "hidden_run", empty)
+    assert runner.query_process(40)["status"] == "gone"
+
+    def named(argv, **_kwargs):
+        return subprocess.CompletedProcess(argv, 0, "conhost.exe\n2026-01-01T00:00:00+00:00\n", "")
+
+    monkeypatch.setattr(runner, "hidden_run", named)
+    found = runner.query_process(40)
+    assert found["status"] == "alive"
+    assert runner.process_status(40, "conhost.exe", "2026-01-01T00:00:00+00:00") == "alive"
+    assert runner.process_status(40, "claude.exe", "2026-01-01T00:00:00+00:00") == "gone"
+
+
+def test_launch_hidden_times_out(monkeypatch):
+    monkeypatch.setattr(runner.os, "name", "nt")
+    seen = {}
+
+    def timed_out(argv, **kwargs):
+        seen["timeout"] = kwargs.get("timeout")
+        raise subprocess.TimeoutExpired(argv, kwargs.get("timeout"))
+
+    monkeypatch.setattr(runner, "hidden_run", timed_out)
+    with pytest.raises(OSError, match="timed out"):
+        runner.launch_hidden("conhost.exe --headless")
+    assert seen["timeout"] == runner._LAUNCH_TIMEOUT_S
+
+
+def test_ui_tick_is_throttled(monkeypatch):
+    calls = []
+    monkeypatch.setattr(runner, "tick", lambda *_args, **_kwargs: calls.append(1))
+    runner.tick_from_ui()
+    runner.tick_from_ui()
+    assert calls == [1]
+    runner._ui_tick_at = 0.0
+    runner.tick_from_ui()
+    assert calls == [1, 1]
+
+
+def test_stale_lock_is_renamed_aside(tmp_path):
+    from sketch2cad.config import app_home
+    lock = app_home() / "claude_runner.lock"
+    lock.mkdir()
+    old = time.time() - runner._LOCK_STALE_S - 10
+    os.utime(lock, (old, old))
+    with runner._global_lock() as got:
+        assert got is True
+        assert lock.is_dir()
+        assert list(app_home().glob("claude_runner.lock.stale-*")) == []
+    assert not lock.exists()
+
+    lock.mkdir()
+    with runner._global_lock() as got:
+        assert got is False
+    assert lock.is_dir()
+
+
+def test_seen_marker_is_written_only_with_the_lock(tmp_path):
+    from sketch2cad.config import app_home
+    project, doc = _drawing(tmp_path)
+    settings = _settings(project)
+    package = export_to_outbox(doc.path, request="move the note")
+    lock = app_home() / "claude_runner.lock"
+    lock.mkdir()
+    with pytest.raises(runner.RunnerError):
+        runner.watch_package(package, settings)
+    assert not (project.path / "agent_exchange" / "claude_tasks" / "seen.txt").exists()
+
+
+def test_reply_values_must_be_an_object_and_lists(tmp_path):
+    bad = tmp_path / "reply.json"
+    bad.write_text(json.dumps({
+        "spec": ["not-an-object"],
+        "changes": {},
+        "assumptions": [],
+        "questions": [],
+    }), encoding="utf-8")
+    assert runner.reply_is_valid(bad) is False
+    good = tmp_path / "ok.json"
+    good.write_text(json.dumps(_envelope()), encoding="utf-8")
+    assert runner.reply_is_valid(good) is True
 
 
 def test_timeout_does_not_advance_until_the_tree_is_dead(tmp_path, monkeypatch):
@@ -296,9 +475,15 @@ def test_tool_flags_follow_the_detected_build(monkeypatch):
     assert "--restricted" in locked
     assert "--allowedTools" not in locked
     calls = []
+    seen = {}
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "secret-token")
+    monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://example.invalid")
 
-    def run(argv, **_kwargs):
+    def run(argv, **kwargs):
         calls.append(list(argv))
+        seen["env"] = kwargs.get("env")
+        seen["encoding"] = kwargs.get("encoding")
+        seen["errors"] = kwargs.get("errors")
         if "--help" in argv:
             raise OSError("help failed")
         return subprocess.CompletedProcess(argv, 0, "claude\n--restricted\n", "")
@@ -308,6 +493,10 @@ def test_tool_flags_follow_the_detected_build(monkeypatch):
     assert runner.supports_restricted(r"C:\Tools\claude.exe") is True
     assert "--help" in calls[0]
     assert "--version" in calls[1]
+    assert seen["encoding"] == "utf-8" and seen["errors"] == "replace"
+    assert "ANTHROPIC_API_KEY" not in seen["env"]
+    assert "ANTHROPIC_BASE_URL" not in seen["env"]
+    assert "PATH" in seen["env"]
 
     monkeypatch.setattr(
         runner, "hidden_run",
@@ -316,11 +505,18 @@ def test_tool_flags_follow_the_detected_build(monkeypatch):
     assert runner.supports_restricted(r"C:\Tools\claude.exe") is False
 
     def boom(_argv, **_kwargs):
-        raise OSError("missing")
+        raise ValueError("locale")
 
     monkeypatch.setattr(runner, "hidden_run", boom)
     runner._restricted_cache.clear()
     assert runner.supports_restricted(r"C:\missing\claude.exe") is False
+
+    def timed_out(_argv, **_kwargs):
+        raise subprocess.TimeoutExpired(_argv, 20)
+
+    monkeypatch.setattr(runner, "hidden_run", timed_out)
+    runner._restricted_cache.clear()
+    assert runner.supports_restricted(r"C:\slow\claude.exe") is False
 
 
 def test_tries_every_configured_account(tmp_path, monkeypatch):

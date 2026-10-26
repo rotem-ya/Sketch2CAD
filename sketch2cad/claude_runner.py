@@ -31,7 +31,12 @@ PROMPT = (
     "Write nothing else.\n"
 )
 _LIMITS = ("usage limit", "session limit", "rate limit", "hit your limit", "too many requests")
-_LOCK_STALE_S = 120
+# A tick only holds the lock while it works, and it refreshes this mtime. 15 minutes is
+# longer than one slow query or launch, so a live tick is not stolen.
+_LOCK_STALE_S = 900
+_LAUNCH_TIMEOUT_S = 30
+_UI_TICK_INTERVAL_S = 10
+_ui_tick_at = 0.0
 _REPLY_KEYS = ("spec", "changes", "assumptions", "questions")
 # PowerShell 5.1 treats each of these as a single quote. Doubling is the escape.
 _PS_QUOTES = ("'", "\u2018", "\u2019", "\u201a", "\u201b")
@@ -190,20 +195,30 @@ def render_run_ps1(task: Path, exe: str, account: str, *, restricted: bool) -> s
     )
     if restricted:
         command += " --restricted"
+    # Windows PowerShell 5.1 turns a native stderr line into a terminating error when
+    # ErrorActionPreference is Stop and the stream is merged with 2>&1. The call itself
+    # runs under Continue, and each record is stringified before it is written.
     lines = [
         "$ErrorActionPreference='Stop'",
-        "$OutputEncoding = New-Object System.Text.UTF8Encoding $false",
-        "[Console]::OutputEncoding = $OutputEncoding",
         f"$log = {log}",
         "try {",
         *["    " + line for line in clears],
+        "    $OutputEncoding = New-Object System.Text.UTF8Encoding $false",
+        "    [Console]::OutputEncoding = $OutputEncoding",
         f"    $env:CLAUDE_CONFIG_DIR = {_ps_quote(account)}",
         f"    Set-Location -LiteralPath {_ps_quote(task_dir)}",
         f"    $p = Get-Content -LiteralPath {_ps_quote(str(Path(task_dir) / 'p.txt'))} -Raw -Encoding UTF8",
-        f"    {command} 2>&1 | Out-File -FilePath $log -Encoding utf8",
+        "    $ErrorActionPreference='Continue'",
+        "    try {",
+        f"        {command} 2>&1 | ForEach-Object {{ \"$_\" }} | Out-File -FilePath $log -Append -Encoding utf8",
+        "    } finally {",
+        "        $ErrorActionPreference='Stop'",
+        "    }",
+        "    $code = $LASTEXITCODE",
+        "    if ($null -eq $code) { $code = 0 }",
         "    $utf8 = New-Object System.Text.UTF8Encoding $false",
-        "    [System.IO.File]::AppendAllText($log, \"exit=$LASTEXITCODE`r`n\", $utf8)",
-        "    exit $LASTEXITCODE",
+        "    [System.IO.File]::AppendAllText($log, \"exit=$code`r`n\", $utf8)",
+        "    exit $code",
         "} catch {",
         "    $utf8 = New-Object System.Text.UTF8Encoding $false",
         "    [System.IO.File]::AppendAllText($log, \"ERROR: $($_.Exception.Message)`r`n\", $utf8)",
@@ -254,11 +269,15 @@ def launch_hidden(command: str) -> dict:
     if os.name != "nt":
         raise OSError("hidden Claude launch is only available on Windows")
     script = wmi_launcher_script(command)
-    proc = hidden_run(
-        ["powershell.exe", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden",
-         "-ExecutionPolicy", "Bypass", "-Command", script],
-        capture_output=True, text=True, check=False,
-    )
+    _touch_lock()
+    try:
+        proc = hidden_run(
+            ["powershell.exe", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden",
+             "-ExecutionPolicy", "Bypass", "-Command", script],
+            capture_output=True, text=True, check=False, timeout=_LAUNCH_TIMEOUT_S,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise OSError("hidden launch timed out") from exc
     lines = [line.strip() for line in (proc.stdout or "").splitlines() if line.strip()]
     detail = (proc.stderr or "").strip()
     if proc.returncode != 0 or len(lines) < 2 or lines[0] != "0":
@@ -297,18 +316,12 @@ def watch_package(package: Path | str, settings: Settings | None = None) -> Path
     if existing is not None:
         return existing
     seen_path = _seen_path(exchange)
-    if not seen_path.exists():
-        others = {item.name for item in _packages(exchange) if item.name != package.name}
-        _write_names(seen_path, others)
     with _global_lock() as got:
         if not got:
-            # Leave the package out of the marker so the next tick starts it.
-            if seen_path.exists():
-                seen = _read_names(seen_path)
-                if package.name in seen:
-                    seen.discard(package.name)
-                    _write_names(seen_path, seen)
             raise RunnerError("claude_runner_busy")
+        if not seen_path.exists():
+            others = {item.name for item in _packages(exchange) if item.name != package.name}
+            _write_names(seen_path, others)
         existing = _task_for(exchange, package.name)
         if existing is not None:
             return existing
@@ -337,6 +350,7 @@ def tick(settings: Settings | None = None, projects: list | None = None) -> None
             return
         now = time.time()
         for root in _project_roots(settings, projects):
+            _touch_lock()
             exchange = root / "agent_exchange"
             try:
                 ensure_marker(exchange)
@@ -344,6 +358,16 @@ def tick(settings: Settings | None = None, projects: list | None = None) -> None
                 _pump(exchange, settings, now)
             except Exception:
                 continue
+
+
+def tick_from_ui(settings: Settings | None = None, projects: list | None = None) -> None:
+    """Like ``tick``, but a page rerun runs it at most once every few seconds."""
+    global _ui_tick_at
+    now = time.monotonic()
+    if now - _ui_tick_at < _UI_TICK_INTERVAL_S:
+        return
+    _ui_tick_at = now
+    tick(settings, projects=projects)
 
 
 def arm(settings: Settings) -> None:
@@ -399,27 +423,42 @@ def status_for_document(project_dir: Path | str, document_code: str) -> dict | N
 
 def pid_alive(pid: int, image: str = "", created: str = "") -> bool:
     """True only when this pid is still the same image started at the same time."""
-    return process_matches(pid, image, created)
+    return process_status(pid, image, created) == "alive"
 
 
 def process_matches(pid: int, image: str, created: str) -> bool:
-    """False when the pid is missing, reused, or was never identified."""
+    """True only when the query confirms this exact process is still running."""
+    return process_status(pid, image, created) == "alive"
+
+
+def process_status(pid: int, image: str, created: str) -> str:
+    """``alive``, ``gone``, or ``unknown`` for the process this task started.
+
+    ``unknown`` is a failed or timed-out query. It is not treated as gone.
+    A pid with no stored image or creation time is ``unknown`` while that pid
+    still exists, because it may have been reused.
+    """
     if not isinstance(pid, int) or pid <= 0:
-        return False
+        return "gone"
     image = (image or "").strip()
     created = (created or "").strip()
     if not image or not created:
-        return False
+        return "unknown" if _numeric_alive(pid) else "gone"
     found = query_process(pid)
-    if not found:
-        return False
-    return found["image"].lower() == image.lower() and found["created"] == created
+    if found.get("status") == "unknown":
+        return "unknown"
+    if found.get("status") != "alive":
+        return "gone"
+    same = str(found.get("image") or "").lower() == image.lower()
+    return "alive" if same and str(found.get("created") or "") == created else "gone"
 
 
-def query_process(pid: int) -> dict | None:
-    """Image name and creation time, or None when the process is gone or this is not Windows."""
-    if os.name != "nt" or not isinstance(pid, int) or pid <= 0:
-        return None
+def query_process(pid: int) -> dict:
+    """``alive`` with image and creation time, ``gone`` when CIM reports none, or ``unknown``."""
+    if not isinstance(pid, int) or pid <= 0:
+        return {"status": "gone"}
+    if os.name != "nt":
+        return {"status": "unknown"}
     script = (
         f"$p = Get-CimInstance -ClassName Win32_Process -Filter 'ProcessId = {pid}' "
         "-ErrorAction SilentlyContinue\r\n"
@@ -428,17 +467,23 @@ def query_process(pid: int) -> dict | None:
         "if ($p.CreationDate) { Write-Output ([datetime]$p.CreationDate).ToUniversalTime().ToString('o') }\r\n"
     )
     try:
+        _touch_lock()
         proc = hidden_run(
             ["powershell.exe", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden",
              "-ExecutionPolicy", "Bypass", "-Command", script],
-            capture_output=True, text=True, check=False, timeout=20,
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            check=False, timeout=20,
         )
-    except (OSError, subprocess.TimeoutExpired):
-        return None
+    except (OSError, subprocess.TimeoutExpired, ValueError):
+        return {"status": "unknown"}
+    if proc.returncode not in (0, None):
+        return {"status": "unknown"}
     lines = [line.strip() for line in (proc.stdout or "").splitlines() if line.strip()]
+    if not lines:
+        return {"status": "gone"}
     if len(lines) < 2:
-        return None
-    return {"image": lines[0], "created": lines[1]}
+        return {"status": "unknown"}
+    return {"status": "alive", "image": lines[0], "created": lines[1]}
 
 
 def reply_is_valid(path: Path) -> bool:
@@ -447,7 +492,13 @@ def reply_is_valid(path: Path) -> bool:
         data = json.loads(path.read_text(encoding="utf-8-sig"))
     except (OSError, json.JSONDecodeError, UnicodeError):
         return False
-    return isinstance(data, dict) and all(key in data for key in _REPLY_KEYS)
+    return (
+        isinstance(data, dict)
+        and isinstance(data.get("spec"), dict)
+        and isinstance(data.get("changes"), list)
+        and isinstance(data.get("assumptions"), list)
+        and isinstance(data.get("questions"), list)
+    )
 
 
 def read_log_text(path: Path) -> str:
@@ -507,14 +558,26 @@ def _win_quote(value: str) -> str:
     return value
 
 
+def _cleared_env() -> dict:
+    """The current environment without the provider variables the run itself clears."""
+    env = dict(os.environ)
+    for name in _ENV_CLEAR:
+        env.pop(name, None)
+    return env
+
+
 def _claude_help(exe: str) -> str:
     """``claude --help``, or ``--version`` when help cannot be run. Empty when neither runs."""
+    env = _cleared_env()
     for flag in ("--help", "--version"):
         try:
+            _touch_lock()
             proc = hidden_run(
-                [exe, flag], capture_output=True, text=True, timeout=20, check=False,
+                [exe, flag],
+                capture_output=True, text=True, encoding="utf-8", errors="replace",
+                timeout=20, check=False, env=env,
             )
-        except (OSError, subprocess.TimeoutExpired):
+        except (OSError, subprocess.TimeoutExpired, ValueError):
             continue
         return (proc.stdout or "") + "\n" + (proc.stderr or "")
     return ""
@@ -749,15 +812,15 @@ def _observe(task: Path, settings: Settings, now: float) -> None:
     if status == "failed":
         return
     if status == "ready":
-        if process_matches(*_identity(state)):
+        if process_status(*_identity(state)) == "alive":
             _stop_tracked(state)
         return
     if (task / "DONE.txt").is_file() and reply_is_valid(task / "reply.json"):
         if _publish_reply(task, str(state.get("package") or "")):
-            if process_matches(*_identity(state)):
+            if process_status(*_identity(state)) == "alive":
                 _stop_tracked(state)
             state["status"] = "ready"
-            if not process_matches(*_identity(state)):
+            if process_status(*_identity(state)) == "gone":
                 state["pid"] = 0
                 state["image"] = ""
                 state["created"] = ""
@@ -766,7 +829,7 @@ def _observe(task: Path, settings: Settings, now: float) -> None:
     if status != "working":
         return
     pid, image, created = _identity(state)
-    alive = process_matches(pid, image, created)
+    view = process_status(pid, image, created)
     limited = _limit_hit(_current_log(task))
     try:
         started = float(state.get("started") or 0)
@@ -774,11 +837,15 @@ def _observe(task: Path, settings: Settings, now: float) -> None:
     except (TypeError, ValueError):
         started, timeout_s = 0.0, _timeout(settings)
     timed_out = started > 0 and (now - started) >= timeout_s
-    if alive and not limited and not timed_out:
+    # A query that failed is not proof the process ended. A missing identity
+    # plus a reused pid must still give up once the run's own time limit passes.
+    if view == "unknown":
+        if timed_out and not (image.strip() and created.strip()):
+            _finish_attempt(task, state, settings)
         return
-    if alive and not _stop_tracked(state):
+    if view == "alive" and not limited and not timed_out:
         return
-    if not (image and created) and _numeric_alive(pid):
+    if view == "alive" and not _stop_tracked(state):
         return
     _finish_attempt(task, state, settings)
 
@@ -945,12 +1012,19 @@ def _kill_tree(pid: int) -> None:
 
 
 def _stop_tracked(state: dict) -> bool:
-    """Stop our process tree. True when it is gone. A pid that is not ours is not killed."""
+    """Stop our process tree. True only when it is confirmed gone.
+
+    ``unknown`` does not kill and does not count as gone. A reused pid is gone
+    for us, so it is not killed.
+    """
     pid, image, created = _identity(state)
-    if not process_matches(pid, image, created):
+    status = process_status(pid, image, created)
+    if status == "unknown":
+        return False
+    if status != "alive":
         return True
     _kill_tree(pid)
-    return not process_matches(pid, image, created)
+    return process_status(pid, image, created) == "gone"
 
 
 def _project_roots(settings: Settings, projects: list | None) -> list[Path]:
@@ -966,33 +1040,60 @@ def _project_roots(settings: Settings, projects: list | None) -> list[Path]:
     return roots
 
 
+def _lock_path() -> Path:
+    return app_home() / "claude_runner.lock"
+
+
+def _touch_lock() -> None:
+    """Refresh the lock heartbeat so a long tick is not treated as abandoned."""
+    try:
+        os.utime(_lock_path(), None)
+    except (OSError, NotImplementedError, ValueError):
+        pass
+
+
+def _lock_is_stale(path: Path) -> bool:
+    try:
+        return time.time() - path.stat().st_mtime > _LOCK_STALE_S
+    except OSError:
+        return True
+
+
+def _try_acquire(path: Path) -> bool:
+    """Take the lock. A stale directory is renamed aside, then created with mkdir."""
+    try:
+        path.mkdir()
+        return True
+    except FileExistsError:
+        pass
+    if not _lock_is_stale(path):
+        return False
+    token = path.with_name(f"{path.name}.stale-{os.getpid()}-{time.time_ns()}")
+    try:
+        path.rename(token)
+    except OSError:
+        return False
+    try:
+        path.mkdir()
+    except FileExistsError:
+        return False
+    finally:
+        try:
+            token.rmdir()
+        except OSError:
+            pass
+    return True
+
+
 @contextmanager
 def _global_lock():
     """One lock for every project, shared by the app and the launcher."""
-    path = app_home() / "claude_runner.lock"
-    acquired = False
-    try:
-        path.mkdir()
-        acquired = True
-    except FileExistsError:
-        try:
-            stale = time.time() - path.stat().st_mtime > _LOCK_STALE_S
-        except OSError:
-            stale = True
-        if stale:
-            try:
-                path.rmdir()
-            except OSError:
-                pass
-            try:
-                path.mkdir()
-                acquired = True
-            except FileExistsError:
-                acquired = False
-    if not acquired:
+    path = _lock_path()
+    if not _try_acquire(path):
         yield False
         return
     try:
+        _touch_lock()
         yield True
     finally:
         try:

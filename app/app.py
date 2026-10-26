@@ -726,11 +726,11 @@ def _text_of(item) -> str:
 
 def agent_status_card(p: Project, d: Document) -> None:
     """What was sent, whether a reply is waiting, and what was last applied."""
-    from sketch2cad.claude_runner import configured, status_for_document, tick
+    from sketch2cad.claude_runner import configured, status_for_document, tick_from_ui
     from sketch2cad.workflow import workflow_view
     if configured(settings):
         try:
-            tick(settings, projects=[p.path])
+            tick_from_ui(settings, projects=[p.path])
         except Exception:  # noqa: BLE001 - the status card still renders if a run cannot advance
             pass
     view = workflow_view(p.path, d.path, d.code)
