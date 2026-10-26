@@ -789,6 +789,154 @@ def test_oversized_view_is_not_placed_off_the_sheet(tmp_path):
         assert vp.dxf.center.y + vp.dxf.height / 2 <= 297
 
 
+def _paper_box(entity):
+    from ezdxf import bbox as ezbbox
+
+    ext = ezbbox.extents([entity], fast=True)
+    if not ext.has_data:
+        return None
+    return (ext.extmin.x, ext.extmin.y, ext.extmax.x, ext.extmax.y)
+
+
+def _boxes_overlap(a, b) -> bool:
+    return not (a[2] <= b[0] or b[2] <= a[0] or a[3] <= b[1] or b[3] <= a[1])
+
+
+def test_omitted_caption_uses_the_strip_between_views():
+    """A one-line caption wider than the largest gap sits in the free strip, not on a view."""
+    from ezdxf.math import Vec2
+    from sketch2cad.drawing.text import put_text
+    from sketch2cad.drawing.views import _write_omitted_caption
+    from sketch2cad.templates import load_template
+
+    template = load_template("a3_simple")
+    doc = ezdxf.new()
+    psp = doc.layouts.new("SHEET")
+    frame = 10.0
+    # Frame coordinates: an 8 mm strip at y 133.7, and a 72.02 mm column that is the largest gap.
+    section = (10.0, 27.0, 317.98, 133.7)
+    plan = (10.0, 141.7, 317.98, 267.0)
+    area = {"x": 10.0, "y": 27.0, "w": 380.0, "h": 240.0}
+    for rect, status in ((section, 2), (plan, 3)):
+        cx = frame + (rect[0] + rect[2]) / 2
+        cy = frame + (rect[1] + rect[3]) / 2
+        psp.add_viewport(center=(cx, cy), size=(rect[2] - rect[0], rect[3] - rect[1]),
+                         view_center_point=(0, 0), view_height=100, status=status)
+    put_text(psp, "חתך א-א", (frame + 30, frame + 100), 3.5, align="left")
+    put_text(psp, "TRENCH DRAIN – MUFLE WING", (frame + 30, frame + 60), 2.5, align="left")
+    occupied = [section, plan]
+    _write_omitted_caption(psp, {"key": "detail-1"}, area, occupied, Vec2(frame, frame), template)
+    captions = [entity for entity in psp.query("TEXT MTEXT")
+                if "NOT SHOWN" in (entity.text if entity.dxftype() == "MTEXT" else entity.dxf.text)]
+    assert len(captions) == 1
+    caption = _paper_box(captions[0])
+    mid_y = (caption[1] + caption[3]) / 2 - frame
+    assert 133.7 < mid_y < 141.7, caption
+    for vp in psp.query("VIEWPORT"):
+        if vp.dxf.status <= 1:
+            continue
+        view = (vp.dxf.center.x - vp.dxf.width / 2, vp.dxf.center.y - vp.dxf.height / 2,
+                vp.dxf.center.x + vp.dxf.width / 2, vp.dxf.center.y + vp.dxf.height / 2)
+        assert not _boxes_overlap(caption, view)
+    for entity in psp.query("TEXT MTEXT"):
+        if entity is captions[0]:
+            continue
+        other = _paper_box(entity)
+        assert other and not _boxes_overlap(caption, other)
+
+
+def test_omitted_caption_wraps_into_the_gap_when_the_strip_is_blocked():
+    """When the strip is full, two lines fit the 72 mm gap and still miss every view and text."""
+    from ezdxf.math import Vec2
+    from sketch2cad.drawing.text import put_text
+    from sketch2cad.drawing.views import _write_omitted_caption
+    from sketch2cad.templates import load_template
+
+    template = load_template("a3_simple")
+    doc = ezdxf.new()
+    psp = doc.layouts.new("SHEET")
+    frame = 10.0
+    section = (10.0, 27.0, 317.98, 133.7)
+    plan = (10.0, 141.7, 317.98, 267.0)
+    area = {"x": 10.0, "y": 27.0, "w": 380.0, "h": 240.0}
+    for rect, status in ((section, 2), (plan, 3)):
+        cx = frame + (rect[0] + rect[2]) / 2
+        cy = frame + (rect[1] + rect[3]) / 2
+        psp.add_viewport(center=(cx, cy), size=(rect[2] - rect[0], rect[3] - rect[1]),
+                         view_center_point=(0, 0), view_height=100, status=status)
+    put_text(psp, "חתך א-א", (frame + 30, frame + 100), 3.5, align="left")
+    put_text(psp, "TRENCH DRAIN – MUFLE WING", (frame + 30, frame + 60), 2.5, align="left")
+    put_text(psp, "BLOCK " * 24, (frame + 12, frame + 134.2), 2.5, align="left")
+    _write_omitted_caption(psp, {"key": "detail-1"}, area, [section, plan], Vec2(frame, frame), template)
+    captions = [entity for entity in psp.query("TEXT MTEXT")
+                if "NOT SHOWN" in (entity.text if entity.dxftype() == "MTEXT" else entity.dxf.text)]
+    assert len(captions) == 1
+    text = captions[0].text if captions[0].dxftype() == "MTEXT" else captions[0].dxf.text
+    assert "\\P" in text
+    caption = _paper_box(captions[0])
+    assert caption[0] - frame >= 317.98 - 0.5
+    for vp in psp.query("VIEWPORT"):
+        if vp.dxf.status <= 1:
+            continue
+        view = (vp.dxf.center.x - vp.dxf.width / 2, vp.dxf.center.y - vp.dxf.height / 2,
+                vp.dxf.center.x + vp.dxf.width / 2, vp.dxf.center.y + vp.dxf.height / 2)
+        assert not _boxes_overlap(caption, view), (caption, view)
+    for entity in psp.query("TEXT MTEXT"):
+        if entity is captions[0]:
+            continue
+        other = _paper_box(entity)
+        assert other and not _boxes_overlap(caption, other), (text, caption, other)
+
+
+def test_tight_sheet_omitted_caption_misses_views_and_text(tmp_path):
+    """Plan and section leave a short strip. The omitted detail is named in that strip."""
+    spec = {
+        "units": "mm", "scale": 10, "paper": "A3", "language": "both", "view": "plan",
+        "sheet": {"template": "a3_simple"},
+        "origin_on_sheet": [10, 181],
+        "elements": [{"id": "site", "type": "rect", "status": "existing",
+                      "corners": [[0, 0], [3000, 700]]}],
+        "views": [
+            {"id": "section-a", "title": {"en": "SECTION A-A", "he": "חתך א-א"}, "scale": 10,
+             "origin_on_sheet": [10, 98],
+             "elements": [{"id": "wall", "type": "rect", "status": "new",
+                           "corners": [[0, 0], [3000, 600]],
+                           "label": "TRENCH DRAIN – MUFLE WING", "label_at": [1500, 300],
+                           "label_pinned": True}]},
+            {"id": "detail-1", "title": "DETAIL 1", "scale": 5,
+             "elements": [{"id": "big", "type": "rect", "status": "new",
+                           "corners": [[0, 0], [5000, 4000]]}]},
+        ],
+    }
+    res = render(spec, tmp_path, "tight_caption", formats=("dxf",))
+    detail_errors = [w for w in res["warnings"] if w.startswith("ERROR:") and "view 'detail-1'" in w]
+    assert len(detail_errors) == 1, res["warnings"]
+    doc = ezdxf.readfile(res["dxf"])
+    psp = doc.layouts.get("SHEET")
+    captions = [entity for entity in psp.query("TEXT MTEXT")
+                if "DETAIL-1 NOT SHOWN" in (entity.text if entity.dxftype() == "MTEXT" else entity.dxf.text)]
+    assert len(captions) == 1
+    caption = _paper_box(captions[0])
+    viewports = []
+    for vp in psp.query("VIEWPORT"):
+        if vp.dxf.status <= 1:
+            continue
+        view = (vp.dxf.center.x - vp.dxf.width / 2, vp.dxf.center.y - vp.dxf.height / 2,
+                vp.dxf.center.x + vp.dxf.width / 2, vp.dxf.center.y + vp.dxf.height / 2)
+        viewports.append(view)
+        assert not _boxes_overlap(caption, view), (caption, view)
+    lower = min(view[3] for view in viewports)
+    upper = max(view[1] for view in viewports)
+    assert lower <= caption[1] and caption[3] <= upper, (caption, viewports)
+    for entity in psp.query("TEXT MTEXT"):
+        if entity is captions[0]:
+            continue
+        other = _paper_box(entity)
+        assert other and not _boxes_overlap(caption, other)
+    assert any("TRENCH DRAIN" in (entity.dxf.text if entity.dxftype() == "TEXT" else entity.text)
+               for entity in doc.modelspace().query("TEXT MTEXT"))
+
+
 def dense_drainage_plan() -> dict:
     path = Path(__file__).parent / "fixtures" / "dense_drainage_plan.json"
     return json.loads(path.read_text(encoding="utf-8"))

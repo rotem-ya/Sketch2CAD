@@ -20,7 +20,7 @@ from .. import templates
 from . import components, dims, legend, place
 from .context import LTSCALE_FACTOR, DrawContext
 from .layout import STANDARD_SCALES, content_extents
-from .text import LINE_SPACING, put_text, text_width
+from .text import LINE_SPACING, put_text, text_width, wrap
 
 ELEMENT_ERRORS = (KeyError, ValueError, TypeError, IndexError, ZeroDivisionError)
 LAYOUT_NAME = "SHEET"
@@ -1118,7 +1118,7 @@ def compose(ctx: DrawContext, spec: dict, template: dict, values: dict, language
 
     def note_unplaced(item, message: str) -> None:
         ctx.warnings.append(message)
-        _write_omitted_caption(psp, item, pack_area, occupied, frame)
+        _write_omitted_caption(psp, item, pack_area, occupied, frame, template)
 
     for index, item in enumerate(items):
         if not item.get("nts") and item["key"] != "primary":
@@ -1196,32 +1196,119 @@ def _titleblock_warning(item: dict) -> str:
             f"not shown on this sheet. Use a larger sheet (A2/A1)")
 
 
-def _write_omitted_caption(msp, item: dict, area: dict, occupied: list, frame: Vec2) -> None:
-    """Name an unplaced view on the sheet, inside the packing area and clear of the notes column."""
+def _caption_size(lines: list[str], height: float) -> tuple[float, float]:
+    width = max(text_width(line, height) for line in lines)
+    return width, height * LINE_SPACING * len(lines)
+
+
+def _two_line_caption(caption: str, height: float, max_width: float) -> list[str] | None:
+    """Two wrapped lines that fit `max_width`, or None when the caption needs more."""
+    if max_width <= 1:
+        return None
+    lines = wrap(caption, height, max_width)
+    if len(lines) != 2:
+        return None
+    if any(text_width(line, height) > max_width + 1e-6 for line in lines):
+        return None
+    return lines
+
+
+def _sheet_obstacles(msp, frame: Vec2, template: dict | None) -> list[tuple]:
+    """Paper text, real viewports and the title block, in frame millimetres."""
+    boxes = []
+    if template:
+        for block in template.get("blocks") or []:
+            x, y = float(block["x"]), float(block["y"])
+            boxes.append((x, y, x + float(block["w"]), y + float(block["h"])))
+    for entity in msp.query("TEXT MTEXT"):
+        ext = ezbbox.extents([entity], fast=True)
+        if ext.has_data:
+            boxes.append((ext.extmin.x - frame.x, ext.extmin.y - frame.y,
+                          ext.extmax.x - frame.x, ext.extmax.y - frame.y))
+    for vp in msp.query("VIEWPORT"):
+        if vp.dxf.status <= 1 or vp.dxf.height <= 0:
+            continue
+        cx, cy = vp.dxf.center.x - frame.x, vp.dxf.center.y - frame.y
+        half_w, half_h = vp.dxf.width / 2, vp.dxf.height / 2
+        boxes.append((cx - half_w, cy - half_h, cx + half_w, cy + half_h))
+    return boxes
+
+
+def _fallback_regions(area: dict, template: dict | None) -> list[dict]:
+    """Notes column, then the frame beside the title block."""
+    regions = []
+    column = None
+    if template:
+        column = template.get("legend_area") or area.get("legend_box")
+    elif area.get("legend_box"):
+        column = area.get("legend_box")
+    if isinstance(column, dict):
+        regions.append(column)
+    frame = (template or {}).get("frame") or {}
+    width, height = float(frame.get("w") or 0), float(frame.get("h") or 0)
+    title_top = 0.0
+    for block in (template or {}).get("blocks") or []:
+        title_top = max(title_top, float(block["y"]) + float(block["h"]))
+    if width > 20 and height - title_top > 8:
+        regions.append({"x": 0.0, "y": title_top, "w": width, "h": height - title_top})
+    return regions
+
+
+def _draw_omitted_caption(msp, lines: list[str], x: float, y: float, frame: Vec2, occupied: list) -> None:
+    height = 2.5
+    width, band = _caption_size(lines, height)
+    text = "\\P".join(lines) if len(lines) > 1 else lines[0]
+    put_text(msp, text, (frame.x + x, frame.y + y), height, layer="TEXT", align="left",
+             nowrap=len(lines) == 1, box_width=width if len(lines) > 1 else None)
+    occupied.append((x, y, x + width, y + band))
+
+
+def _write_omitted_caption(msp, item: dict, area: dict, occupied: list, frame: Vec2,
+                           template: dict | None = None) -> None:
+    """Name an unplaced view where it covers neither a view nor text.
+
+    A free one-line slot is tried first (the strip between two views). The caption then wraps
+    onto two lines to fit the largest gap. The notes column and the frame beside the title
+    block are the last resort. Nothing is drawn when every spot still overlaps.
+    """
     caption = f"{str(item.get('key') or 'VIEW').upper()} NOT SHOWN – NEEDS A2 SHEET"
     height = 2.5
-    width = max(text_width(caption, height), 1.0)
-    band = height * LINE_SPACING
-    hole = _largest_hole(area, occupied, 0.0)
-    x = y = None
+    width, band = _caption_size([caption], height)
+    obstacles = list(occupied) + _sheet_obstacles(msp, frame, template)
+
+    def place(lines: list[str], slot: tuple[float, float] | None) -> bool:
+        if slot is None:
+            return False
+        x, y = slot
+        box_w, box_h = _caption_size(lines, height)
+        if _hits_occupied(x, y, box_w, box_h, obstacles, 0.0):
+            return False
+        _draw_omitted_caption(msp, lines, x, y, frame, occupied)
+        return True
+
+    if place([caption], _scan(area, width, band, obstacles, 0.5)):
+        return
+    hole = _largest_hole(area, obstacles, 0.0)
     if hole is not None:
-        hx, hy, fw, fh = hole
-        if fw + 1e-6 >= width and fh + 1e-6 >= band:
-            x = hx
-            y = hy + fh - band
-    if x is None:
-        x = float(area["x"])
-        y = float(area["y"]) + max(0.0, float(area["h"]) - band)
-        guard = 0
-        while _hits_occupied(x, y, min(width, float(area["w"])), band, occupied, 0.5) and guard < 30:
-            y -= band + 1.0
-            guard += 1
-        y = max(y, float(area["y"]))
-    room = float(area["w"])
-    limit = float(area["x"]) + room - min(width, room)
-    x = min(max(x, float(area["x"])), max(limit, float(area["x"])))
-    put_text(msp, caption, (frame.x + x, frame.y + y), height, layer="TEXT", align="left", nowrap=True)
-    occupied.append((x, y, x + min(width, room), y + band))
+        lines = _two_line_caption(caption, height, hole[2])
+        if lines:
+            box_w, box_h = _caption_size(lines, height)
+            sub = {"x": hole[0], "y": hole[1], "w": hole[2], "h": hole[3]}
+            if place(lines, _scan(sub, box_w, box_h, obstacles, 0.0)):
+                return
+    for region in _fallback_regions(area, template):
+        if place([caption], _scan(region, width, band, obstacles, 0.5)):
+            return
+        hole = _largest_hole(region, obstacles, 0.0)
+        if hole is None:
+            continue
+        lines = _two_line_caption(caption, height, hole[2])
+        if not lines:
+            continue
+        box_w, box_h = _caption_size(lines, height)
+        sub = {"x": hole[0], "y": hole[1], "w": hole[2], "h": hole[3]}
+        if place(lines, _scan(sub, box_w, box_h, obstacles, 0.0)):
+            return
 
 
 def _view_fit_warning(item: dict, area: dict) -> str:
