@@ -90,8 +90,7 @@ def convert(src: Path | str, fmt: str, out_dir: Path | str | None = None, *,
     if acad:
         return _convert_autocad(acad, src, fmt, dest)
     raise ConverterNotFound(
-        "No DWG converter found. Install ODA File Converter (free, opendesign.com) and set its path in "
-        "Settings, or install full AutoCAD (its accoreconsole.exe is used automatically).")
+        "No DWG converter found. Set the ODA File Converter path in Settings.")
 
 
 def _run(cmd: list[str], name: str) -> subprocess.CompletedProcess:

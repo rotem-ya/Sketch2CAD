@@ -40,7 +40,7 @@ from sketch2cad.checks import run_checks  # noqa: E402
 from sketch2cad.config import Settings, app_home  # noqa: E402
 from sketch2cad.documents import (DOC_TYPES, STATUSES, Document, add_source, create_document,  # noqa: E402
                                   list_documents, new_revision)
-from sketch2cad.i18n import t  # noqa: E402
+from sketch2cad.i18n import notice as ui_notice, t  # noqa: E402
 from sketch2cad.projects import Project, create_project, is_project_folder, relocate_project  # noqa: E402
 
 ICON = Path(__file__).with_name("icon.png")
@@ -217,7 +217,7 @@ def download(label: str, path: Path, key: str) -> None:
 
 def show_converter_error(e: Exception) -> None:
     from sketch2cad.io.oda import ConverterNotFound
-    st.warning(T("no_converter") if isinstance(e, ConverterNotFound) else f"{T('error')}: {e}")
+    st.warning(T("no_converter") if isinstance(e, ConverterNotFound) else ui_notice(str(e), L))
 
 
 def check_updates(silent: bool = False) -> None:
@@ -507,6 +507,7 @@ def page_document() -> None:
             st.success(T("saved"))
 
     with tab_src:
+        st.caption(T("sources_help"))
         files = st.file_uploader(T("upload"), accept_multiple_files=True)
         if files and st.button(T("add")):
             warnings = []
@@ -542,6 +543,7 @@ def page_document() -> None:
                 el = f" - {ltr(f.element)}" if f.element else ""
                 st.markdown(f"{icons[f.severity]} {getattr(f, L)}{el}", unsafe_allow_html=True)
     with tab_bom:
+        st.caption(T("bom_title"))
         if spec is None:
             st.info(T("no_spec"))
         else:
@@ -589,10 +591,25 @@ def page_document() -> None:
 
 
 def tab_drawing(p: Project, d: Document, cat: Catalog) -> None:
-    """Spec from a typical detail, a sketch sent to the agent, or JSON, then render with a title block."""
+    """Spec from a typical detail or a sketch sent to the agent, then render. JSON stays collapsed."""
     spec = load_spec(d)
     agent_status_card(p, d)
-    mode = st.radio(T("spec_source"), ["typical", "sketch", "json"], horizontal=True, index=2 if spec else 0,
+    rendered = ss.pop("render_note", None)
+    if rendered:
+        st.success(rendered[0])
+        for warning in rendered[1]:
+            st.warning(ui_notice(warning, L))
+    for kind, msg in ss.pop("rev_msgs", []):
+        getattr(st, kind)(ui_notice(msg, L) if kind == "warning" else msg)
+    sent = ss.pop("agent_notice", None)
+    if sent:
+        getattr(st, sent[0])(sent[1])
+    shown = d.path / d.outputs.get("preview", "-")
+    if shown.is_file():
+        st.image(str(shown), width="stretch")
+    else:
+        shown = None
+    mode = st.radio(T("spec_source"), ["typical", "sketch"], horizontal=True, key="spec_mode",
                     format_func=lambda m: T(f"src_{m}"))
     lang_mode = d.language_mode or p.language_mode
     if mode == "typical":
@@ -625,7 +642,13 @@ def tab_drawing(p: Project, d: Document, cat: Catalog) -> None:
         else:
             st.info(T("sketch_no_sources"))
         st.caption(T("sketch_use_panel"))
+
+    st.divider()
+    if spec is None:
+        st.info(T("no_spec"))
     else:
+        _sheet_form(p, d, spec, cat)
+    with st.expander(T("spec_advanced"), expanded=False):
         text = st.text_area(T("spec_json"), value=json.dumps(spec, ensure_ascii=False, indent=1) if spec else "",
                             height=400)
         if st.button(T("save"), key="spec_save"):
@@ -635,22 +658,6 @@ def tab_drawing(p: Project, d: Document, cat: Catalog) -> None:
                 st.success(T("saved"))
             except json.JSONDecodeError as e:
                 st.error(f"{T('invalid_json')}: {e}")
-
-    st.divider()
-    if spec is None:
-        st.info(T("no_spec"))
-    else:
-        _sheet_form(p, d, spec, cat)
-    for kind, msg in ss.pop("rev_msgs", []):
-        getattr(st, kind)(msg)
-    notice = ss.pop("agent_notice", None)
-    if notice:
-        getattr(st, notice[0])(notice[1])
-    shown = d.path / d.outputs.get("preview", "-")
-    if shown.is_file():
-        st.image(str(shown), width="stretch")
-    else:
-        shown = None
     agent_workbench(p, d, cat, shown)
     _show_agent_dialog(d)
 
@@ -687,9 +694,8 @@ def _sheet_form(p: Project, d: Document, spec: dict, cat: Catalog) -> None:
         except Exception as e:  # noqa: BLE001 - show render errors (bad spec) to the user
             st.error(f"{T('error')}: {e}")
             return
-        st.success(T("rendered"))
-        for w in warnings:
-            st.warning(w)
+        ss.render_note = (T("rendered"), warnings)
+        st.rerun()
 
 
 def _show_time(value: str) -> str:
@@ -794,7 +800,7 @@ def _agent_send_body() -> None:
         try:
             path = export_to_outbox(ss.agent_doc, request=request, extra_sources=paths or None)
         except BridgeError as exc:
-            st.error(str(exc))
+            st.error(ui_notice(str(exc), L))
             return
         ss.agent_dialog = None
         notice = T("agent_sent").format(path=path)
@@ -871,7 +877,7 @@ def _agent_receive_body() -> None:
     st.caption(T("agent_trial"))
     if not report.get("ok"):
         for error in report.get("errors") or []:
-            st.error(error)
+            st.error(ui_notice(error, L))
         return
     _trial_pair(report)
     st.markdown(T("agent_elements").format(n=report.get("element_count", 0)))
@@ -879,18 +885,18 @@ def _agent_receive_body() -> None:
     if dwg.get("produced"):
         st.success(T("agent_dwg_ok").format(name=dwg.get("file", "trial.dwg")))
     else:
-        st.warning(T("agent_dwg_skip").format(reason=dwg.get("reason", "")))
+        st.warning(ui_notice(dwg.get("reason", ""), L))
     _reply_lists(report)
     _checks_grouped(list(report.get("checks") or []))
     for warning in list(report.get("warnings") or []) + list(report.get("render_warnings") or []):
         if str(warning).startswith("DWG skipped"):
             continue
-        st.warning(warning)
+        st.warning(ui_notice(warning, L))
     if st.button(T("agent_apply"), type="primary", key="agent_apply_go"):
         applied = import_reply(ss.agent_reply, ss.agent_doc, apply=True)
         if not (applied.get("ok") and applied.get("applied")):
             for error in applied.get("errors") or [T("agent_failed")]:
-                st.error(error)
+                st.error(ui_notice(error, L))
             return
         p = current_project()
         d = Document.load(ss.agent_doc)
@@ -904,7 +910,7 @@ def _agent_receive_body() -> None:
         record_applied(d.path, reply=ss.agent_reply, backup=applied.get("backup"))
         ss.agent_dialog = None
         ss.agent_notice = ("success", T("agent_applied"))
-        ss.rev_msgs = [("warning", w) for w in warnings]
+        ss.rev_msgs = [("warning", ui_notice(w, L)) for w in warnings]
         ss.rev_open = True
         st.rerun()
 
@@ -943,7 +949,7 @@ def _send_work_package(d: Document, request: str, uploads=None) -> None:
         try:
             path = export_to_outbox(d.path, request=request, extra_sources=paths or None)
         except BridgeError as exc:
-            st.error(str(exc))
+            st.error(ui_notice(str(exc), L))
             return
         notice = T("agent_sent").format(path=path)
         if paths:
@@ -963,7 +969,7 @@ def _open_inbox(p: Project, d: Document) -> None:
         reply = latest_inbox_reply(p.path)
         report = import_reply(reply, d.path, apply=False)
     except BridgeError as exc:
-        st.error(str(exc))
+        st.error(ui_notice(str(exc), L))
         return
     ss.agent_doc = str(d.path)
     ss.agent_reply = str(reply)

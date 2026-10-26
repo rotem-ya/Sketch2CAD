@@ -87,7 +87,9 @@ STRINGS: dict[str, dict[str, str]] = {
     # document page
     "back_to_project": {"en": "Back to project", "he": "חזרה לפרויקט"},
     "details": {"en": "Details", "he": "פרטים"},
-    "sources": {"en": "Sources (sketches, photos, PDF, DWG...)", "he": "מקורות (סקיצות, תמונות, PDF, DWG...)"},
+    "sources": {"en": "Sources", "he": "מקורות"},
+    "sources_help": {"en": "Sketches, photos, PDF and DWG. Their text is included in search.",
+                     "he": "סקיצות, תמונות, PDF ו-DWG. הטקסט שלהם נכנס לחיפוש."},
     "upload": {"en": "Add files", "he": "הוספת קבצים"},
     "uploaded": {"en": "Files added", "he": "הקבצים נוספו"},
     "outputs": {"en": "Outputs", "he": "תוצרים"},
@@ -150,6 +152,13 @@ STRINGS: dict[str, dict[str, str]] = {
                     "he": "ניסיון בלבד. השרטוט עוד לא שונה."},
     "agent_dwg_ok": {"en": "DWG written: {name}", "he": "DWG הופק: {name}"},
     "agent_dwg_skip": {"en": "DWG was not written: {reason}", "he": "DWG לא הופק: {reason}"},
+    "agent_dwg_none": {"en": "DWG was not written.", "he": "DWG לא הופק."},
+    "agent_dwg_timeout": {"en": "DWG conversion timed out.", "he": "ההמרה ל-DWG נקטעה."},
+    "agent_dwg_failed": {"en": "DWG conversion failed.", "he": "ההמרה ל-DWG נכשלה."},
+    "agent_no_reply": {"en": "No reply in the inbox.", "he": "אין תשובה בתיבת הקבלה."},
+    "agent_secret": {"en": "A file contains a secret marker and was refused.",
+                     "he": "קובץ מכיל סימון סודי ולא נשלח."},
+    "agent_render_failed": {"en": "The trial drawing was not produced.", "he": "הפקת הניסיון נכשלה."},
     "agent_elements": {"en": "{n} elements on the drawing", "he": "{n} רכיבים בשרטוט"},
     "agent_failed": {"en": "The reply was not applied.", "he": "התשובה לא הוחלה."},
     "agent_status_none": {"en": "No package sent", "he": "לא נשלחה חבילה"},
@@ -206,8 +215,8 @@ STRINGS: dict[str, dict[str, str]] = {
                           "A folder for projects goes in \"Default folder for new projects\".",
                     "he": "בשדה ODA צריך להיות קובץ התוכנה ODAFileConverter.exe ולא תיקייה. "
                           "תיקייה לפרויקטים נכנסת לשדה \"תיקיית ברירת מחדל לפרויקטים חדשים\"."},
-    "oda_path": {"en": "ODA File Converter path (DWG). Optional when AutoCAD is installed.",
-                 "he": "נתיב ODA File Converter (DWG). לא חובה אם מותקן AutoCAD."},
+    "oda_path": {"en": "ODA File Converter path (DWG). Optional when AutoCAD or AutoCAD LT is installed.",
+                 "he": "נתיב ODA File Converter (DWG). לא חובה כשמותקן AutoCAD או AutoCAD LT."},
     "rebuild_index": {"en": "Rebuild search index", "he": "בנה מחדש את אינדקס החיפוש"},
     "indexed": {"en": "drawings indexed", "he": "שרטוטים נוספו לאינדקס"},
     "error": {"en": "Error", "he": "שגיאה"},
@@ -221,6 +230,7 @@ STRINGS: dict[str, dict[str, str]] = {
     "src_typical": {"en": "Typical detail", "he": "פרט טיפוסי"},
     "src_sketch": {"en": "Sketch or photo", "he": "סקיצה או צילום"},
     "src_json": {"en": "Edit the spec (JSON)", "he": "עריכת המפרט (JSON)"},
+    "spec_advanced": {"en": "Advanced editing", "he": "עריכה מתקדמת"},
     "typical": {"en": "Typical detail", "he": "פרט טיפוסי"},
     "generate": {"en": "Prepare the spec", "he": "הכן מפרט"},
     "spec_saved": {"en": "Spec saved. Render the drawing below.", "he": "המפרט נשמר. הפק את השרטוט למטה."},
@@ -251,11 +261,12 @@ STRINGS: dict[str, dict[str, str]] = {
     # checks / BOM / package / compare
     "checks": {"en": "Checks", "he": "בדיקות"},
     "no_findings": {"en": "No findings.", "he": "אין ממצאים."},
-    "bom": {"en": "Bill of materials", "he": "כתב כמויות"},
+    "bom": {"en": "BOM", "he": "כמויות"},
+    "bom_title": {"en": "Bill of materials", "he": "כתב כמויות"},
     "qty": {"en": "Qty", "he": "כמות"},
     "open_in_cad": {"en": "Open in AutoCAD", "he": "פתח באוטוקד"},
     "excel": {"en": "Download Excel", "he": "הורדת Excel"},
-    "package": {"en": "Submittal package", "he": "תיק הגשה"},
+    "package": {"en": "Package", "he": "תיק"},
     "package_help": {"en": "One PDF: transmittal, compliance matrix, checks, bill of materials, "
                            "the drawing, and catalog sheets found in the project.",
                      "he": "PDF אחד: מכתב העברה, טבלת התאמה, בדיקות, כתב כמויות, "
@@ -295,10 +306,8 @@ STRINGS: dict[str, dict[str, str]] = {
                         "he": "שמור בפרויקט הנוכחי כשרטוט חדש"},
     "no_current_project": {"en": "Open a project to save imports into it.",
                            "he": "פתח פרויקט כדי לשמור אליו את הייבוא."},
-    "no_converter": {"en": "No DWG converter found. Install ODA File Converter (free) or full AutoCAD. "
-                           "DXF files open in AutoCAD directly.",
-                     "he": "לא נמצא ממיר DWG. התקינו ODA File Converter (חינמי) או AutoCAD מלא. "
-                           "קבצי DXF נפתחים ישירות באוטוקד."},
+    "no_converter": {"en": "No DWG converter found. Set the ODA File Converter path in Settings.",
+                     "he": "לא נמצא ממיר DWG — הגדר את ODA File Converter בהגדרות."},
     # templates / catalog pages
     "template_yaml": {"en": "Template (YAML)", "he": "תבנית (YAML)"},
     "save_as_user": {"en": "Save as my template", "he": "שמור כתבנית שלי"},
@@ -350,3 +359,39 @@ def t(key: str, lang: str) -> str:
     if not entry:
         return key
     return entry.get(lang) or entry.get("en") or key
+
+
+_CONVERTER_MARKERS = ("no dwg converter", "oda file converter not found", "converter not found",
+                      "no converter found")
+
+
+def _missing_converter(text: str) -> bool:
+    return any(marker in text for marker in _CONVERTER_MARKERS)
+
+
+def notice(text: str, lang: str) -> str:
+    """Short UI text for a converter or bridge message. Logs keep the English original."""
+    raw = " ".join(str(text or "").split())
+    low = raw.lower()
+    detail = raw.split(":", 1)[1].strip() if low.startswith("dwg skipped:") else raw
+    folded = detail.lower()
+    if _missing_converter(folded):
+        return t("no_converter", lang)
+    if folded.startswith("no reply"):
+        return t("agent_no_reply", lang)
+    if "secret marker" in folded or folded.startswith("refusing to"):
+        return t("agent_secret", lang)
+    if folded.startswith("render failed"):
+        inner = detail.split(":", 1)[1].strip() if ":" in detail else ""
+        if inner and _missing_converter(inner.lower()):
+            return t("no_converter", lang)
+        return t("agent_render_failed", lang)
+    if "timed out" in folded:
+        return t("agent_dwg_timeout", lang)
+    if "conversion" in folded and "fail" in folded:
+        return t("agent_dwg_failed", lang)
+    if folded.startswith("dwg was not written") or folded in ("", "dwg skipped"):
+        return t("agent_dwg_none", lang)
+    if low.startswith("dwg skipped:"):
+        return t("agent_dwg_none", lang)
+    return raw

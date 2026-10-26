@@ -70,3 +70,19 @@ def test_ui_strings_use_plain_words():
         for lang, text in entry.items():
             assert text.strip(), key
             assert BANNED.search(text) is None, f"{key}:{lang}:{text}"
+            assert "full AutoCAD" not in text and "AutoCAD מלא" not in text, f"{key}:{lang}"
+
+
+def test_notice_localises_converter_and_bridge_messages():
+    from sketch2cad.i18n import notice, t
+    raw = "DWG skipped: No DWG converter found. Install ODA File Converter or install full AutoCAD."
+    assert notice(raw, "he") == "לא נמצא ממיר DWG — הגדר את ODA File Converter בהגדרות."
+    assert notice(raw, "en") == t("no_converter", "en")
+    assert "DWG skipped" not in notice(raw, "he")
+    assert notice("ODA File Converter not found", "he") == t("no_converter", "he")
+    assert notice("DWG was not written", "he") == t("agent_dwg_none", "he")
+    assert notice("no reply in /tmp/inbox", "he") == t("agent_no_reply", "he")
+    assert notice("refusing to export: spec.json contains a secret marker", "he") == t("agent_secret", "he")
+    assert notice("render failed: bad spec", "en") == t("agent_render_failed", "en")
+    assert notice("Conversion of a.dwg timed out after 180 s", "he") == t("agent_dwg_timeout", "he")
+    assert notice("ODA conversion of a.dxf to DWG failed", "he") == t("agent_dwg_failed", "he")
