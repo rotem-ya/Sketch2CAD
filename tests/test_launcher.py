@@ -16,6 +16,21 @@ def isolated_home(tmp_path, monkeypatch):
     monkeypatch.setattr(launcher, "START_TIMEOUT", 0)        # wait_alive never waits on the clock
     # Never touch the real Startup folder or start PowerShell from these tests.
     monkeypatch.setattr(launcher, "ensure_startup_shortcut", lambda: "skipped")
+    real_run = launcher.run
+    real_kill = launcher.os.kill
+
+    def _no_taskkill(argv, **kwargs):
+        if argv and "taskkill" in str(argv[0]).lower():
+            raise AssertionError("a test tried to run taskkill")
+        return real_run(argv, **kwargs)
+
+    def _no_signal(pid, sig, *args):
+        if sig:
+            raise AssertionError("a test tried to signal a process")
+        return real_kill(pid, sig)
+
+    monkeypatch.setattr(launcher, "run", _no_taskkill)
+    monkeypatch.setattr(launcher.os, "kill", _no_signal)
 
 
 class FakeProc:
@@ -349,10 +364,13 @@ def test_terminate_pid_not_found_is_stopped_and_denial_is_refused(monkeypatch):
     def refused(pid, sig):
         raise PermissionError
 
-    monkeypatch.setattr(launcher.os, "kill", missing)
-    assert launcher.terminate_pid(4242) is True
-    monkeypatch.setattr(launcher.os, "kill", refused)
-    assert launcher.terminate_pid(4242) is False
+    with monkeypatch.context() as mp:
+        mp.setattr(launcher.os, "name", "posix")
+        mp.setattr(launcher, "run", lambda *args, **kwargs: pytest.fail("taskkill must not run"))
+        mp.setattr(launcher.os, "kill", missing)
+        assert launcher.terminate_pid(4242) is True
+        mp.setattr(launcher.os, "kill", refused)
+        assert launcher.terminate_pid(4242) is False
 
 
 def test_stop_keeps_the_pid_file_when_the_kill_is_refused(monkeypatch, capsys):

@@ -267,8 +267,40 @@ def _entity_key(entity) -> tuple:
     return ("handle", kind, str(entity.dxf.handle))
 
 
+MIN_MATCHES = 5
+_UNIT_TO_MM = {1: 25.4, 4: 1.0, 5: 10.0, 6: 1000.0}
+
+
+def _coord_list(entity) -> list[tuple[float, float]]:
+    kind = entity.dxftype()
+    if kind == "LINE":
+        return [_point(entity.dxf.start, 6), _point(entity.dxf.end, 6)]
+    if kind in {"LWPOLYLINE", "POLYLINE"}:
+        try:
+            return [_point(point[:2], 6) for point in entity.get_points("xy")]
+        except (AttributeError, TypeError, ValueError):
+            return []
+    if kind == "CIRCLE":
+        return [_point(entity.dxf.center, 6)]
+    if kind in {"TEXT", "MTEXT", "INSERT"}:
+        return [_point(entity.dxf.insert, 6)]
+    return []
+
+
+def _geometry_agrees(source, final, tol: float = 1e-3) -> bool:
+    """Same entity type and the same coordinates, within tolerance. A shared handle is not enough."""
+    if source.dxftype() != final.dxftype():
+        return False
+    left, right = _coord_list(source), _coord_list(final)
+    if not left or len(left) != len(right):
+        return False
+    if source.dxftype() == "LINE":
+        left, right = sorted(left), sorted(right)
+    return all(abs(a[0] - b[0]) <= tol and abs(a[1] - b[1]) <= tol for a, b in zip(left, right))
+
+
 def _matched_pairs(app_doc, final_doc) -> list[tuple]:
-    """App entity to final entity, by handle when it survived, otherwise by geometry."""
+    """App entity to final entity. A handle counts only when the type and the geometry agree."""
     by_handle = {}
     by_geom: dict[tuple, list] = {}
     for entity in final_doc.modelspace():
@@ -278,16 +310,65 @@ def _matched_pairs(app_doc, final_doc) -> list[tuple]:
     pairs = []
     for source in app_doc.modelspace():
         handle = by_handle.get(str(source.dxf.handle))
-        if handle is not None and id(handle) not in used and handle.dxftype() == source.dxftype():
+        if (handle is not None and id(handle) not in used
+                and _geometry_agrees(source, handle)):
             used.add(id(handle))
             pairs.append((source, handle))
             continue
         for candidate in by_geom.get(_entity_key(source), []):
-            if id(candidate) not in used:
+            if id(candidate) not in used and _geometry_agrees(source, candidate):
                 used.add(id(candidate))
                 pairs.append((source, candidate))
                 break
     return pairs
+
+
+def _bbox(doc) -> tuple[float, float, float, float] | None:
+    points = []
+    for entity in doc.modelspace():
+        points.extend(_coord_list(entity))
+    if not points:
+        return None
+    xs = [point[0] for point in points]
+    ys = [point[1] for point in points]
+    return min(xs), min(ys), max(xs), max(ys)
+
+
+def _boxes_overlap(left, right) -> bool:
+    return not (left[2] < right[0] or right[2] < left[0] or left[3] < right[1] or right[3] < left[1])
+
+
+def _insunits(doc) -> int:
+    return int(doc.header.get("$INSUNITS", 0) or 0)
+
+
+def comparability(app_doc, final_doc) -> dict:
+    """Whether a final may drive mechanical style changes.
+
+    A redraw in different units, or geometry that does not sit on the app output, is recorded
+    and never applied.
+    """
+    if app_doc is None or final_doc is None:
+        return {"comparable": False, "reason": "no app output", "matches": 0}
+    app_units, final_units = _insunits(app_doc), _insunits(final_doc)
+    if app_units and final_units and app_units != final_units:
+        return {"comparable": False, "reason": "units differ", "matches": 0}
+    app_box, final_box = _bbox(app_doc), _bbox(final_doc)
+    if app_box and final_box:
+        app_factor = _UNIT_TO_MM.get(app_units, 1.0)
+        final_factor = _UNIT_TO_MM.get(final_units, 1.0)
+        app_mm = tuple(value * app_factor for value in app_box)
+        final_mm = tuple(value * final_factor for value in final_box)
+        app_width = app_mm[2] - app_mm[0]
+        final_width = final_mm[2] - final_mm[0]
+        if app_width > 0 and final_width > 0 and (app_width / final_width > 2 or final_width / app_width > 2):
+            return {"comparable": False, "reason": "measured scale differs", "matches": 0}
+        if not _boxes_overlap(app_mm, final_mm):
+            return {"comparable": False, "reason": "extents do not overlap", "matches": 0}
+    matches = len(_matched_pairs(app_doc, final_doc))
+    if matches < MIN_MATCHES:
+        return {"comparable": False, "reason": "too few matches", "matches": matches}
+    return {"comparable": True, "reason": "", "matches": matches}
 
 
 def _absolute_color(layer) -> int:
@@ -303,6 +384,10 @@ def layer_map_from(app_doc, final_doc) -> dict:
     """
     if app_doc is None or final_doc is None:
         return {}
+    source_totals: Counter = Counter()
+    for entity in app_doc.modelspace():
+        if entity.dxf.hasattr("layer"):
+            source_totals[_layer_key(entity.dxf.layer)] += 1
     votes: dict[str, Counter] = {}
     sources: dict[str, str] = {}
     for source, final in _matched_pairs(app_doc, final_doc):
@@ -320,8 +405,12 @@ def layer_map_from(app_doc, final_doc) -> dict:
     mapped = {}
     for key, counter in votes.items():
         name, color, weight = counter.most_common(1)[0][0]
+        matched = int(sum(counter.values()))
+        total = int(source_totals.get(key, matched))
+        share = matched / total if total else 0
         mapped[key] = {"source": sources[key], "name": name, "color": int(color),
-                       "lineweight": int(weight), "count": int(sum(counter.values()))}
+                       "lineweight": int(weight), "count": matched, "matched": matched,
+                       "total": total, "confident": matched >= MIN_MATCHES and share > 0.5}
     by_target: dict[str, list[str]] = {}
     for key, info in mapped.items():
         by_target.setdefault(_layer_key(info["name"]), []).append(key)
@@ -440,6 +529,9 @@ def _vote(node: dict, key, weight: int) -> None:
 
 def _merge(profile: dict, seen: dict, weight: int) -> dict:
     profile["final_count"] = int(profile.get("final_count", 0)) + 1
+    profile.setdefault("observations", []).append(_observation(seen))
+    if not seen.get("comparable"):
+        return profile
     for field in ("units", "ltscale", "language", "plot_style", "paper"):
         _vote(profile.setdefault(field, {}), seen.get(field), weight)
     title = profile.setdefault("title_block", {"counts": {}})
@@ -452,6 +544,8 @@ def _merge(profile: dict, seen: dict, weight: int) -> dict:
         heights["counts"][height] = heights["counts"].get(height, 0) + weight * int(count)
     mapped = profile.setdefault("layer_map", {})
     for key, info in (seen.get("layer_map") or {}).items():
+        if not info.get("confident"):
+            continue
         row = mapped.setdefault(key, {"source": info.get("source") or key, "counts": {}})
         token = f"{info['name']}|{int(info['color'])}|{int(info['lineweight'])}"
         row["counts"][token] = row["counts"].get(token, 0) + weight
@@ -461,6 +555,9 @@ def _merge(profile: dict, seen: dict, weight: int) -> dict:
         row["color"] = abs(int(color))
         row["lineweight"] = int(lineweight)
         row["source"] = info.get("source") or row.get("source") or key
+        row["matched"] = int(info.get("matched") or info.get("count") or 0)
+        row["total"] = int(info.get("total") or row["matched"])
+        row["confident"] = bool(info.get("confident"))
     by_target: dict[str, list[str]] = {}
     for key, info in list(mapped.items()):
         by_target.setdefault(_layer_key(str(info.get("name") or "")), []).append(key)
@@ -469,12 +566,12 @@ def _merge(profile: dict, seen: dict, weight: int) -> dict:
             for key in keys:
                 mapped.pop(key, None)
     scale_key = _scale_key(seen.get("sheet_scale"), seen.get("sheet_kind") or "model")
-    if scale_key and seen.get("ltscale") is not None:
+    if scale_key and seen.get("scale_verified") and seen.get("ltscale") is not None:
         table = profile.setdefault("ltscale_by_scale", {})
         _vote(table.setdefault(scale_key, {}), seen.get("ltscale"), weight)
     if seen.get("font"):
         _vote(profile.setdefault("font", {}), seen.get("font"), weight)
-    if seen.get("dimstyles") and scale_key:
+    if seen.get("dimstyles") and scale_key and seen.get("scale_verified"):
         size_vars = ("dimtxt", "dimasz", "dimexe", "dimexo", "dimgap", "dimscale")
         node = profile.setdefault("dims_by_scale", {}).setdefault(scale_key, {"vars": {}, "counts": {}})
         node.setdefault("counts", {})
@@ -504,9 +601,28 @@ def _merge(profile: dict, seen: dict, weight: int) -> dict:
         if node["value"] in seen["dimstyles"]:
             node["vars"] = {key: value for key, value in seen["dimstyles"][node["value"]].items()
                             if key not in {"dimlfac", "dimdec"}}
-    if seen.get("scale_guess") is not None:
-        _vote(profile.setdefault("scale_guess", {}), seen["scale_guess"], weight)
     return profile
+
+
+def _observation(seen: dict) -> dict:
+    layers = {}
+    for key, info in (seen.get("layers") or {}).items():
+        layers[key] = {"name": info.get("name"), "color": abs(int(info.get("color") or 0)),
+                       "lineweight": int(info.get("lineweight") or 0)}
+    return {
+        "file": seen.get("file") or "",
+        "units": seen.get("units") or "",
+        "ltscale": seen.get("ltscale"),
+        "layers": layers,
+        "dimstyles": sorted((seen.get("dimstyles") or {}).keys()),
+        "font": seen.get("font") or "",
+        "language": seen.get("language") or "",
+        "title_block": bool(seen.get("title_block")),
+        "plot_style": seen.get("plot_style") or "",
+        "comparable": bool(seen.get("comparable")),
+        "reason": seen.get("reason") or "",
+        "matches": int(seen.get("matches") or 0),
+    }
 
 
 def _read_dxf(path: Path):
@@ -557,11 +673,17 @@ def learn_from_final(doc: Document, entry: dict, project=None) -> list[str]:
     app_path = app_dxf_for(doc, entry.get("rev") or doc.rev, project)
     app_doc = _read_dxf(app_path) if app_path else None
     before = observe(app_doc) if app_doc is not None else None
-    final["layer_map"] = layer_map_from(app_doc, final_doc)
+    verdict = comparability(app_doc, final_doc)
+    final["comparable"] = verdict["comparable"]
+    final["reason"] = verdict["reason"]
+    final["matches"] = verdict["matches"]
+    final["file"] = entry.get("file") or ""
+    final["layer_map"] = layer_map_from(app_doc, final_doc) if verdict["comparable"] else {}
     final["font"] = _font_in_use(final_doc)
     spec = _spec_of(doc)
     final["sheet_scale"] = _sheet_scale(doc)
     final["sheet_kind"] = sheet_kind(spec)
+    final["scale_verified"] = bool(verdict["comparable"] and final["sheet_scale"])
     profile = load_profile(project)
     weight = int(profile.get("final_count", 0)) + 1
     profile = _merge(profile, final, weight)
@@ -593,6 +715,33 @@ def learn_from_final(doc: Document, entry: dict, project=None) -> list[str]:
     (examples / f"{doc.code}_{Path(entry['file']).stem}.json").write_text(
         json.dumps(example, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return warnings
+
+
+def forget_final(doc: Document, project, stored_rel: str) -> None:
+    """Drop one final and rebuild the profile from the finals that remain."""
+    doc.finals = [item for item in doc.finals if item.get("file") != stored_rel]
+    doc.save()
+    stored = doc.path / stored_rel
+    if stored.is_file() and stored.parent.name == "finals":
+        stored.unlink()
+    rebuild_profile(project)
+
+
+def rebuild_profile(project) -> None:
+    """Replace the profile with one learned again from the project's remaining finals."""
+    root = learning_root(project, create=False)
+    if root is not None and root.exists():
+        profile_file = root / PROFILE_NAME
+        if profile_file.is_file():
+            profile_file.unlink()
+        examples = root / "examples"
+        if examples.is_dir():
+            for path in examples.glob("*.json"):
+                path.unlink()
+    from .documents import list_documents
+    for document in list_documents(project):
+        for entry in list(document.finals):
+            learn_from_final(document, entry, project)
 
 
 def recent_examples(project=None, limit: int = 3) -> list[dict]:
@@ -642,8 +791,40 @@ def learned_lines(profile: dict | None = None, project=None) -> list[str]:
     layers = profile.get("layer_map") or {}
     for key in sorted(layers)[:8]:
         row = layers[key]
-        lines.append(f"שכבה {row.get('source', key)} ← {row.get('name', key)}: "
-                     f"צבע {row.get('color', '')}, עובי {row.get('lineweight', '')}")
+        if not row.get("confident"):
+            continue
+        lines.append(
+            f"שכבה {row.get('source', key)} ← {row.get('name', key)}: "
+            f"צבע {row.get('color', '')}, עובי {row.get('lineweight', '')}, "
+            f"ביטחון {row.get('matched', 0)}/{row.get('total', 0)}"
+        )
+    for item in profile.get("observations") or []:
+        if item.get("comparable"):
+            continue
+        lines.extend(_observation_lines(item))
+    return lines
+
+
+def _observation_lines(item: dict) -> list[str]:
+    """Facts from a final that must not be applied. Shown as a record, not as a style."""
+    lines = [f"תצפית בלבד: {item.get('units') or ''} {item.get('reason') or ''}".strip()]
+    if item.get("ltscale") not in (None, ""):
+        lines.append(f"תצפית LTSCALE: {item['ltscale']}")
+    bits = []
+    for key in sorted(item.get("layers") or {})[:8]:
+        row = item["layers"][key]
+        bits.append(f"{row.get('name') or key} צבע {row.get('color')} עובי {row.get('lineweight')}")
+    if bits:
+        lines.append("תצפית שכבות: " + "; ".join(bits))
+    if item.get("dimstyles"):
+        lines.append("תצפית מידות: " + ", ".join(item["dimstyles"]))
+    if item.get("font"):
+        lines.append(f"תצפית גופן: {Path(str(item['font'])).name}")
+    if item.get("language"):
+        lines.append(f"תצפית שפה: {item['language']}")
+    lines.append("תצפית מסגרת: " + ("כן" if item.get("title_block") else "לא"))
+    if item.get("plot_style"):
+        lines.append(f"תצפית הדפסה: {item['plot_style']}")
     return lines
 
 
@@ -655,6 +836,8 @@ def house_style_text(profile: dict | None = None, examples: list[dict] | None = 
     examples = recent_examples(project, 3) if examples is None else examples[:3]
     lines = ["## How Rotem finishes drawings", ""]
     lines.append("Change style only. Do not drop elements and do not move geometry.")
+    if any(not item.get("comparable") for item in (profile.get("observations") or [])):
+        lines.append("A final marked observation only is a record of that file. Do not copy its units, scale or layers.")
     for line in learned_lines(profile):
         lines.append(f"- {line}")
     if examples:
@@ -756,7 +939,9 @@ def apply_profile(doc, profile: dict | None = None, *, project=None, spec_units:
         if float(doc.header.get("$LTSCALE", 1) or 1) != new_scale:
             doc.header["$LTSCALE"] = new_scale
             changed = True
-    kept = _mappings_that_do_not_collapse(doc, profile.get("layer_map") or {})
+    kept = _mappings_that_do_not_collapse(doc, {
+        key: info for key, info in (profile.get("layer_map") or {}).items() if info.get("confident")
+    })
     for key, info in kept.items():
         target_name = str(info.get("name") or "")
         source_name = str(info.get("source") or key)

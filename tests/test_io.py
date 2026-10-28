@@ -268,6 +268,7 @@ def _no_host_converters(monkeypatch):
     monkeypatch.delenv("AUTOCAD_CORECONSOLE", raising=False)
     monkeypatch.setattr(oda.shutil, "which", lambda name: None)
     monkeypatch.setattr(oda.glob, "glob", lambda pattern: [])
+    monkeypatch.setattr(oda, "EXPLICIT_CONVERTERS", ())
 
 
 def test_find_converter_none(monkeypatch):
