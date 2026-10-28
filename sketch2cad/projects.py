@@ -44,6 +44,7 @@ class Project:
     default_titleblock: str = "a3_simple"
     disciplines: dict = field(default_factory=lambda: dict(DEFAULT_DISCIPLINES))
     qa: dict = field(default_factory=dict)       # drawing-QA overrides; empty = built-in defaults
+    apply_house_style: bool | None = None       # None follows Settings; True or False is this project only
     created: str = field(default_factory=lambda: date.today().isoformat())
 
     # ------------------------------------------------------------------ paths

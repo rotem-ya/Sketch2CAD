@@ -16,9 +16,9 @@ from sketch2cad.finals import lock_path, newest_dwg, register_final
 from sketch2cad.io import oda
 from sketch2cad.learning import (
     apply_profile, forget_final, house_style_text, layer_map_from, learned_lines, load_profile,
-    normalize_layer, _matched_pairs,
+    normalize_layer, style_enabled, _matched_pairs,
 )
-from sketch2cad.projects import create_project
+from sketch2cad.projects import Project, create_project
 
 
 @pytest.fixture
@@ -240,29 +240,99 @@ def test_applying_the_profile_keeps_counts_and_coordinates(tmp_path, home):
     assert apply_profile(doc, {"final_count": 0}) is False
 
 
-def test_agent_package_includes_the_house_style(tmp_path, home):
+def _write_profile(project, profile: dict) -> None:
+    folder = project.path / "learning"
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "style_profile.json").write_text(json.dumps(profile), encoding="utf-8")
+
+
+def test_agent_package_rules_follow_the_project_style_switch(tmp_path, home):
+    """Rules only while style is on. An observation never carries a mismatched scale or a weak map."""
     project, doc = _project(tmp_path)
     profile = {
-        "final_count": 1,
+        "final_count": 2,
         "scope": "project",
         "ltscale": {"value": "1000"},
-        "units": {"value": "m"},
-        "language": {"value": "en"},
-        "layer_map": {},
+        "ltscale_by_scale": {"250|model": {"value": "250"}},
+        "dims_by_scale": {"250|model": {"name": "ROTEM-250", "vars": {"dimtxt": 2.5}}},
+        "layer_map": {
+            "new": {"source": "NEW", "name": "SITE", "color": 3, "lineweight": 30,
+                    "confident": True, "matched": 6, "total": 6},
+            "text": {"source": "TEXT", "name": "NOTES", "color": 7, "lineweight": 18,
+                     "confident": False, "matched": 1, "total": 149},
+        },
+        "observations": [{
+            "units": "m", "ltscale": 1000.0, "reason": "units differ", "comparable": False,
+            "layers": {"SITE-PIPE": {"name": "SITE-PIPE", "color": 3, "lineweight": 30}},
+            "dimstyles": ["ROTEM-100"], "font": "arial.ttf", "language": "en",
+            "title_block": False, "plot_style": "Screening 100%.ctb",
+        }],
     }
-    folder = project.path / "learning"
-    folder.mkdir()
-    (folder / "style_profile.json").write_text(json.dumps(profile), encoding="utf-8")
+    _write_profile(project, profile)
     example = {"code": doc.code, "rev": "A", "summary": {"layers_added": ["$$$-DP400"], "layers_removed": ["FRAME"],
                                                         "texts_added": ["MANHOLE"], "title_block_after": False}}
-    (folder / "examples").mkdir()
-    (folder / "examples" / f"{doc.code}_1.json").write_text(json.dumps(example), encoding="utf-8")
-    out = export_package(doc.path, tmp_path / "package")
-    text = (out / "AGENT.md").read_text(encoding="utf-8")
-    assert "How Rotem finishes drawings" in text
-    assert "$$$-DP400" in text
-    assert "Change only what the request and the markings ask for." in text
-    assert "1000" in house_style_text(profile, [example])
+    examples = project.path / "learning" / "examples"
+    examples.mkdir()
+    (examples / f"{doc.code}_1.json").write_text(json.dumps(example), encoding="utf-8")
+
+    on = (export_package(doc.path, tmp_path / "on") / "AGENT.md").read_text(encoding="utf-8")
+    assert "How Rotem finishes drawings" in on
+    assert "Layer NEW -> SITE" in on
+    assert "LTSCALE at 250|model: 250" in on
+    assert "Dimension style at 250|model: ROTEM-250" in on
+    assert "$$$-DP400" in on
+    assert "Change only what the request and the markings ask for." in on
+    assert "Observed in Rotem's finals (for context; do not mechanically restyle)" in on
+    assert "SITE-PIPE" in on
+    assert "NOTES" not in on
+    assert "1000" not in on
+    assert "ROTEM-100" not in on
+
+    project.apply_house_style = False
+    project.save()
+    off = (export_package(doc.path, tmp_path / "off") / "AGENT.md").read_text(encoding="utf-8")
+    assert "How Rotem finishes drawings" not in off
+    assert "NEW -> SITE" not in off
+    assert "LTSCALE" not in off
+    assert "ROTEM-250" not in off
+    assert "$$$-DP400" not in off
+    assert "NOTES" not in off
+    assert "1000" not in off
+    assert "ROTEM-100" not in off
+    assert "Observed in Rotem's finals (for context; do not mechanically restyle)" in off
+    assert "SITE-PIPE" in off
+    assert "Change only what the request and the markings ask for." in off
+
+
+def test_project_style_override_leaves_other_projects_alone(tmp_path, home):
+    one, _doc = _project(tmp_path)
+    two = create_project(tmp_path / "jobs", "20118", "אחר", "Other")
+    for project in (one, two):
+        _write_profile(project, {"final_count": 1, "scope": "project"})
+    assert one.apply_house_style is None
+    assert style_enabled(one) is True
+    assert style_enabled(two) is True
+    one.apply_house_style = False
+    one.save()
+    saved = Project.load(one.path)
+    assert saved.apply_house_style is False
+    assert style_enabled(saved) is False
+    assert style_enabled(Project.load(two.path)) is True
+    assert "כבוי בפרויקט זה" in "\n".join(learned_lines(project=saved))
+    assert "לפי ההגדרה הכללית" in "\n".join(learned_lines(project=two))
+    settings = Settings.load()
+    settings.apply_house_style = False
+    settings.save()
+    assert style_enabled(Project.load(two.path)) is False
+    two.apply_house_style = True
+    two.save()
+    assert style_enabled(Project.load(two.path)) is True
+    assert style_enabled(Project.load(one.path)) is False
+    bare = json.loads((two.path / "project.json").read_text(encoding="utf-8"))
+    bare.pop("apply_house_style")
+    (two.path / "project.json").write_text(json.dumps(bare), encoding="utf-8")
+    assert Project.load(two.path).apply_house_style is None
+    assert style_enabled(Project.load(two.path)) is False
 
 
 def _mask(text: str) -> str:
@@ -632,8 +702,11 @@ def test_metres_redraw_is_observation_only_and_changes_nothing(tmp_path, home):
     assert "תצפית מידות" in panel and "ROTEM-100" in panel
     assert "100|model" not in panel
     package = house_style_text(profile, project=project)
-    assert "observation only" in package
+    assert "Observed in Rotem's finals (for context; do not mechanically restyle)" in package
     assert "SITE-PIPE" in package
+    assert "1000" not in package
+    assert "ROTEM-100" not in package
+    assert "How Rotem finishes drawings" not in package
     before = tmp_path / "before.dxf"
     after = tmp_path / "after.dxf"
     ezdxf.readfile(app).saveas(before)

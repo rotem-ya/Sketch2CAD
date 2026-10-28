@@ -80,17 +80,41 @@ def load_profile(project=None, *, settings: Settings | None = None) -> dict:
     return data
 
 
-def style_enabled(project=None, settings: Settings | None = None, profile: dict | None = None) -> bool:
-    """On for a project that has finals, unless the setting is explicitly off.
+def project_style_override(project) -> bool | None:
+    """This project's own switch. None means it follows the global setting."""
+    if project is None:
+        return None
+    value = getattr(project, "apply_house_style", None)
+    if value is None:
+        return None
+    return bool(value)
 
-    Another project's finals do not turn it on. A global profile is used only when that
-    opt-in is set.
+
+def style_enabled(project=None, settings: Settings | None = None, profile: dict | None = None) -> bool:
+    """On for a project that has finals, unless this project or the global setting says off.
+
+    A project's own value wins. None on the project follows the global setting, and only an
+    explicit False there turns the style off. Another project's finals do not turn it on.
+    A global profile is used only when that opt-in is set.
     """
     settings = settings or Settings.load()
-    if settings.apply_house_style is False:
+    override = project_style_override(project)
+    if override is False or (override is None and settings.apply_house_style is False):
         return False
     profile = load_profile(project, settings=settings) if profile is None else profile
     return bool(profile.get("final_count"))
+
+
+def _style_switch_line(project, settings: Settings | None = None) -> str:
+    """One panel line: follow the global setting, or on or off for this project."""
+    override = project_style_override(project)
+    if override is True:
+        return "החלת סגנון: פעיל בפרויקט זה"
+    if override is False:
+        return "החלת סגנון: כבוי בפרויקט זה"
+    settings = settings or Settings.load()
+    state = "כבוי" if settings.apply_house_style is False else "פעיל"
+    return f"החלת סגנון: לפי ההגדרה הכללית ({state})"
 
 
 def _text_of(entity) -> str:
@@ -766,6 +790,8 @@ def learned_lines(profile: dict | None = None, project=None) -> list[str]:
         return []
     scope = "כל הפרויקטים" if profile.get("scope") == "global" else "הפרויקט"
     lines = [f"היקף: {scope}", f"גרסאות סופיות: {profile['final_count']}"]
+    if project is not None:
+        lines.append(_style_switch_line(project))
     for key, label in (("units", "יחידות"), ("language", "שפת הטקסט"),
                        ("plot_style", "סגנון הדפסה"), ("paper", "גודל גיליון")):
         value = (profile.get(key) or {}).get("value")
@@ -828,31 +854,92 @@ def _observation_lines(item: dict) -> list[str]:
     return lines
 
 
-def house_style_text(profile: dict | None = None, examples: list[dict] | None = None, project=None) -> str:
-    """A short section for the agent package. Empty when nothing has been learned."""
-    profile = load_profile(project) if profile is None else profile
-    if not profile.get("final_count"):
-        return ""
-    examples = recent_examples(project, 3) if examples is None else examples[:3]
-    lines = ["## How Rotem finishes drawings", ""]
-    lines.append("Change style only. Do not drop elements and do not move geometry.")
-    if any(not item.get("comparable") for item in (profile.get("observations") or [])):
-        lines.append("A final marked observation only is a record of that file. Do not copy its units, scale or layers.")
-    for line in learned_lines(profile):
-        lines.append(f"- {line}")
-    if examples:
-        lines.append("")
-        lines.append("### Latest differences")
-        for example in examples:
-            summary = example.get("summary") or {}
-            lines.append(
-                f"- {example.get('code')} rev {example.get('rev')}: "
-                f"layers added {summary.get('layers_added') or []}; "
-                f"layers removed {summary.get('layers_removed') or []}; "
-                f"texts added {summary.get('texts_added') or []}; "
-                f"title block {summary.get('title_block_after')}"
+def _rule_lines(profile: dict) -> list[str]:
+    """Apply-able preferences only: a verified scale, and a layer map with real evidence."""
+    lines = []
+    for key in sorted(profile.get("ltscale_by_scale") or {}):
+        value = (profile["ltscale_by_scale"][key] or {}).get("value")
+        if value not in (None, ""):
+            lines.append(f"LTSCALE at {key}: {value}")
+    for key in sorted(profile.get("dims_by_scale") or {}):
+        name = (profile["dims_by_scale"][key] or {}).get("name") or ""
+        if name:
+            lines.append(f"Dimension style at {key}: {name}")
+    font = (profile.get("font") or {}).get("value")
+    if font:
+        lines.append(f"Font: {Path(str(font)).name}")
+    for key in sorted(profile.get("layer_map") or {}):
+        row = profile["layer_map"][key]
+        if not row.get("confident"):
+            continue
+        lines.append(
+            f"Layer {row.get('source', key)} -> {row.get('name', key)}: "
+            f"colour {row.get('color', '')}, lineweight {row.get('lineweight', '')}"
+        )
+    return lines
+
+
+def _agent_observation_lines(profile: dict) -> list[str]:
+    """Facts from a final that is not comparable. No layer map, and no LTSCALE or DIMVARs."""
+    lines = []
+    for item in profile.get("observations") or []:
+        if item.get("comparable"):
+            continue
+        bits = [str(item.get("units") or ""), str(item.get("reason") or "")]
+        lines.append("Final: " + " ".join(bit for bit in bits if bit))
+        layers = []
+        for key in sorted(item.get("layers") or {})[:8]:
+            row = item["layers"][key]
+            layers.append(
+                f"{row.get('name') or key} colour {row.get('color')} lineweight {row.get('lineweight')}"
             )
-    return "\n".join(lines) + "\n"
+        if layers:
+            lines.append("Layers in that file: " + "; ".join(layers))
+        if item.get("font"):
+            lines.append(f"Font file seen: {Path(str(item['font'])).name}")
+        if item.get("language"):
+            lines.append(f"Text language: {item['language']}")
+        lines.append("Title block: " + ("yes" if item.get("title_block") else "no"))
+        if item.get("plot_style"):
+            lines.append(f"Plot style: {item['plot_style']}")
+    return lines
+
+
+def house_style_text(profile: dict | None = None, examples: list[dict] | None = None, project=None,
+                     settings: Settings | None = None) -> str:
+    """Agent text. Rules only while style is on. Observations stay labelled and are not rules."""
+    profile = load_profile(project, settings=settings) if profile is None else profile
+    if not profile.get("final_count") and not profile.get("observations"):
+        return ""
+    chunks = []
+    if style_enabled(project, settings, profile):
+        rules = _rule_lines(profile)
+        if rules:
+            lines = ["## How Rotem finishes drawings", "",
+                     "Change style only. Do not drop elements and do not move geometry."]
+            lines.extend(f"- {line}" for line in rules)
+            found = recent_examples(project, 3) if examples is None else examples[:3]
+            if found:
+                lines.append("")
+                lines.append("### Latest differences")
+                for example in found:
+                    summary = example.get("summary") or {}
+                    lines.append(
+                        f"- {example.get('code')} rev {example.get('rev')}: "
+                        f"layers added {summary.get('layers_added') or []}; "
+                        f"layers removed {summary.get('layers_removed') or []}; "
+                        f"texts added {summary.get('texts_added') or []}; "
+                        f"title block {summary.get('title_block_after')}"
+                    )
+            chunks.append("\n".join(lines))
+    observed = _agent_observation_lines(profile)
+    if observed:
+        lines = ["## Observed in Rotem's finals (for context; do not mechanically restyle)", ""]
+        lines.extend(f"- {line}" for line in observed)
+        chunks.append("\n".join(lines))
+    if not chunks:
+        return ""
+    return "\n\n".join(chunks) + "\n"
 
 
 _SIZE_DIMVARS = ("dimtxt", "dimasz", "dimexe", "dimexo", "dimgap", "dimscale")
