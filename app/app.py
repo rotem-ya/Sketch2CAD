@@ -5,6 +5,7 @@ from __future__ import annotations
 import html
 import json
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -235,12 +236,25 @@ def _finals_badge(d: Document) -> str:
     return f"  \n{label}"
 
 
+def _named_rev(filename: str) -> str:
+    """The revision letter in ``NAME_RevB.dwg``, or empty when the name has none."""
+    match = re.search(r"_Rev([A-Za-z0-9]+)(?=\.[^.]+$)", Path(filename).name)
+    return match.group(1).upper() if match else ""
+
+
 def current_outputs_strip(d: Document) -> None:
     """Current revision, its preview, and the files to download, above the tabs."""
     st.markdown('<div id="current-rev"></div>', unsafe_allow_html=True)
     note = d.revision_note()
     title = T("current_rev").format(rev=d.rev)
     st.markdown(f"**{html.escape(title)}**" + (f" — {html.escape(note)}" if note else ""))
+    file_rev = ""
+    for kind in ("dwg", "pdf", "dxf", "preview"):
+        file_rev = _named_rev(d.outputs.get(kind) or "")
+        if file_rev:
+            break
+    if file_rev and file_rev != str(d.rev).strip().upper():
+        st.caption(T("outputs_other_rev").format(old=file_rev, new=d.rev))
     preview = d.path / d.outputs.get("preview", "")
     dwg_rel = d.outputs.get("dwg") or ""
     pdf_rel = d.outputs.get("pdf") or ""
@@ -256,16 +270,17 @@ def current_outputs_strip(d: Document) -> None:
         buttons = body.columns(len(slots))
         for slot, column in zip(slots, buttons):
             if slot == "dwg":
-                column.download_button(T("download_dwg"), dwg.read_bytes(), file_name=dwg.name,
-                                       key=f"cur_dwg_{d.code}")
+                column.download_button(f"{T('download')} DWG", dwg.read_bytes(), file_name=dwg.name,
+                                       key=f"cur_dwg_{dwg.name}")
             elif slot == "pdf":
-                column.download_button(T("download_pdf"), pdf.read_bytes(), file_name=pdf.name,
-                                       key=f"cur_pdf_{d.code}")
+                column.download_button(f"{T('download')} PDF", pdf.read_bytes(), file_name=pdf.name,
+                                       key=f"cur_pdf_{pdf.name}")
             else:
-                column.button(T("open_in_cad"), key=f"cur_open_{d.code}",
+                column.button(T("open_in_cad"), key=f"cur_open_{dwg.name}",
                               on_click=_open_drawing, args=(str(dwg),))
         if has_dwg:
-            body.text_input(T("dwg_path"), value=str(dwg.resolve()), disabled=True, key=f"cur_path_{d.code}")
+            body.caption(T("dwg_path"))
+            body.code(str(dwg.resolve()), language=None)
     else:
         body.caption(T("no_outputs"))
 

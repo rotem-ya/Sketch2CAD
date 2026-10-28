@@ -368,8 +368,8 @@ def test_current_revision_files_are_above_the_tabs_and_an_old_final_is_marked(tm
         {"rev": "A", "date": "2026-10-01", "note": "נוצר"},
         {"rev": "B", "date": "2026-10-20", "note": "אחרי הערות המזמין"},
     ]
-    doc.outputs = {"dwg": "sheet.dwg", "pdf": "sheet.pdf", "preview": "preview.png"}
-    (doc.path / "sheet.dwg").write_bytes(b"dwg")
+    doc.outputs = {"dwg": f"{doc.code}_RevA.dwg", "pdf": "sheet.pdf", "preview": "preview.png"}
+    (doc.path / doc.outputs["dwg"]).write_bytes(b"rev-a")
     (doc.path / "sheet.pdf").write_bytes(b"pdf")
     from PIL import Image
     Image.new("RGB", (8, 8), (180, 180, 180)).save(doc.path / "preview.png")
@@ -383,14 +383,26 @@ def test_current_revision_files_are_above_the_tabs_and_an_old_final_is_marked(tm
     at.session_state["doc_folder"] = doc.folder
     at.run()
     assert not at.exception, at.exception
-    text = "\n".join(m.value for m in at.markdown)
+    text = "\n".join(m.value for m in list(at.markdown) + list(at.caption))
     assert "הגרסה הנוכחית: Rev B" in text
     assert "אחרי הערות המזמין" in text
-    assert any(b.label == t("download_dwg", "he") for b in at.download_button)
-    assert any(b.label == t("download_pdf", "he") for b in at.download_button)
+    assert any(b.label == f"{t('download', 'he')} DWG" for b in at.download_button)
+    assert any(b.label == f"{t('download', 'he')} PDF" for b in at.download_button)
     assert any(b.label == t("open_in_cad", "he") for b in at.button)
-    path_box = next(w for w in at.text_input if w.key == f"cur_path_{doc.code}")
-    assert str(path_box.value).endswith("sheet.dwg")
+    assert any(str(block.value).endswith(f"{doc.code}_RevA.dwg") for block in at.code)
+    assert "הקבצים של Rev A – עדיין לא הופקו קבצים ל-Rev B" in text
+
+    from sketch2cad.documents import Document
+    saved = Document.load(doc.folder)
+    saved.outputs["dwg"] = f"{doc.code}_RevB.dwg"
+    (saved.path / saved.outputs["dwg"]).write_bytes(b"rev-b")
+    saved.save()
+    at.run()
+    assert not at.exception, at.exception
+    assert any(str(block.value).endswith(f"{doc.code}_RevB.dwg") for block in at.code)
+    assert not any(str(block.value).endswith(f"{doc.code}_RevA.dwg") for block in at.code)
+    refreshed = "\n".join(m.value for m in at.markdown) + "\n".join(c.value for c in at.caption)
+    assert "עדיין לא הופקו קבצים ל-Rev B" not in refreshed
     assert any("זו הגרסה הסופית של Rev A. הגרסה הנוכחית היא Rev B" in w.value for w in at.warning)
     assert t("current_files_link", "he") in text
 
