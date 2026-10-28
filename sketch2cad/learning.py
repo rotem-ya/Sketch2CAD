@@ -58,6 +58,11 @@ def normalize_layer(name: str) -> str:
     return NIQQUD.sub("", name or "").strip()
 
 
+def _layer_key(name: str) -> str:
+    """Identity of a DXF layer: vowel marks ignored, and names are case-insensitive."""
+    return normalize_layer(name).casefold()
+
+
 def load_profile(project=None, *, settings: Settings | None = None) -> dict:
     """The profile for this project, or an empty one. Does not create `learning/`."""
     path = profile_path(project, settings=settings, create=False)
@@ -304,7 +309,7 @@ def layer_map_from(app_doc, final_doc) -> dict:
         if not source.dxf.hasattr("layer") or not final.dxf.hasattr("layer"):
             continue
         source_name = str(source.dxf.layer)
-        key = normalize_layer(source_name)
+        key = _layer_key(source_name)
         try:
             layer = final_doc.layers.get(str(final.dxf.layer))
         except Exception:  # noqa: BLE001
@@ -319,7 +324,7 @@ def layer_map_from(app_doc, final_doc) -> dict:
                        "lineweight": int(weight), "count": int(sum(counter.values()))}
     by_target: dict[str, list[str]] = {}
     for key, info in mapped.items():
-        by_target.setdefault(normalize_layer(info["name"]), []).append(key)
+        by_target.setdefault(_layer_key(info["name"]), []).append(key)
     for keys in by_target.values():
         if len(keys) > 1:
             for key in keys:
@@ -458,7 +463,7 @@ def _merge(profile: dict, seen: dict, weight: int) -> dict:
         row["source"] = info.get("source") or row.get("source") or key
     by_target: dict[str, list[str]] = {}
     for key, info in list(mapped.items()):
-        by_target.setdefault(normalize_layer(str(info.get("name") or "")), []).append(key)
+        by_target.setdefault(_layer_key(str(info.get("name") or "")), []).append(key)
     for keys in by_target.values():
         if len(keys) > 1:
             for key in keys:
@@ -692,38 +697,44 @@ def _mappings_that_do_not_collapse(doc, layer_map: dict) -> dict:
 
     A swap is kept: both layers are renamed away, so neither is a place the other set falls into.
     """
-    present = {normalize_layer(layer.dxf.name) for layer in doc.layers}
-    renamed_away = set()
+    indexed = {}
     for key, info in layer_map.items():
-        if normalize_layer(str(info.get("name") or "")) != key:
+        indexed[_layer_key(key)] = info
+        indexed[_layer_key(str(info.get("source") or key))] = info
+    present = {_layer_key(layer.dxf.name) for layer in doc.layers}
+    renamed_away = set()
+    for key, info in indexed.items():
+        if _layer_key(str(info.get("name") or "")) != key:
             renamed_away.add(key)
     kept = {}
-    for key, info in layer_map.items():
-        target = normalize_layer(str(info.get("name") or ""))
+    for key, info in indexed.items():
+        target = _layer_key(str(info.get("name") or ""))
         if target and target != key and target in present and target not in renamed_away:
             continue
         kept[key] = info
     return kept
 
 
-def _purge_emptied_app_layers(doc, renamed_away: set[str]) -> None:
-    """Remove an app-created source layer only after every entity has left it."""
-    if not renamed_away:
+def _layered_entities(doc):
+    """Every entity that names a layer: layouts and block definitions, including *D blocks."""
+    for entity in doc.entitydb.values():
+        if not getattr(entity, "is_alive", True):
+            continue
+        if entity.dxf.hasattr("layer"):
+            yield entity
+
+
+def _retitle_layer(doc, layer, new_name: str) -> None:
+    """Change only the spelling of a layer. DXF treats the old and new names as the same layer."""
+    old = layer.dxf.name
+    if old == new_name:
         return
-    from .drawing.context import LAYERS
-    app_names = {name for name, *_rest in LAYERS}
-    used = set()
-    for layout in doc.layouts:
-        for entity in layout:
-            if entity.dxf.hasattr("layer"):
-                used.add(normalize_layer(entity.dxf.layer))
-    for layer in list(doc.layers):
-        key = normalize_layer(layer.dxf.name)
-        if key in renamed_away and key not in used and layer.dxf.name in app_names:
-            try:
-                doc.layers.remove(layer.dxf.name)
-            except Exception:  # noqa: BLE001
-                continue
+    layer.dxf.name = new_name
+    doc.layers.replace(old, layer)
+    key = doc.layers.key(new_name)
+    for entity in _layered_entities(doc):
+        if doc.layers.key(entity.dxf.layer) == key:
+            entity.dxf.layer = new_name
 
 
 def apply_profile(doc, profile: dict | None = None, *, project=None, spec_units: str | None = None,
@@ -746,58 +757,71 @@ def apply_profile(doc, profile: dict | None = None, *, project=None, spec_units:
             doc.header["$LTSCALE"] = new_scale
             changed = True
     kept = _mappings_that_do_not_collapse(doc, profile.get("layer_map") or {})
-    planned = []
-    for layout in doc.layouts:
-        for entity in layout:
-            if not entity.dxf.hasattr("layer"):
-                continue
-            source_key = normalize_layer(entity.dxf.layer)
-            info = kept.get(source_key)
-            if not info:
-                continue
-            target_name = str(info.get("name") or "")
-            if not target_name:
-                continue
-            planned.append((entity, source_key, str(entity.dxf.layer), target_name, info))
-    for entity, source_key, source_name, target_name, info in planned:
-        try:
-            source_layer = doc.layers.get(source_name)
-        except Exception:  # noqa: BLE001
-            continue
-        same_name = normalize_layer(target_name) == source_key
-        if target_name not in doc.layers:
-            doc.layers.add(target_name, color=abs(int(info.get("color") or 7)),
-                           lineweight=int(info.get("lineweight") or -1),
-                           linetype=str(source_layer.dxf.linetype or "CONTINUOUS"))
-            changed = True
-            if _layer_is_off(source_layer):
-                doc.layers.get(target_name).off()
-        if not same_name:
-            entity_lt = str(entity.dxf.linetype) if entity.dxf.hasattr("linetype") else "BYLAYER"
-            target_layer = doc.layers.get(target_name)
-            source_lt = str(source_layer.dxf.linetype or "CONTINUOUS")
-            if entity_lt in {"", "BYLAYER"} and str(target_layer.dxf.linetype or "CONTINUOUS") != source_lt:
-                entity.dxf.linetype = source_lt
-            entity.dxf.layer = target_name
-            changed = True
-    for source_key, info in kept.items():
+    for key, info in kept.items():
         target_name = str(info.get("name") or "")
-        source_name = str(info.get("source") or source_key)
-        if target_name not in doc.layers:
+        source_name = str(info.get("source") or key)
+        if not target_name or _layer_key(target_name) != key:
+            continue
+        try:
+            layer = doc.layers.get(source_name)
+        except Exception:  # noqa: BLE001
+            continue
+        if layer.dxf.name != target_name:
+            _retitle_layer(doc, layer, target_name)
+            changed = True
+        if _absolute_color(layer) != abs(int(info.get("color") or 0)):
+            _set_layer_color(layer, abs(int(info["color"])))
+            changed = True
+        if int(layer.dxf.lineweight or 0) != int(info.get("lineweight") or 0):
+            layer.dxf.lineweight = int(info["lineweight"])
+            changed = True
+    real = {key: info for key, info in kept.items() if _layer_key(str(info.get("name") or "")) != key}
+    planned = []
+    for entity in _layered_entities(doc):
+        key = _layer_key(entity.dxf.layer)
+        info = real.get(key)
+        if not info:
+            continue
+        target_name = str(info.get("name") or "")
+        if not target_name:
+            continue
+        planned.append((entity, key, str(entity.dxf.layer), target_name, info))
+    for _entity, _key, source_name, target_name, info in planned:
+        if target_name in doc.layers:
             continue
         try:
             source_layer = doc.layers.get(source_name)
         except Exception:  # noqa: BLE001
-            source_layer = None
+            continue
+        doc.layers.add(target_name, color=abs(int(info.get("color") or 7)),
+                       lineweight=int(info.get("lineweight") or -1),
+                       linetype=str(source_layer.dxf.linetype or "CONTINUOUS"))
+        changed = True
+        if _layer_is_off(source_layer):
+            doc.layers.get(target_name).off()
+    for entity, key, source_name, target_name, info in planned:
+        try:
+            source_layer = doc.layers.get(source_name)
+        except Exception:  # noqa: BLE001
+            continue
+        entity_lt = str(entity.dxf.linetype) if entity.dxf.hasattr("linetype") else "BYLAYER"
+        target_layer = doc.layers.get(target_name)
+        source_lt = str(source_layer.dxf.linetype or "CONTINUOUS")
+        if entity_lt in {"", "BYLAYER"} and str(target_layer.dxf.linetype or "CONTINUOUS") != source_lt:
+            entity.dxf.linetype = source_lt
+        entity.dxf.layer = target_name
+        changed = True
+    for key, info in real.items():
+        target_name = str(info.get("name") or "")
+        if target_name not in doc.layers:
+            continue
         target = doc.layers.get(target_name)
-        if source_layer is not None and _absolute_color(target) != abs(int(info.get("color") or 0)):
+        if _absolute_color(target) != abs(int(info.get("color") or 0)):
             _set_layer_color(target, abs(int(info["color"])))
             changed = True
         if int(target.dxf.lineweight or 0) != int(info.get("lineweight") or 0):
             target.dxf.lineweight = int(info["lineweight"])
             changed = True
-    _purge_emptied_app_layers(doc, {key for key, info in kept.items()
-                                    if normalize_layer(str(info.get("name") or "")) != key})
     if scale_key:
         node = (profile.get("dims_by_scale") or {}).get(scale_key) or {}
         variables = node.get("vars") or {}

@@ -163,9 +163,10 @@ def test_profile_from_two_synthetic_finals_prefers_the_newer_one(tmp_path, home)
     assert profile["language"]["value"] == "en"
     assert profile["plot_style"]["value"] == "Screening 100%.ctb"
     assert normalize_layer(vowel) == "$$$-TD"
-    assert profile["layer_map"]["NEW"]["name"] == vowel
-    assert profile["layer_map"]["NEW"]["color"] == 150
-    assert "EXISTING" not in profile["layer_map"] or profile["layer_map"]["EXISTING"]["name"] != vowel
+    assert profile["layer_map"]["new"]["name"] == vowel
+    assert profile["layer_map"]["new"]["color"] == 150
+    existing = profile["layer_map"].get("existing")
+    assert existing is None or existing["name"] != vowel
     assert "ROTEM-250" in profile["dimstyle"]["counts"]
     assert "ROTEM-100" in profile["dimstyle"]["counts"]
     assert "dimlfac" not in (profile["dimstyle"].get("vars") or {})
@@ -409,6 +410,102 @@ def test_dimstyle_is_the_one_dimensions_use(tmp_path, home):
     profile = load_profile(project)
     assert profile["dimstyle"]["value"] == "SKETCH2CAD"
     assert "SKETCH2CAD_50" not in profile["dimstyle"]["counts"]
+
+
+def _referenced_layers(doc) -> set[str]:
+    names = set()
+    for entity in doc.entitydb.values():
+        if getattr(entity, "is_alive", True) and entity.dxf.hasattr("layer"):
+            names.add(str(entity.dxf.layer))
+    return names
+
+
+def _assert_referenced_layers_exist(doc) -> None:
+    table = {doc.layers.key(layer.dxf.name) for layer in doc.layers}
+    missing = [name for name in _referenced_layers(doc) if doc.layers.key(name) not in table]
+    assert missing == []
+
+
+def test_dimension_blocks_follow_a_dim_layer_rename():
+    doc = ezdxf.new("R2018", setup=True)
+    doc.layers.add("DIM", color=7, lineweight=18)
+    dim = doc.modelspace().add_linear_dim(
+        base=(0, 5), p1=(0, 0), p2=(10, 0), dimstyle="EZDXF", dxfattribs={"layer": "DIM"})
+    dim.render()
+    before = len(list(doc.layers))
+    profile = {
+        "final_count": 1,
+        "layer_map": {"DIM": {"source": "DIM", "name": "$$$-DIM", "color": 30, "lineweight": 35}},
+    }
+    apply_profile(doc, profile)
+    assert dim.dimension.dxf.layer == "$$$-DIM"
+    block_layers = {entity.dxf.layer for block in doc.blocks for entity in block
+                    if entity.dxf.hasattr("layer") and doc.layers.key(entity.dxf.layer) not in {"0", "defpoints"}}
+    assert "$$$-DIM" in block_layers
+    assert "DIM" not in {doc.layers.key(name) for name in block_layers}
+    _assert_referenced_layers_exist(doc)
+    assert len(list(doc.layers)) >= before
+
+
+def test_case_only_layer_rename_keeps_the_layer():
+    doc = ezdxf.new("R2018", setup=True)
+    doc.layers.add("TEXT", color=7, lineweight=18)
+    text = doc.modelspace().add_text("Hello", dxfattribs={"layer": "TEXT", "height": 2.5, "insert": (0, 0)})
+    before = {layer.dxf.handle for layer in doc.layers}
+    profile = {
+        "final_count": 1,
+        "layer_map": {"TEXT": {"source": "TEXT", "name": "Text", "color": 150, "lineweight": 25}},
+    }
+    apply_profile(doc, profile)
+    layer = doc.layers.get("Text")
+    assert layer.dxf.name == "Text"
+    assert layer.dxf.color == 150
+    assert layer.dxf.handle in before
+    assert text.dxf.layer == "Text"
+    assert len(list(doc.layers)) == len(before)
+    _assert_referenced_layers_exist(doc)
+
+
+def test_synthetic_finals_never_point_at_a_missing_layer(tmp_path, home):
+    """Every layer named by a layout or a block still exists after style is applied."""
+    project, doc = _project(tmp_path)
+    sheet = _dxf(doc.path / "sheet.dxf", units="mm", ltscale=2.5,
+                 layers=[("NEW", 1, 25, "CONTINUOUS"), ("DIM", 7, 18, "CONTINUOUS"),
+                         ("TEXT", 7, 18, "CONTINUOUS")],
+                 entities=[("LINE", "NEW", ((0, 0), (10, 0)))], texts=[("NOTE", 2.5)])
+    drawing = ezdxf.readfile(sheet)
+    drawing.modelspace().add_linear_dim(
+        base=(0, 5), p1=(0, 0), p2=(10, 0), dimstyle="EZDXF", dxfattribs={"layer": "DIM"}).render()
+    drawing.saveas(sheet)
+    doc.outputs = {"dxf": "sheet.dxf"}
+    doc.save()
+    finals = [
+        ("same.dxf", sheet.read_bytes(), {"NEW": "NEW", "DIM": "DIM", "TEXT": "TEXT"}),
+        ("dim.dxf", None, {"DIM": "$$$-DIM"}),
+        ("text.dxf", None, {"TEXT": "Text"}),
+        ("dash.dxf", None, {"NEW": "NEW_DASH"}),
+    ]
+    built = []
+    for name, data, mapping in finals:
+        if data is None:
+            edited = ezdxf.readfile(sheet)
+            for source, target in mapping.items():
+                if source == target:
+                    continue
+                if target not in edited.layers:
+                    edited.layers.add(target, color=150, lineweight=35)
+                for entity in list(edited.entitydb.values()):
+                    if entity.dxf.hasattr("layer") and edited.layers.key(entity.dxf.layer) == edited.layers.key(source):
+                        entity.dxf.layer = target
+            path = tmp_path / name
+            edited.saveas(path)
+            data = path.read_bytes()
+        register_final(doc, name=name, data=data, project=project)
+        applied = ezdxf.readfile(sheet)
+        apply_profile(applied, load_profile(project))
+        _assert_referenced_layers_exist(applied)
+        built.append(applied)
+    assert len(built) == 4
 
 
 def test_final_that_is_off_does_not_turn_a_layer_off(tmp_path, home):
