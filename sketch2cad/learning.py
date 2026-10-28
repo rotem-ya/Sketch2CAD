@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
@@ -19,6 +20,7 @@ NIQQUD = re.compile(r"[\u0591-\u05C7]")
 HEBREW = re.compile(r"[\u0590-\u05FF]")
 LATIN = re.compile(r"[A-Za-z]")
 PROFILE_NAME = "style_profile.json"
+PROFILE_VERSION = 2
 _INSUNITS = {4: "mm", 6: "m", 1: "in", 5: "cm"}
 _TITLE_LAYERS = {"FRAME", "TITLE", "TITLEBLOCK", "SHEET"}
 _DIMVARS = ("dimtxt", "dimasz", "dimexe", "dimexo", "dimgap", "dimscale", "dimlfac", "dimdec", "dimtxsty", "dimtad")
@@ -63,12 +65,13 @@ def _layer_key(name: str) -> str:
     return normalize_layer(name).casefold()
 
 
-def load_profile(project=None, *, settings: Settings | None = None) -> dict:
-    """The profile for this project, or an empty one. Does not create `learning/`."""
-    path = profile_path(project, settings=settings, create=False)
-    empty = {"final_count": 0, "scope": "global" if _use_global(settings) else "project"}
-    if path is None or not path.is_file():
-        return empty
+def _empty_profile(settings: Settings | None = None) -> dict:
+    return {"final_count": 0, "scope": "global" if _use_global(settings) else "project",
+            "profile_version": PROFILE_VERSION}
+
+
+def _read_profile(path: Path, settings: Settings | None = None) -> dict:
+    empty = _empty_profile(settings)
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
@@ -78,6 +81,33 @@ def load_profile(project=None, *, settings: Settings | None = None) -> dict:
     data.setdefault("final_count", 0)
     data.setdefault("scope", empty["scope"])
     return data
+
+
+def load_profile(project=None, *, settings: Settings | None = None, migrate: bool = True) -> dict:
+    """The profile for this project, or an empty one. Does not create `learning/` on a miss.
+
+    A file with no version, or an older one, is backed up and rebuilt from the stored finals
+    before it is used. Entries written by that rebuild carry an explicit confident or verified flag.
+    """
+    path = profile_path(project, settings=settings, create=False)
+    if path is None or not path.is_file():
+        return _empty_profile(settings)
+    data = _read_profile(path, settings)
+    if not migrate or data.get("profile_version") == PROFILE_VERSION:
+        return data
+    return _migrate_profile(path, project, settings)
+
+
+def _migrate_profile(path: Path, project, settings: Settings | None) -> dict:
+    """Replace one old profile. The previous file is kept beside it, and this runs once."""
+    backup = path.parent / f"{PROFILE_NAME}.bak"
+    if not backup.exists():
+        shutil.copy2(path, backup)
+    path.unlink()
+    rebuild_profile(project, settings=settings)
+    if not path.is_file():
+        return _empty_profile(settings)
+    return _read_profile(path, settings)
 
 
 def project_style_override(project) -> bool | None:
@@ -428,21 +458,26 @@ def layer_map_from(app_doc, final_doc) -> dict:
         sources[key] = source_name
     mapped = {}
     for key, counter in votes.items():
-        name, color, weight = counter.most_common(1)[0][0]
+        (name, color, weight), winner_count = counter.most_common(1)[0]
         matched = int(sum(counter.values()))
         total = int(source_totals.get(key, matched))
-        share = matched / total if total else 0
+        winner_count = int(winner_count)
+        winner_share = winner_count / matched if matched else 0
+        layer_share = matched / total if total else 0
+        # One target has to win, and it still needs five matches and most of the source layer.
+        confident = (winner_count >= MIN_MATCHES and winner_share > 0.5 and layer_share > 0.5)
         mapped[key] = {"source": sources[key], "name": name, "color": int(color),
-                       "lineweight": int(weight), "count": matched, "matched": matched,
-                       "total": total, "confident": matched >= MIN_MATCHES and share > 0.5}
+                       "lineweight": int(weight), "count": winner_count, "matched": winner_count,
+                       "total": total, "confident": confident}
+    kept = {key: info for key, info in mapped.items() if info.get("confident") is True}
     by_target: dict[str, list[str]] = {}
-    for key, info in mapped.items():
+    for key, info in kept.items():
         by_target.setdefault(_layer_key(info["name"]), []).append(key)
     for keys in by_target.values():
         if len(keys) > 1:
             for key in keys:
-                mapped.pop(key, None)
-    return mapped
+                kept.pop(key, None)
+    return kept
 
 
 def _font_in_use(doc) -> str:
@@ -581,7 +616,7 @@ def _merge(profile: dict, seen: dict, weight: int) -> dict:
         row["source"] = info.get("source") or row.get("source") or key
         row["matched"] = int(info.get("matched") or info.get("count") or 0)
         row["total"] = int(info.get("total") or row["matched"])
-        row["confident"] = bool(info.get("confident"))
+        row["confident"] = info.get("confident") is True
     by_target: dict[str, list[str]] = {}
     for key, info in list(mapped.items()):
         by_target.setdefault(_layer_key(str(info.get("name") or "")), []).append(key)
@@ -593,8 +628,10 @@ def _merge(profile: dict, seen: dict, weight: int) -> dict:
     if scale_key and seen.get("scale_verified") and seen.get("ltscale") is not None:
         table = profile.setdefault("ltscale_by_scale", {})
         _vote(table.setdefault(scale_key, {}), seen.get("ltscale"), weight)
+        table[scale_key]["verified"] = True
     if seen.get("font"):
         _vote(profile.setdefault("font", {}), seen.get("font"), weight)
+        profile["font"]["verified"] = True
     if seen.get("dimstyles") and scale_key and seen.get("scale_verified"):
         size_vars = ("dimtxt", "dimasz", "dimexe", "dimexo", "dimgap", "dimscale")
         node = profile.setdefault("dims_by_scale", {}).setdefault(scale_key, {"vars": {}, "counts": {}})
@@ -612,6 +649,7 @@ def _merge(profile: dict, seen: dict, weight: int) -> dict:
         chosen_vars = seen["dimstyles"].get(chosen) or {}
         node["name"] = chosen
         node["vars"] = {var: chosen_vars.get(var) for var in size_vars}
+        node["verified"] = True
     if seen.get("dimstyles"):
         node = profile.setdefault("dimstyle", {"value": "", "vars": {}, "counts": {}})
         node.setdefault("counts", {})
@@ -708,10 +746,17 @@ def learn_from_final(doc: Document, entry: dict, project=None) -> list[str]:
     final["sheet_scale"] = _sheet_scale(doc)
     final["sheet_kind"] = sheet_kind(spec)
     final["scale_verified"] = bool(verdict["comparable"] and final["sheet_scale"])
-    profile = load_profile(project)
+    stored_profile = profile_path(project, create=False)
+    if (stored_profile is not None and stored_profile.is_file()
+            and _read_profile(stored_profile).get("profile_version") != PROFILE_VERSION):
+        # The saved final is already on the document, so the rebuild counts it once.
+        load_profile(project, migrate=True)
+        return warnings
+    profile = load_profile(project, migrate=False)
     weight = int(profile.get("final_count", 0)) + 1
     profile = _merge(profile, final, weight)
     profile["scope"] = "global" if _use_global() else "project"
+    profile["profile_version"] = PROFILE_VERSION
     profile["updated"] = datetime.now().isoformat(timespec="seconds")
     path = profile_path(project, create=True)
     if path is None:
@@ -751,9 +796,33 @@ def forget_final(doc: Document, project, stored_rel: str) -> None:
     rebuild_profile(project)
 
 
-def rebuild_profile(project) -> None:
-    """Replace the profile with one learned again from the project's remaining finals."""
-    root = learning_root(project, create=False)
+def _projects_in_scope(project, settings: Settings):
+    """The projects whose finals feed this profile. A global profile sees every registered project."""
+    if not _use_global(settings):
+        return [project] if project is not None else []
+    from .projects import Project, is_project_folder
+    found = []
+    seen: set[str] = set()
+    folders: list[str] = []
+    if project is not None:
+        folders.append(str(project.path))
+    folders.extend(settings.projects or [])
+    for folder in folders:
+        try:
+            resolved = str(Path(folder).resolve())
+        except OSError:
+            continue
+        if resolved in seen or not is_project_folder(resolved):
+            continue
+        seen.add(resolved)
+        found.append(Project.load(resolved))
+    return found
+
+
+def rebuild_profile(project, settings: Settings | None = None) -> None:
+    """Replace the profile with one learned again from every final still in scope."""
+    settings = settings or Settings.load()
+    root = learning_root(project, settings=settings, create=False)
     if root is not None and root.exists():
         profile_file = root / PROFILE_NAME
         if profile_file.is_file():
@@ -763,9 +832,10 @@ def rebuild_profile(project) -> None:
             for path in examples.glob("*.json"):
                 path.unlink()
     from .documents import list_documents
-    for document in list_documents(project):
-        for entry in list(document.finals):
-            learn_from_final(document, entry, project)
+    for scoped in _projects_in_scope(project, settings):
+        for document in list_documents(scoped):
+            for entry in list(document.finals):
+                learn_from_final(document, entry, scoped)
 
 
 def recent_examples(project=None, limit: int = 3) -> list[dict]:
@@ -792,32 +862,39 @@ def learned_lines(profile: dict | None = None, project=None) -> list[str]:
     lines = [f"היקף: {scope}", f"גרסאות סופיות: {profile['final_count']}"]
     if project is not None:
         lines.append(_style_switch_line(project))
-    for key, label in (("units", "יחידות"), ("language", "שפת הטקסט"),
-                       ("plot_style", "סגנון הדפסה"), ("paper", "גודל גיליון")):
-        value = (profile.get(key) or {}).get("value")
-        if value not in (None, ""):
-            lines.append(f"{label}: {value}")
+    current = profile.get("profile_version") == PROFILE_VERSION
+    if current:
+        for key, label in (("units", "יחידות"), ("language", "שפת הטקסט"),
+                           ("plot_style", "סגנון הדפסה"), ("paper", "גודל גיליון")):
+            value = (profile.get(key) or {}).get("value")
+            if value not in (None, ""):
+                lines.append(f"{label}: {value}")
     for key in sorted(profile.get("ltscale_by_scale") or {}):
-        value = (profile["ltscale_by_scale"][key] or {}).get("value")
+        node = profile["ltscale_by_scale"][key] or {}
+        if node.get("verified") is not True:
+            continue
+        value = node.get("value")
         if value not in (None, ""):
             lines.append(f"LTSCALE {key}: {value}")
-    if not profile.get("ltscale_by_scale"):
+    if current and not profile.get("ltscale_by_scale"):
         value = (profile.get("ltscale") or {}).get("value")
         if value not in (None, ""):
             lines.append(f"LTSCALE: {value}")
-    dimstyle = (profile.get("dimstyle") or {}).get("value")
-    if dimstyle:
-        lines.append(f"סגנון מידות: {dimstyle}")
-    font = (profile.get("font") or {}).get("value")
-    if font:
-        lines.append(f"גופן: {Path(str(font)).name}")
-    title = profile.get("title_block") or {}
-    if "value" in title:
-        lines.append("מסגרת: " + ("כן" if title["value"] else "לא"))
+    if current:
+        dimstyle = (profile.get("dimstyle") or {}).get("value")
+        if dimstyle:
+            lines.append(f"סגנון מידות: {dimstyle}")
+    font_node = profile.get("font") or {}
+    if font_node.get("verified") is True and font_node.get("value"):
+        lines.append(f"גופן: {Path(str(font_node['value'])).name}")
+    if current:
+        title = profile.get("title_block") or {}
+        if "value" in title:
+            lines.append("מסגרת: " + ("כן" if title["value"] else "לא"))
     layers = profile.get("layer_map") or {}
     for key in sorted(layers)[:8]:
         row = layers[key]
-        if not row.get("confident"):
+        if row.get("confident") is not True:
             continue
         lines.append(
             f"שכבה {row.get('source', key)} ← {row.get('name', key)}: "
@@ -858,19 +935,25 @@ def _rule_lines(profile: dict) -> list[str]:
     """Apply-able preferences only: a verified scale, and a layer map with real evidence."""
     lines = []
     for key in sorted(profile.get("ltscale_by_scale") or {}):
-        value = (profile["ltscale_by_scale"][key] or {}).get("value")
+        node = profile["ltscale_by_scale"][key] or {}
+        if node.get("verified") is not True:
+            continue
+        value = node.get("value")
         if value not in (None, ""):
             lines.append(f"LTSCALE at {key}: {value}")
     for key in sorted(profile.get("dims_by_scale") or {}):
-        name = (profile["dims_by_scale"][key] or {}).get("name") or ""
+        node = profile["dims_by_scale"][key] or {}
+        if node.get("verified") is not True:
+            continue
+        name = node.get("name") or ""
         if name:
             lines.append(f"Dimension style at {key}: {name}")
-    font = (profile.get("font") or {}).get("value")
-    if font:
-        lines.append(f"Font: {Path(str(font)).name}")
+    font_node = profile.get("font") or {}
+    if font_node.get("verified") is True and font_node.get("value"):
+        lines.append(f"Font: {Path(str(font_node['value'])).name}")
     for key in sorted(profile.get("layer_map") or {}):
         row = profile["layer_map"][key]
-        if not row.get("confident"):
+        if row.get("confident") is not True:
             continue
         lines.append(
             f"Layer {row.get('source', key)} -> {row.get('name', key)}: "
@@ -911,30 +994,35 @@ def house_style_text(profile: dict | None = None, examples: list[dict] | None = 
     profile = load_profile(project, settings=settings) if profile is None else profile
     if not profile.get("final_count") and not profile.get("observations"):
         return ""
+    rules = _rule_lines(profile)
+    enabled = style_enabled(project, settings, profile)
     chunks = []
-    if style_enabled(project, settings, profile):
-        rules = _rule_lines(profile)
-        if rules:
-            lines = ["## How Rotem finishes drawings", "",
-                     "Change style only. Do not drop elements and do not move geometry."]
-            lines.extend(f"- {line}" for line in rules)
-            found = recent_examples(project, 3) if examples is None else examples[:3]
-            if found:
-                lines.append("")
-                lines.append("### Latest differences")
-                for example in found:
-                    summary = example.get("summary") or {}
-                    lines.append(
-                        f"- {example.get('code')} rev {example.get('rev')}: "
-                        f"layers added {summary.get('layers_added') or []}; "
-                        f"layers removed {summary.get('layers_removed') or []}; "
-                        f"texts added {summary.get('texts_added') or []}; "
-                        f"title block {summary.get('title_block_after')}"
-                    )
-            chunks.append("\n".join(lines))
+    if enabled and rules:
+        lines = ["## How Rotem finishes drawings", "",
+                 "Change style only. Do not drop elements and do not move geometry."]
+        lines.extend(f"- {line}" for line in rules)
+        found = recent_examples(project, 3) if examples is None else examples[:3]
+        if found:
+            lines.append("")
+            lines.append("### Latest differences")
+            for example in found:
+                summary = example.get("summary") or {}
+                lines.append(
+                    f"- {example.get('code')} rev {example.get('rev')}: "
+                    f"layers added {summary.get('layers_added') or []}; "
+                    f"layers removed {summary.get('layers_removed') or []}; "
+                    f"texts added {summary.get('texts_added') or []}; "
+                    f"title block {summary.get('title_block_after')}"
+                )
+        chunks.append("\n".join(lines))
     observed = _agent_observation_lines(profile)
-    if observed:
+    # Style off: a confident final is still context, under the same label, and it is not a rule.
+    context = [] if enabled else rules
+    if observed or context:
         lines = ["## Observed in Rotem's finals (for context; do not mechanically restyle)", ""]
+        if context:
+            lines.append("Comparable finals, recorded only as context:")
+            lines.extend(f"- {line}" for line in context)
         lines.extend(f"- {line}" for line in observed)
         chunks.append("\n".join(lines))
     if not chunks:
@@ -1021,13 +1109,13 @@ def apply_profile(doc, profile: dict | None = None, *, project=None, spec_units:
     changed = False
     scale_key = _scale_key(sheet_scale, sheet_kind)
     learned_scale = (profile.get("ltscale_by_scale") or {}).get(scale_key) or {}
-    if scale_key and learned_scale.get("value") not in (None, ""):
+    if scale_key and learned_scale.get("verified") is True and learned_scale.get("value") not in (None, ""):
         new_scale = float(learned_scale["value"])
         if float(doc.header.get("$LTSCALE", 1) or 1) != new_scale:
             doc.header["$LTSCALE"] = new_scale
             changed = True
     kept = _mappings_that_do_not_collapse(doc, {
-        key: info for key, info in (profile.get("layer_map") or {}).items() if info.get("confident")
+        key: info for key, info in (profile.get("layer_map") or {}).items() if info.get("confident") is True
     })
     for key, info in kept.items():
         target_name = str(info.get("name") or "")
@@ -1096,6 +1184,8 @@ def apply_profile(doc, profile: dict | None = None, *, project=None, spec_units:
             changed = True
     if scale_key:
         node = (profile.get("dims_by_scale") or {}).get(scale_key) or {}
+        if node.get("verified") is not True:
+            node = {}
         variables = node.get("vars") or {}
         style_name = node.get("name") or ""
         style = None
@@ -1114,7 +1204,8 @@ def apply_profile(doc, profile: dict | None = None, *, project=None, spec_units:
                         changed = True
                     except (AttributeError, TypeError, ValueError):
                         continue
-    font = str((profile.get("font") or {}).get("value") or "")
+    font_node = profile.get("font") or {}
+    font = str(font_node.get("value") or "") if font_node.get("verified") is True else ""
     if font and _font_file_exists(font):
         seen_styles = set()
         for layout in doc.layouts:

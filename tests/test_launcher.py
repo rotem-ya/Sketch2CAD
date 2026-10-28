@@ -25,7 +25,8 @@ def isolated_home(tmp_path, monkeypatch):
         return real_run(argv, **kwargs)
 
     def _no_signal(pid, sig, *args):
-        if sig:
+        # Signal 0 is an existence probe. On a Windows path it must not run either.
+        if sig or launcher.os.name == "nt":
             raise AssertionError("a test tried to signal a process")
         return real_kill(pid, sig)
 
@@ -327,6 +328,12 @@ def test_stop_keeps_the_pid_when_taskkill_misses_a_live_process(monkeypatch, cap
     out = capsys.readouterr().out
     assert "Sketch2CAD is stopped." not in out
     assert "left running" in out
+
+
+def test_windows_code_path_cannot_signal_a_process(monkeypatch):
+    monkeypatch.setattr(launcher.os, "name", "nt")
+    with pytest.raises(AssertionError):
+        launcher.os.kill(4242, 0)
 
 
 def test_terminate_pid_not_found_is_stopped_and_denial_is_refused(monkeypatch):

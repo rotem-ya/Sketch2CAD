@@ -15,8 +15,8 @@ from sketch2cad.documents import Document, create_document
 from sketch2cad.finals import lock_path, newest_dwg, register_final
 from sketch2cad.io import oda
 from sketch2cad.learning import (
-    apply_profile, forget_final, house_style_text, layer_map_from, learned_lines, load_profile,
-    normalize_layer, style_enabled, _matched_pairs,
+    PROFILE_VERSION, apply_profile, forget_final, house_style_text, layer_map_from, learned_lines,
+    load_profile, normalize_layer, style_enabled, _matched_pairs,
 )
 from sketch2cad.projects import Project, create_project
 
@@ -204,12 +204,14 @@ def test_applying_the_profile_keeps_counts_and_coordinates(tmp_path, home):
     profile = {
         "final_count": 1,
         "scope": "project",
-        "ltscale_by_scale": {"250|model": {"value": "1000"}},
+        "profile_version": PROFILE_VERSION,
+        "ltscale_by_scale": {"250|model": {"value": "1000", "verified": True}},
         "layer_map": {
             "NEW": {"source": "NEW", "name": "$$$-DP400", "color": 1, "lineweight": 35, "confident": True},
         },
         "font": {"value": str(tmp_path / "missing-font.ttf")},
-        "dims_by_scale": {"250|model": {"name": "EZDXF", "vars": {"dimtxt": 99, "dimlfac": 0.001, "dimdec": 0}}},
+        "dims_by_scale": {"250|model": {"name": "EZDXF", "vars": {"dimtxt": 99, "dimlfac": 0.001, "dimdec": 0},
+                                       "verified": True}},
     }
     doc.dimstyles.get("EZDXF").dxf.dimtxt = 2.5
     assert apply_profile(doc, profile, sheet_scale=250) is True
@@ -250,11 +252,12 @@ def test_agent_package_rules_follow_the_project_style_switch(tmp_path, home):
     """Rules only while style is on. An observation never carries a mismatched scale or a weak map."""
     project, doc = _project(tmp_path)
     profile = {
+        "profile_version": PROFILE_VERSION,
         "final_count": 2,
         "scope": "project",
         "ltscale": {"value": "1000"},
-        "ltscale_by_scale": {"250|model": {"value": "250"}},
-        "dims_by_scale": {"250|model": {"name": "ROTEM-250", "vars": {"dimtxt": 2.5}}},
+        "ltscale_by_scale": {"250|model": {"value": "250", "verified": True}},
+        "dims_by_scale": {"250|model": {"name": "ROTEM-250", "vars": {"dimtxt": 2.5}, "verified": True}},
         "layer_map": {
             "new": {"source": "NEW", "name": "SITE", "color": 3, "lineweight": 30,
                     "confident": True, "matched": 6, "total": 6},
@@ -292,14 +295,15 @@ def test_agent_package_rules_follow_the_project_style_switch(tmp_path, home):
     project.save()
     off = (export_package(doc.path, tmp_path / "off") / "AGENT.md").read_text(encoding="utf-8")
     assert "How Rotem finishes drawings" not in off
-    assert "NEW -> SITE" not in off
-    assert "LTSCALE" not in off
-    assert "ROTEM-250" not in off
     assert "$$$-DP400" not in off
     assert "NOTES" not in off
     assert "1000" not in off
     assert "ROTEM-100" not in off
     assert "Observed in Rotem's finals (for context; do not mechanically restyle)" in off
+    assert "Comparable finals, recorded only as context:" in off
+    assert "Layer NEW -> SITE" in off
+    assert "LTSCALE at 250|model: 250" in off
+    assert "Dimension style at 250|model: ROTEM-250" in off
     assert "SITE-PIPE" in off
     assert "Change only what the request and the markings ask for." in off
 
@@ -308,7 +312,7 @@ def test_project_style_override_leaves_other_projects_alone(tmp_path, home):
     one, _doc = _project(tmp_path)
     two = create_project(tmp_path / "jobs", "20118", "אחר", "Other")
     for project in (one, two):
-        _write_profile(project, {"final_count": 1, "scope": "project"})
+        _write_profile(project, {"final_count": 1, "scope": "project", "profile_version": PROFILE_VERSION})
     assert one.apply_house_style is None
     assert style_enabled(one) is True
     assert style_enabled(two) is True
@@ -808,4 +812,136 @@ def test_forgetting_a_final_rebuilds_the_profile(tmp_path, home):
     assert profile["layer_map"]["new"]["name"] == "NEW"
     assert profile["layer_map"]["new"]["confident"] is True
     assert profile["ltscale_by_scale"]["250|model"]["value"] == "250.0"
+    assert profile["ltscale_by_scale"]["250|model"]["verified"] is True
     assert len(list((project.path / "learning" / "examples").glob("*.json"))) == 1
+
+
+def _split_lines(counts):
+    """App lines on NEW, the same geometry in the final split across A, B and C."""
+    app = ezdxf.new("R2018", setup=True)
+    final = ezdxf.new("R2018", setup=True)
+    app.layers.add("NEW", color=1)
+    index = 0
+    for layer, count, color in counts:
+        if layer not in [item.dxf.name for item in final.layers]:
+            final.layers.add(layer, color=color, lineweight=25)
+        for _ in range(count):
+            start, end = (0, index), (100, index)
+            app.modelspace().add_line(start, end, dxfattribs={"layer": "NEW"})
+            final.modelspace().add_line(start, end, dxfattribs={"layer": layer})
+            index += 1
+    return app, final
+
+
+def test_a_split_vote_does_not_move_the_layer():
+    for counts in ((("A", 40, 1), ("B", 35, 3), ("C", 25, 5)),
+                   (("A", 34, 1), ("B", 33, 3), ("C", 33, 5))):
+        app, final = _split_lines(counts)
+        mapped = layer_map_from(app, final)
+        assert "new" not in mapped
+    app, final = _split_lines((("A", 6, 1), ("B", 4, 3)))
+    mapped = layer_map_from(app, final)
+    assert mapped["new"]["name"] == "A"
+    assert mapped["new"]["confident"] is True
+
+
+def test_legacy_profile_is_rebuilt_before_use_and_is_not_applied(tmp_path, home):
+    """A PR #13 file with no version: metres LTSCALE, ROTEM_M and font txt must not become rules."""
+    project, doc = _project(tmp_path)
+    app = _dxf(
+        doc.path / "sheet.dxf", units="mm", ltscale=250,
+        layers=[("NEW", 1, 25, "CONTINUOUS")],
+        entities=_lines("NEW"), texts=[("NOTE", 2.5)],
+    )
+    doc.outputs = {"dxf": "sheet.dxf"}
+    (doc.path / "spec.json").write_text(json.dumps({"scale": 100, "units": "mm"}), encoding="utf-8")
+    doc.save()
+    final = _dxf(
+        tmp_path / "metres.dxf", units="m", ltscale=1000,
+        layers=[("SITE-PIPE", 3, 30, "CONTINUOUS")],
+        entities=[("LINE", "SITE-PIPE", ((200000, 500000), (200100, 500000)))],
+        dimstyles=("ROTEM_M",), texts=[("MANHOLE", 2.5)],
+    )
+    register_final(doc, name="metres.dxf", data=final.read_bytes(), project=project)
+    legacy = {
+        "final_count": 1,
+        "scope": "project",
+        "units": {"value": "m", "counts": {"m": 1}},
+        "ltscale": {"value": "1000.0", "counts": {"1000.0": 1}},
+        "scale_guess": {"value": "341", "counts": {"341": 1}},
+        "ltscale_by_scale": {"100|model": {"value": "1000.0", "counts": {"1000.0": 1}}},
+        "dims_by_scale": {"100|model": {
+            "name": "ROTEM_M",
+            "vars": {"dimtxt": 250, "dimasz": 180, "dimexe": 60, "dimexo": 30, "dimgap": 30, "dimscale": 100},
+            "counts": {"ROTEM_M": 1},
+        }},
+        "dimstyle": {"value": "ROTEM_M", "vars": {"dimtxt": 250}, "counts": {"ROTEM_M": 1}},
+        "font": {"value": "txt", "counts": {"txt": 1}},
+        "layer_map": {"new": {"source": "NEW", "name": "TEXT", "color": 7, "lineweight": 18, "count": 1}},
+    }
+    _write_profile(project, legacy)
+    loaded = load_profile(project)
+    assert loaded["profile_version"] == PROFILE_VERSION
+    assert not loaded.get("ltscale_by_scale")
+    assert not loaded.get("dims_by_scale")
+    assert (loaded.get("font") or {}).get("verified") is not True
+    assert (loaded.get("units") or {}).get("value") != "m"
+    backup = (project.path / "learning" / "style_profile.json.bak").read_text(encoding="utf-8")
+    assert "1000.0" in backup and "ROTEM_M" in backup and "txt" in backup
+    assert load_profile(project)["profile_version"] == PROFILE_VERSION
+    assert "ROTEM_M" in (project.path / "learning" / "style_profile.json.bak").read_text(encoding="utf-8")
+
+    fresh = ezdxf.readfile(app)
+    fresh.dimstyles.duplicate_entry("EZDXF", "ROTEM_M")
+    fresh.dimstyles.get("ROTEM_M").dxf.dimtxt = 2.5
+    assert apply_profile(fresh, legacy, sheet_scale=100, sheet_kind="model") is False
+    assert fresh.header["$LTSCALE"] == 250
+    assert fresh.dimstyles.get("ROTEM_M").dxf.dimtxt == 2.5
+    direct = house_style_text(legacy, project=project)
+    assert "How Rotem finishes drawings" not in direct
+    assert "LTSCALE at 100|model" not in direct
+    assert "ROTEM_M" not in direct
+    assert "Font: txt" not in direct
+
+    target = ezdxf.readfile(app)
+    assert apply_profile(target, project=project, sheet_scale=100, sheet_kind="model") is False
+    assert target.header["$LTSCALE"] == 250
+    package = (export_package(doc.path, tmp_path / "package") / "AGENT.md").read_text(encoding="utf-8")
+    assert "How Rotem finishes drawings" not in package
+    assert "LTSCALE at 100|model" not in package
+    assert "ROTEM_M" not in package
+    assert "Font: txt" not in package
+    lines = learned_lines(project=project)
+    panel = "\n".join(lines)
+    assert "יחידות: m" not in panel
+    assert "LTSCALE 100|model" not in panel
+    assert not any(line.startswith("LTSCALE") for line in lines)
+
+
+def test_global_forget_keeps_finals_from_other_projects(tmp_path, home):
+    one, doc1 = _project(tmp_path)
+    two = create_project(tmp_path / "jobs", "20118", "אחר", "Other")
+    doc2 = create_document(two, title_he="אחר", title_en="Other", discipline="D", subject="SITE")
+    settings = Settings.load()
+    settings.house_style_global = True
+    settings.projects = [str(one.path), str(two.path)]
+    settings.save()
+
+    def _final(doc, project, layer):
+        _dxf(doc.path / "sheet.dxf", units="mm", ltscale=250,
+             layers=[("NEW", 1, 25, "CONTINUOUS")], entities=_lines("NEW"))
+        doc.outputs = {"dxf": "sheet.dxf"}
+        (doc.path / "spec.json").write_text(json.dumps({"scale": 250, "units": "mm"}), encoding="utf-8")
+        doc.save()
+        path = tmp_path / f"{layer}.dxf"
+        _dxf(path, units="mm", ltscale=250, layers=[(layer, 3, 35, "CONTINUOUS")], entities=_lines(layer))
+        return register_final(doc, name=f"{layer}.dxf", data=path.read_bytes(), project=project)
+
+    _final(doc1, one, "NEW")
+    dropped, _warnings = _final(doc2, two, "SITE")
+    assert load_profile(one)["final_count"] == 2
+    forget_final(doc2, two, dropped["file"])
+    profile = load_profile(one)
+    assert profile["final_count"] == 1
+    assert profile["layer_map"]["new"]["name"] == "NEW"
+    assert profile["scope"] == "global"

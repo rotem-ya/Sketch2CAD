@@ -56,7 +56,7 @@ def isolated_home(tmp_path, monkeypatch):
         return real_run(argv, **kwargs)
 
     def _no_signal(pid, sig, *args):
-        if sig:
+        if sig or runner.os.name == "nt":
             raise AssertionError("a test tried to signal a process")
         return real_kill(pid, sig)
 
