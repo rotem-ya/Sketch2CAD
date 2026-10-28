@@ -33,6 +33,15 @@ def test_next_rev_skips_i_and_o():
     assert codes.next_rev("2") == "3"
 
 
+def test_an_earlier_letter_is_an_older_revision():
+    assert codes.rev_is_older("A", "B")
+    assert codes.rev_is_older("H", "J")
+    assert not codes.rev_is_older("B", "B")
+    assert not codes.rev_is_older("B", "A")
+    assert codes.rev_is_older("2", "10")
+    assert not codes.rev_is_older("A", "2")
+
+
 # ------------------------------------------------------------------ projects & documents
 def test_project_folder_structure(tmp_path):
     p = create_project(tmp_path, "20117", "חצרים", "Hatzerim")

@@ -272,11 +272,16 @@ def test_agent_package_rules_follow_the_project_style_switch(tmp_path, home):
         }],
     }
     _write_profile(project, profile)
-    example = {"code": doc.code, "rev": "A", "summary": {"layers_added": ["$$$-DP400"], "layers_removed": ["FRAME"],
-                                                        "texts_added": ["MANHOLE"], "title_block_after": False}}
+    example = {"code": doc.code, "rev": "A", "comparable": True,
+               "summary": {"layers_added": ["$$$-DP400"], "layers_removed": ["FRAME"],
+                           "texts_added": ["MANHOLE"], "title_block_after": False}}
+    observed = {"code": doc.code, "rev": "A", "comparable": False,
+                "summary": {"layers_added": ["OBSERVE-ONLY"], "layers_removed": [],
+                            "texts_added": [], "title_block_after": False}}
     examples = project.path / "learning" / "examples"
     examples.mkdir()
     (examples / f"{doc.code}_1.json").write_text(json.dumps(example), encoding="utf-8")
+    (examples / f"{doc.code}_2.json").write_text(json.dumps(observed), encoding="utf-8")
 
     on = (export_package(doc.path, tmp_path / "on") / "AGENT.md").read_text(encoding="utf-8")
     assert "How Rotem finishes drawings" in on
@@ -284,6 +289,7 @@ def test_agent_package_rules_follow_the_project_style_switch(tmp_path, home):
     assert "LTSCALE at 250|model: 250" in on
     assert "Dimension style at 250|model: ROTEM-250" in on
     assert "$$$-DP400" in on
+    assert "OBSERVE-ONLY" not in on
     assert "Change only what the request and the markings ask for." in on
     assert "Observed in Rotem's finals (for context; do not mechanically restyle)" in on
     assert "SITE-PIPE" in on
