@@ -356,6 +356,12 @@ def render(spec: dict, out_dir, basename: str, *, project=None, document=None, c
         ctx, template, rects = drawn.ctx, drawn.template, drawn.rects
     from .standards import apply_submission_standard
     apply_submission_standard(ctx.doc)
+    try:
+        from ..learning import apply_profile, style_enabled
+        if style_enabled():
+            apply_profile(ctx.doc, spec_units=str(spec.get("units") or ""))
+    except Exception as exc:  # noqa: BLE001 - a style profile must not stop the sheet
+        warnings.append(f"house style was not applied: {exc}")
 
     result: dict = {"dxf": out_dir / f"{basename}.dxf"}
     if sheet_layout:

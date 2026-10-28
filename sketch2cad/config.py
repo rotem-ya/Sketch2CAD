@@ -111,6 +111,7 @@ class Settings:
     claude_accounts: list[str] = field(default_factory=list)  # CLAUDE_CONFIG_DIR dirs, in try order
     claude_auto_run: bool = False              # off until an exe path and an account folder are set
     claude_timeout_s: int = 600                # seconds for one headless run
+    apply_house_style: bool | None = None     # None: on once a final has been learned
 
     @classmethod
     def load(cls) -> "Settings":

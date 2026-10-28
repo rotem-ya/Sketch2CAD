@@ -383,7 +383,8 @@ def page_project() -> None:
             st.info(T("no_documents"))
         for d in docs:
             c1, c2, c3, c4 = st.columns([2, 4, 1, 1])
-            c1.markdown(f"**{ltr(d.code)}**  \n{ltr('Rev ' + d.rev)}", unsafe_allow_html=True)
+            badge = f"  \n{T('final_badge')}" if d.finals else ""
+            c1.markdown(f"**{ltr(d.code)}**  \n{ltr('Rev ' + d.rev)}{badge}", unsafe_allow_html=True)
             c2.markdown(f"{d.display_title(L)}  \n<small>{d.description}</small>", unsafe_allow_html=True)
             c3.markdown(label_of(STATUSES, d.status))
             c4.button(T("open"), key=f"doc_{d.folder}", on_click=go, args=("document", None, d.folder))
@@ -482,6 +483,70 @@ def page_project() -> None:
                 st.error(f"{T('error')}: {e}")
 
 
+def tab_finals(p: Project, d: Document) -> None:
+    """Save a DWG, DXF or PDF finished in AutoCAD, and show what was learned from finals."""
+    from sketch2cad.finals import newest_dwg, register_final
+    from sketch2cad.learning import learned_lines
+
+    st.caption(T("final_help"))
+    upload = st.file_uploader(T("final_upload"), type=["dwg", "dxf", "pdf"], key=f"final_up_{d.code}")
+    path_text = st.text_input(T("final_path"), key=f"final_path_{d.code}")
+    folder = st.text_input(T("final_folder"), value=d.linked_folder, key=f"final_folder_{d.code}")
+    note = st.text_input(T("final_note"), key=f"final_note_{d.code}")
+    sent = st.checkbox(T("final_sent"), key=f"final_sent_{d.code}")
+    rev = st.text_input(T("final_rev"), value=d.rev, key=f"final_rev_{d.code}")
+    use_newest = st.button(T("final_newest"), key=f"final_newest_{d.code}")
+    if st.button(T("final_save"), key=f"final_save_{d.code}") or use_newest:
+        try:
+            source = None
+            data = None
+            name = ""
+            original = path_text.strip()
+            if use_newest:
+                source = newest_dwg(folder) if folder.strip() else None
+                if source is None:
+                    raise FileNotFoundError(folder or path_text)
+                name = source.name
+                original = str(source)
+            elif upload is not None:
+                data = upload.getvalue()
+                name = upload.name
+            elif original:
+                source = Path(original)
+                name = source.name
+            else:
+                st.warning(T("final_missing"))
+                source = None
+            if folder.strip() != d.linked_folder:
+                d.linked_folder = folder.strip()
+                d.save()
+            if name:
+                _entry, warnings = register_final(d, name=name, data=data, source=source, original_path=original,
+                                                  rev=rev.strip() or d.rev, note=note, sent_to_client=sent, project=p)
+                for warning in warnings:
+                    if warning.endswith(".dwl") or warning.endswith(".dwl2"):
+                        st.warning(T("final_lock").format(name=warning))
+                    else:
+                        st.warning(warning)
+                st.success(T("final_saved"))
+        except Exception as exc:  # noqa: BLE001
+            st.error(f"{T('error')}: {exc}")
+    if not d.finals:
+        st.info(T("final_none"))
+    for entry in d.finals:
+        sent_mark = " · " + T("final_sent") if entry.get("sent_to_client") else ""
+        st.markdown(f"`{entry.get('name')}` · {ltr('Rev ' + str(entry.get('rev') or ''))}{sent_mark}",
+                    unsafe_allow_html=True)
+        if entry.get("original_path"):
+            st.caption(entry["original_path"])
+    st.subheader(T("learned_title"))
+    lines = learned_lines()
+    if not lines:
+        st.caption(T("learned_empty"))
+    for line in lines:
+        st.text(line)
+
+
 def page_document() -> None:
     if not ss.doc_folder or not Path(ss.doc_folder, "document.json").exists():
         go("project")
@@ -492,9 +557,9 @@ def page_document() -> None:
     st.markdown(f"## {ltr(d.code + '  Rev ' + d.rev)}", unsafe_allow_html=True)
     st.subheader(d.display_title(L))
     cat = load_catalog(p)
-    (tab_det, tab_src, tab_draw, tab_chk, tab_bom, tab_out, tab_pkg, tab_cmp, tab_rev) = st.tabs(
-        [T("details"), T("sources"), T("drawing"), T("checks"), T("bom"), T("outputs"), T("package"), T("compare"),
-         T("revisions")])
+    (tab_det, tab_src, tab_draw, tab_chk, tab_bom, tab_out, tab_final, tab_pkg, tab_cmp, tab_rev) = st.tabs(
+        [T("details"), T("sources"), T("drawing"), T("checks"), T("bom"), T("outputs"), T("final_version"),
+         T("package"), T("compare"), T("revisions")])
 
     with tab_det, st.form("doc_details"):
         c1, c2 = st.columns(2)
@@ -561,6 +626,9 @@ def page_document() -> None:
                          width="stretch", hide_index=True)
             xlsx = bom.bom_to_xlsx(rows, d.path / f"{d.code}_BOM.xlsx", lang=L, title=f"{d.code} Rev {d.rev}")
             download(T("excel"), xlsx, "bom_xlsx")
+
+    with tab_final:
+        tab_finals(p, d)
 
     with tab_out:
         if not d.outputs:
@@ -1128,6 +1196,7 @@ def tab_compare(p: Project, d: Document) -> None:
     st.caption(T("compare_help"))
     exts = (".pdf", ".dxf", ".dwg", ".png")
     files = [d.path / r for r in d.outputs.values() if (d.path / r).suffix.lower() in exts]
+    files += [d.path / entry["file"] for entry in d.finals if (d.path / entry.get("file", "")).suffix.lower() in exts]
     files += sorted(f for f in (p.path / "90_Archive").glob(f"{d.code}_Rev*/*") if f.suffix.lower() in exts)
     files += [d.path / s for s in d.sources if Path(s).suffix.lower() in exts]
     files = [f for f in dict.fromkeys(files) if f.exists()]
@@ -1417,6 +1486,10 @@ def page_settings() -> None:
     ss.setdefault("set_root", settings.default_projects_root)
     root = folder_input(T("default_root"), "set_root")
     oda = st.text_input(T("oda_path"), value=settings.oda_converter_path)
+    from sketch2cad.learning import load_profile
+    learned = bool(load_profile().get("final_count"))
+    style_default = learned if settings.apply_house_style is None else bool(settings.apply_house_style)
+    apply_style = st.checkbox(T("apply_my_style"), value=style_default)
     st.subheader(T("claude_runner"))
     st.caption(T("claude_runner_help"))
     claude_auto = st.checkbox(T("claude_auto"), value=bool(settings.claude_auto_run))
@@ -1445,6 +1518,7 @@ def page_settings() -> None:
                 st.error(text)
             return
         settings.default_projects_root, settings.oda_converter_path = root, oda
+        settings.apply_house_style = bool(apply_style)
         settings.claude_auto_run = bool(claude_auto)
         settings.claude_exe = claude_exe.strip()
         settings.claude_accounts = accounts

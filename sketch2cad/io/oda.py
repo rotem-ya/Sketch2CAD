@@ -19,7 +19,10 @@ from ..procutil import run as hidden_run
 
 TIMEOUT_S = 180
 WINDOWS_GLOBS = (r"C:\Program Files\ODA\ODAFileConverter*\ODAFileConverter.exe",
+                 r"C:\Program Files\ODA\*\ODAFileConverter.exe",
                  r"C:\Program Files (x86)\ODA\ODAFileConverter*\ODAFileConverter.exe")
+# Empty settings still find this install. Newest version wins when several are present.
+EXPLICIT_CONVERTERS = (r"C:\Program Files\ODA\ODAFileConverter 27.9.0\ODAFileConverter.exe",)
 AUTOCAD_GLOBS = (r"C:\Program Files\Autodesk\AutoCAD*\accoreconsole.exe",)
 AUTOCAD_FORMATS = {"dwg": "2018", "dxf": "DXF"}       # SAVEAS file-format answers
 
@@ -30,7 +33,7 @@ class ConverterNotFound(RuntimeError):
 
 def _version_key(path: str) -> tuple[int, ...]:
     """'C:/Program Files/ODA/ODAFileConverter 25.4.0/...' -> (25, 4, 0)."""
-    folder = Path(path).parent.name
+    folder = os.path.basename(os.path.dirname(path))
     return tuple(int(n) for n in re.findall(r"\d+", folder))
 
 
@@ -42,9 +45,12 @@ def find_converter(settings: Settings | None = None) -> str | None:
     """
     settings = settings or Settings.load()
     for candidate in (settings.oda_converter_path, os.environ.get("ODA_CONVERTER", "")):
-        if candidate and Path(candidate).is_file():
+        if candidate and os.path.isfile(candidate):
             return str(candidate)
     if os.name == "nt":
+        for candidate in EXPLICIT_CONVERTERS:
+            if candidate and os.path.isfile(candidate):
+                return str(candidate)
         found = [p for pattern in WINDOWS_GLOBS for p in glob.glob(pattern)]
         if found:
             return max(found, key=_version_key)
