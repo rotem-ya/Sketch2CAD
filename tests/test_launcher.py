@@ -206,7 +206,7 @@ def test_stop_does_not_kill_when_the_image_cannot_be_read(monkeypatch, capsys):
     monkeypatch.setattr(launcher, "_process_facts", lambda pid: (None, None))
     monkeypatch.setattr(launcher, "_child_facts", lambda pid: [])
     _alive(monkeypatch, [False])
-    assert launcher.main(["--stop"]) == 0
+    assert launcher.main(["--stop"]) == 1
     assert launcher.pid_file().read_text(encoding="utf-8").strip() == "4242"
     assert "Sketch2CAD is stopped." not in capsys.readouterr().out
 
@@ -225,13 +225,10 @@ def test_stop_counts_a_vanished_wrapper_as_stopped(monkeypatch, capsys):
     def terminate(pid):
         if pid != 4242:
             return True
-        saved = launcher.os.name
-        launcher.os.name = "nt"
-        monkeypatch.setattr(launcher, "run", lambda *args, **kwargs: gone)
-        try:
+        with monkeypatch.context() as mp:
+            mp.setattr(launcher.os, "name", "nt")
+            mp.setattr(launcher, "run", lambda *args, **kwargs: gone)
             return real(pid)
-        finally:
-            launcher.os.name = saved
 
     monkeypatch.setattr(launcher, "terminate_pid", terminate)
     monkeypatch.setattr(launcher, "pid_alive", lambda pid: next(alive))
@@ -243,6 +240,55 @@ def test_stop_counts_a_vanished_wrapper_as_stopped(monkeypatch, capsys):
     assert "Sketch2CAD is stopped." in capsys.readouterr().out
 
 
+def _cim(returncode, stdout):
+    return type("Proc", (), {"returncode": returncode, "stdout": stdout, "stderr": ""})()
+
+
+def test_process_listed_treats_a_failed_query_as_unknown(monkeypatch):
+    """None is not 'unlisted'. ``not _process_listed()`` would turn a failed query into gone."""
+    monkeypatch.setattr(launcher.os, "name", "nt")
+    monkeypatch.setattr(launcher, "_windows_cim", lambda script: None)
+    assert launcher._process_listed(4242) is None
+    monkeypatch.setattr(launcher, "_windows_cim", lambda script: _cim(2, ""))
+    assert launcher._process_listed(4242) is None
+    monkeypatch.setattr(launcher, "_windows_cim", lambda script: _cim(0, ""))
+    assert launcher._process_listed(4242) is False
+    monkeypatch.setattr(launcher, "_windows_cim", lambda script: _cim(0, "4242\n"))
+    assert launcher._process_listed(4242) is True
+    monkeypatch.setattr(launcher.os, "name", "posix")
+    assert launcher._process_listed(os.getpid()) is None
+
+
+def test_unknown_listing_does_not_count_a_live_process_as_stopped(monkeypatch):
+    monkeypatch.setattr(launcher, "pid_alive", lambda pid: True)
+    monkeypatch.setattr(launcher, "_process_listed", lambda pid: None)
+    monkeypatch.setattr(launcher, "_process_facts", lambda pid: ("python.exe", "1000"))
+    assert launcher._kill_succeeded(128, 4242, "1000") is False
+    assert launcher._kill_succeeded(128, 4242, None) is False
+
+
+def test_stop_keeps_the_pid_when_the_listing_query_fails(monkeypatch, capsys):
+    launcher.pid_file().write_text("4242 1000", encoding="utf-8")
+    missed = _cim(128, "")
+    real = launcher.terminate_pid
+
+    def terminate(pid):
+        with monkeypatch.context() as mp:
+            mp.setattr(launcher.os, "name", "nt")
+            mp.setattr(launcher, "run", lambda *args, **kwargs: missed)
+            return real(pid)
+
+    monkeypatch.setattr(launcher, "terminate_pid", terminate)
+    monkeypatch.setattr(launcher, "pid_alive", lambda pid: True)
+    monkeypatch.setattr(launcher, "_process_listed", lambda pid: None)
+    monkeypatch.setattr(launcher, "_process_facts", lambda pid: ("python.exe", "1000") if pid == 4242 else (None, None))
+    monkeypatch.setattr(launcher, "_child_facts", lambda pid: [])
+    _alive(monkeypatch, [False])
+    assert launcher.main(["--stop"]) == 1
+    assert launcher.pid_file().read_text(encoding="utf-8").strip() == "4242 1000"
+    assert "Sketch2CAD is stopped." not in capsys.readouterr().out
+
+
 def test_stop_keeps_the_pid_when_taskkill_misses_a_live_process(monkeypatch, capsys):
     """rc 128 while the supervisor is still alive is not a stop."""
     launcher.pid_file().write_text("4242 1000", encoding="utf-8")
@@ -250,20 +296,18 @@ def test_stop_keeps_the_pid_when_taskkill_misses_a_live_process(monkeypatch, cap
     real = launcher.terminate_pid
 
     def terminate(pid):
-        saved = launcher.os.name
-        launcher.os.name = "nt"
-        monkeypatch.setattr(launcher, "run", lambda *args, **kwargs: missed)
-        try:
+        with monkeypatch.context() as mp:
+            mp.setattr(launcher.os, "name", "nt")
+            mp.setattr(launcher, "run", lambda *args, **kwargs: missed)
             return real(pid)
-        finally:
-            launcher.os.name = saved
 
     monkeypatch.setattr(launcher, "terminate_pid", terminate)
     monkeypatch.setattr(launcher, "pid_alive", lambda pid: True)
+    monkeypatch.setattr(launcher, "_process_listed", lambda pid: True)
     monkeypatch.setattr(launcher, "_process_facts", lambda pid: ("python.exe", "1000") if pid == 4242 else (None, None))
     monkeypatch.setattr(launcher, "_child_facts", lambda pid: [])
     _alive(monkeypatch, [False])
-    assert launcher.main(["--stop"]) == 0
+    assert launcher.main(["--stop"]) == 1
     assert launcher.pid_file().read_text(encoding="utf-8").strip() == "4242 1000"
     out = capsys.readouterr().out
     assert "Sketch2CAD is stopped." not in out
@@ -273,25 +317,31 @@ def test_stop_keeps_the_pid_when_taskkill_misses_a_live_process(monkeypatch, cap
 def test_terminate_pid_not_found_is_stopped_and_denial_is_refused(monkeypatch):
     gone = type("Proc", (), {"returncode": 128, "stdout": "", "stderr": "ERROR: not found."})()
     denied = type("Proc", (), {"returncode": 1, "stdout": "", "stderr": "ERROR: Access is denied."})()
-    monkeypatch.setattr(launcher.os, "name", "nt")
-    monkeypatch.setattr(launcher, "run", lambda *args, **kwargs: gone)
-    monkeypatch.setattr(launcher, "pid_alive", lambda pid: True)
-    monkeypatch.setattr(launcher, "_process_facts", lambda pid: ("python.exe", "1000"))
-    assert launcher._kill_succeeded(128, 4242, "1000") is False
-    assert launcher.terminate_pid(4242) is False
-    monkeypatch.setattr(launcher, "pid_alive", lambda pid: False)
-    assert launcher._kill_succeeded(128, 4242, "1000") is True
-    assert launcher.terminate_pid(4242) is True
-    monkeypatch.setattr(launcher, "pid_alive", lambda pid: True)
-    starts = iter(["1000", "2000"])
-    monkeypatch.setattr(launcher, "_process_facts", lambda pid: ("python.exe", next(starts)))
-    assert launcher.terminate_pid(4242) is True
-    monkeypatch.setattr(launcher, "_process_facts", lambda pid: ("python.exe", "1000"))
-    monkeypatch.setattr(launcher, "run", lambda *args, **kwargs: denied)
-    assert launcher.terminate_pid(4242) is False
-    monkeypatch.setattr(launcher, "pid_alive", lambda pid: False)
-    assert launcher.terminate_pid(4242) is True
-    monkeypatch.setattr(launcher.os, "name", "posix")
+    with monkeypatch.context() as mp:
+        mp.setattr(launcher.os, "name", "nt")
+        mp.setattr(launcher, "run", lambda *args, **kwargs: gone)
+        mp.setattr(launcher, "pid_alive", lambda pid: True)
+        mp.setattr(launcher, "_process_listed", lambda pid: True)
+        mp.setattr(launcher, "_process_facts", lambda pid: ("python.exe", "1000"))
+        assert launcher._kill_succeeded(128, 4242, "1000") is False
+        assert launcher.terminate_pid(4242) is False
+        mp.setattr(launcher, "pid_alive", lambda pid: False)
+        assert launcher._kill_succeeded(128, 4242, "1000") is True
+        assert launcher.terminate_pid(4242) is True
+        mp.setattr(launcher, "pid_alive", lambda pid: True)
+        starts = iter(["1000", "2000"])
+        mp.setattr(launcher, "_process_facts", lambda pid: ("python.exe", next(starts)))
+        assert launcher.terminate_pid(4242) is True
+        mp.setattr(launcher, "_process_facts", lambda pid: (None, None))
+        mp.setattr(launcher, "_process_listed", lambda pid: False)
+        assert launcher._kill_succeeded(128, 4242, None) is True
+        assert launcher.terminate_pid(4242) is True
+        mp.setattr(launcher, "_process_listed", lambda pid: True)
+        mp.setattr(launcher, "_process_facts", lambda pid: ("python.exe", "1000"))
+        mp.setattr(launcher, "run", lambda *args, **kwargs: denied)
+        assert launcher.terminate_pid(4242) is False
+        mp.setattr(launcher, "pid_alive", lambda pid: False)
+        assert launcher.terminate_pid(4242) is True
 
     def missing(pid, sig):
         raise ProcessLookupError(pid)
@@ -312,7 +362,7 @@ def test_stop_keeps_the_pid_file_when_the_kill_is_refused(monkeypatch, capsys):
     monkeypatch.setattr(launcher, "_process_facts", lambda pid: ("python.exe", "1000") if pid == 4242 else (None, None))
     monkeypatch.setattr(launcher, "_child_facts", lambda pid: [])
     _alive(monkeypatch, [False])
-    assert launcher.main(["--stop"]) == 0
+    assert launcher.main(["--stop"]) == 1
     assert "4242" in launcher.pid_file().read_text(encoding="utf-8")
     assert "Sketch2CAD is stopped." not in capsys.readouterr().out
 
@@ -351,6 +401,71 @@ def test_update_command_stops_the_supervisor_too(monkeypatch, tmp_path):
 
 
 # ------------------------------------------------------------------------------------ pid and repair
+def test_windows_exit_code_decides_whether_a_handle_is_still_alive(monkeypatch):
+    """OpenProcess succeeds after exit while the parent holds the handle. The exit code is what counts."""
+    calls = []
+
+    def kernel(handle, exit_code, query_ok=1):
+        state = {"handle": handle, "exit_code": exit_code, "query_ok": query_ok}
+
+        def open_process(access, inherit, pid):
+            calls.append(("open", access, pid))
+            return state["handle"]
+
+        def exit_code_of(opened, code):
+            calls.append(("exit", opened))
+            code._obj.value = state["exit_code"]
+            return state["query_ok"]
+
+        def close_handle(opened):
+            calls.append(("close", opened))
+            return 1
+
+        return type("Kernel", (), {
+            "OpenProcess": staticmethod(open_process),
+            "GetExitCodeProcess": staticmethod(exit_code_of),
+            "CloseHandle": staticmethod(close_handle),
+        })()
+
+    assert launcher._windows_process_running(kernel(0, 0), 4242) is False
+    assert launcher._windows_process_running(kernel(7, 1), 4242) is False
+    assert launcher._windows_process_running(kernel(7, launcher._STILL_ACTIVE), 4242) is True
+    assert launcher._windows_process_running(kernel(7, 1, query_ok=0), 4242) is True
+    assert ("close", 7) in calls and ("open", 0x1000, 4242) in calls
+
+    import ctypes
+    fake = kernel(7, 1)
+    monkeypatch.setattr(launcher.os, "name", "nt")
+    monkeypatch.setattr(ctypes, "WinDLL", lambda *args, **kwargs: fake, raising=False)
+    assert launcher.pid_alive(4242) is False
+
+
+def test_stop_accepts_an_unlisted_process_whose_handle_is_still_open(monkeypatch, capsys):
+    """The wrapper has exited. taskkill returns 128, and Win32_Process no longer lists it."""
+    launcher.pid_file().write_text("4242 1000", encoding="utf-8")
+    children = {4242: [(5001, "python.exe", "1100")]}
+    gone = type("Proc", (), {"returncode": 128, "stdout": "", "stderr": "not found"})()
+    ok = type("Proc", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+    real = launcher.terminate_pid
+
+    def terminate(pid):
+        with monkeypatch.context() as mp:
+            mp.setattr(launcher.os, "name", "nt")
+            mp.setattr(launcher, "run", lambda *args, **kwargs: gone if pid == 5001 else ok)
+            return real(pid)
+
+    monkeypatch.setattr(launcher, "terminate_pid", terminate)
+    monkeypatch.setattr(launcher, "pid_alive", lambda pid: True)
+    monkeypatch.setattr(launcher, "_process_listed", lambda pid: pid != 5001)
+    monkeypatch.setattr(launcher, "_process_facts",
+                        lambda pid: ("python.exe", "1000") if pid == 4242 else (None, None))
+    monkeypatch.setattr(launcher, "_child_facts", lambda pid: list(children.get(pid, [])))
+    _alive(monkeypatch, [True, False])
+    assert launcher.main(["--stop"]) == 0
+    assert not launcher.pid_file().exists()
+    assert "Sketch2CAD is stopped." in capsys.readouterr().out
+
+
 def test_pid_alive_for_this_process_and_a_missing_one():
     assert launcher.pid_alive(os.getpid()) is True
     assert launcher._process_is_python(os.getpid()) is True
