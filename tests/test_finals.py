@@ -4,6 +4,7 @@ The DXFs here are built in the test. Nothing from a real project is stored in th
 """
 import json
 import os
+import re
 
 import ezdxf
 import pytest
@@ -116,16 +117,17 @@ def test_profile_from_two_synthetic_finals_prefers_the_newer_one(tmp_path, home)
     project, doc = _project(tmp_path)
     app = _dxf(
         doc.path / "sheet.dxf", units="mm", ltscale=250,
-        layers=[("NEW", 1, 25, "CONTINUOUS"), ("FRAME", 7, 25, "CONTINUOUS")],
-        entities=[("LINE", "NEW", ((0, 0), (100, 0)))],
+        layers=[("NEW", 1, 25, "CONTINUOUS"), ("EXISTING", 8, 25, "DASHED"), ("FRAME", 7, 25, "CONTINUOUS")],
+        entities=[("LINE", "NEW", ((0, 0), (100, 0))), ("LINE", "EXISTING", ((0, 5), (40, 5)))],
         texts=[("ניקוז", 2.5), ("DRAIN", 2.5)], frame=True, paper="420x297",
     )
     doc.outputs = {"dxf": "sheet.dxf"}
+    (doc.path / "spec.json").write_text(json.dumps({"scale": 250, "units": "mm"}), encoding="utf-8")
     doc.save()
     first = _dxf(
         tmp_path / "one.dxf", units="mm", ltscale=250,
         layers=[("NEW", 1, 25, "CONTINUOUS")],
-        entities=[("LINE", "NEW", ((0, 0), (5, 0)))],
+        entities=[("LINE", "NEW", ((0, 0), (100, 0))), ("LINE", "EXISTING", ((0, 5), (40, 5)))],
         texts=[("ניקוז", 2.5)], paper="420x297",
     )
     vowel = "\u05b0$$$-TD"
@@ -138,8 +140,8 @@ def test_profile_from_two_synthetic_finals_prefers_the_newer_one(tmp_path, home)
             ("C-STRM-MAIN-PIPE", 4, 30, "NEW_DRAIN"),
         ],
         entities=[
-            ("LWPOLYLINE", "$$$-DP400", [(0, 0), (10, 0), (10, 2)]),
-            ("LINE", "C-STRM-MAIN-PIPE", ((0, 1), (8, 1))),
+            ("LINE", vowel, ((0, 0), (100, 0))),
+            ("LINE", "C-STRM-MAIN-PIPE", ((0, 5), (40, 5))),
         ],
         dimstyles=("ROTEM-250", "ROTEM-100"),
         texts=[("MANHOLE", 3.5)],
@@ -147,7 +149,8 @@ def test_profile_from_two_synthetic_finals_prefers_the_newer_one(tmp_path, home)
     )
     register_final(doc, name="one.dxf", data=first.read_bytes(), project=project)
     register_final(doc, name="two.dxf", data=second.read_bytes(), project=project)
-    profile = load_profile()
+    profile = load_profile(project)
+    assert profile["scope"] == "project"
     assert profile["final_count"] == 2
     assert profile["ltscale"]["value"] == "1000.0"
     assert profile["ltscale"]["counts"]["250.0"] == 1
@@ -156,12 +159,15 @@ def test_profile_from_two_synthetic_finals_prefers_the_newer_one(tmp_path, home)
     assert profile["language"]["value"] == "en"
     assert profile["plot_style"]["value"] == "Screening 100%.ctb"
     assert normalize_layer(vowel) == "$$$-TD"
-    assert profile["layers"]["$$$-TD"]["name"] == vowel
-    assert profile["layers"]["$$$-TD"]["color_value"] == "150"
+    assert profile["layer_map"]["NEW"]["name"] == vowel
+    assert profile["layer_map"]["NEW"]["color"] == 150
+    assert "EXISTING" not in profile["layer_map"] or profile["layer_map"]["EXISTING"]["name"] != vowel
     assert "ROTEM-250" in profile["dimstyle"]["counts"]
     assert "ROTEM-100" in profile["dimstyle"]["counts"]
+    assert "dimlfac" not in (profile["dimstyle"].get("vars") or {})
     assert profile["title_block"]["value"] is False
-    examples = list((home / "learning" / "examples").glob("*.json"))
+    assert not (home / "learning").exists()
+    examples = list((project.path / "learning" / "examples").glob("*.json"))
     assert len(examples) == 2
     summaries = [json.loads(path.read_text(encoding="utf-8"))["summary"] for path in examples]
     summary = next(item for item in summaries if any("MANHOLE" in text for text in item["texts_added"]))
@@ -172,29 +178,30 @@ def test_profile_from_two_synthetic_finals_prefers_the_newer_one(tmp_path, home)
 
 
 def test_applying_the_profile_keeps_counts_and_coordinates(tmp_path, home):
-    _project_unused = tmp_path
     doc = ezdxf.new("R2018", setup=True)
     doc.header["$LTSCALE"] = 1
-    doc.layers.add("NEW", color=7)
-    doc.modelspace().add_line((0, 0), (12, 4), dxfattribs={"layer": "NEW"})
-    doc.modelspace().add_line((1, 1), (2, 8), dxfattribs={"layer": "NEW"})
-    doc.modelspace().add_text("KEEP", dxfattribs={"height": 2.5, "insert": (3, 3), "layer": "NEW"})
+    doc.layers.add("NEW", color=7, linetype="DASHED")
+    doc.modelspace().add_line((0, 0), (12, 4), dxfattribs={"layer": "NEW", "linetype": "DASHED"})
+    hidden = doc.modelspace().add_line((1, 1), (2, 8), dxfattribs={"layer": "NEW"})
+    hidden.dxf.invisible = 1
+    doc.styles.add("USED", font="arial.ttf")
+    doc.modelspace().add_text("KEEP", dxfattribs={"height": 2.5, "insert": (3, 3), "layer": "NEW", "style": "USED"})
     before_geom = _geom(doc)
     before_counts = {}
     for entity in doc.modelspace():
         before_counts[entity.dxftype()] = before_counts.get(entity.dxftype(), 0) + 1
     profile = {
         "final_count": 1,
-        "ltscale": {"value": "1000"},
-        "units": {"value": "mm"},
-        "layers": {
-            "$$$-DP400": {"name": "$$$-DP400", "color_value": "1", "lineweight_value": "35",
-                          "linetype_value": "CONTINUOUS", "counts": 1},
+        "scope": "project",
+        "ltscale_by_scale": {"250": {"value": "1000"}},
+        "layer_map": {
+            "NEW": {"source": "NEW", "name": "$$$-DP400", "color": 1, "lineweight": 35},
         },
-        "kind_layer": {"LINE": {"$$$-DP400": 2}, "TEXT": {"$$$-DP400": 1}},
-        "text_style": {"value": "ROTEM"},
+        "font": {"value": str(tmp_path / "missing-font.ttf")},
+        "dims_by_scale": {"250": {"name": "EZDXF", "vars": {"dimtxt": 99, "dimlfac": 0.001, "dimdec": 0}}},
     }
-    assert apply_profile(doc, profile, spec_units="mm") is True
+    doc.dimstyles.get("EZDXF").dxf.dimtxt = 2.5
+    assert apply_profile(doc, profile, sheet_scale=250) is True
     after_counts = {}
     for entity in doc.modelspace():
         after_counts[entity.dxftype()] = after_counts.get(entity.dxftype(), 0) + 1
@@ -202,31 +209,133 @@ def test_applying_the_profile_keeps_counts_and_coordinates(tmp_path, home):
     assert _geom(doc) == before_geom
     assert doc.header["$LTSCALE"] == 1000
     assert {entity.dxf.layer for entity in doc.modelspace()} == {"$$$-DP400"}
+    assert doc.layers.get("$$$-DP400").dxf.linetype == "DASHED"
+    assert doc.layers.get("$$$-DP400").is_off() is False
+    dashed = doc.modelspace().query("LINE").first
+    assert dashed.dxf.linetype == "DASHED"
+    assert hidden.dxf.invisible == 1
     assert doc.modelspace().query("TEXT").first.dxf.text == "KEEP"
+    assert doc.styles.get("USED").dxf.font == "arial.ttf"
+    assert doc.dimstyles.get("EZDXF").dxf.dimtxt == 99
+    assert doc.dimstyles.get("EZDXF").dxf.dimlfac != 0.001
+    other = ezdxf.new("R2018", setup=True)
+    other.header["$LTSCALE"] = 62.5
+    other.dimstyles.get("EZDXF").dxf.dimtxt = 2.5
+    other.layers.add("NEW", color=7)
+    other.modelspace().add_line((0, 0), (1, 0), dxfattribs={"layer": "NEW"})
+    apply_profile(other, profile, sheet_scale=20)
+    assert other.header["$LTSCALE"] == 62.5
+    assert other.dimstyles.get("EZDXF").dxf.dimtxt == 2.5
     assert apply_profile(doc, {"final_count": 0}) is False
 
 
 def test_agent_package_includes_the_house_style(tmp_path, home):
     project, doc = _project(tmp_path)
-    (home / "learning").mkdir(parents=True)
     profile = {
         "final_count": 1,
+        "scope": "project",
         "ltscale": {"value": "1000"},
         "units": {"value": "m"},
         "language": {"value": "en"},
-        "layers": {},
+        "layer_map": {},
     }
-    (home / "learning" / "style_profile.json").write_text(json.dumps(profile), encoding="utf-8")
+    folder = project.path / "learning"
+    folder.mkdir()
+    (folder / "style_profile.json").write_text(json.dumps(profile), encoding="utf-8")
     example = {"code": doc.code, "rev": "A", "summary": {"layers_added": ["$$$-DP400"], "layers_removed": ["FRAME"],
                                                         "texts_added": ["MANHOLE"], "title_block_after": False}}
-    (home / "learning" / "examples").mkdir()
-    (home / "learning" / "examples" / f"{doc.code}_1.json").write_text(json.dumps(example), encoding="utf-8")
+    (folder / "examples").mkdir()
+    (folder / "examples" / f"{doc.code}_1.json").write_text(json.dumps(example), encoding="utf-8")
     out = export_package(doc.path, tmp_path / "package")
     text = (out / "AGENT.md").read_text(encoding="utf-8")
     assert "How Rotem finishes drawings" in text
     assert "$$$-DP400" in text
     assert "Change only what the request and the markings ask for." in text
     assert "1000" in house_style_text(profile, [example])
+
+
+def _mask(text: str) -> str:
+    """Drop handles and time stamps so two saves of the same drawing compare equal."""
+    volatile = {"$HANDSEED", "$TDCREATE", "$TDUPDATE", "$TDINDWG", "$TDUSRTIMER",
+                "$VERSIONGUID", "$FINGERPRINTGUID"}
+    lines = text.splitlines()
+    out = []
+    index = 0
+    while index < len(lines):
+        code = lines[index].strip()
+        value = lines[index + 1].strip() if index + 1 < len(lines) else ""
+        if code in {"5", "105", "330", "360"}:
+            out.extend([lines[index], "0"])
+            index += 2
+            continue
+        if code == "9" and value in volatile:
+            index += 4
+            continue
+        out.append(lines[index])
+        index += 1
+    text = "\n".join(out)
+    text = re.sub(r"\d{2}:\d{2}:\d{2}\.\d+(?:\+\d{2}:\d{2})?", "TIME", text)
+    text = re.sub(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}", "TIME", text)
+    return text
+
+
+def test_an_unchanged_final_changes_nothing(tmp_path, home):
+    project, doc = _project(tmp_path)
+    _dxf(doc.path / "sheet.dxf", units="mm", ltscale=250,
+         layers=[("NEW", 1, 35, "DASHED"), ("EXISTING", 8, 25, "DASHED")],
+         entities=[("LINE", "NEW", ((0, 0), (100, 0))), ("LINE", "EXISTING", ((0, 5), (40, 5)))],
+         texts=[("NOTE", 2.5)])
+    doc.outputs = {"dxf": "sheet.dxf"}
+    (doc.path / "spec.json").write_text(json.dumps({"scale": 250}), encoding="utf-8")
+    doc.save()
+    register_final(doc, name="sheet.dxf", data=(doc.path / "sheet.dxf").read_bytes(), project=project)
+    fresh = ezdxf.readfile(doc.path / "sheet.dxf")
+    before = tmp_path / "before.dxf"
+    after = tmp_path / "after.dxf"
+    fresh.saveas(before)
+    loaded = ezdxf.readfile(before)
+    apply_profile(loaded, load_profile(project), sheet_scale=250)
+    loaded.saveas(after)
+    assert _mask(before.read_text(encoding="utf-8", errors="replace")) == _mask(
+        after.read_text(encoding="utf-8", errors="replace"))
+
+
+def test_final_that_is_off_does_not_turn_a_layer_off(tmp_path, home):
+    project, doc = _project(tmp_path)
+    app = _dxf(doc.path / "sheet.dxf", units="mm", ltscale=1,
+               layers=[("NEW", 1, 25, "CONTINUOUS")],
+               entities=[("LINE", "NEW", ((0, 0), (10, 0)))])
+    doc.outputs = {"dxf": "sheet.dxf"}
+    doc.save()
+    final = ezdxf.readfile(app)
+    final.layers.get("NEW").off()
+    final_path = tmp_path / "off.dxf"
+    final.saveas(final_path)
+    register_final(doc, name="off.dxf", data=final_path.read_bytes(), project=project)
+    target = ezdxf.readfile(app)
+    assert target.layers.get("NEW").is_off() is False
+    apply_profile(target, load_profile(project), sheet_scale=None)
+    assert target.layers.get("NEW").is_off() is False
+
+
+def test_font_comes_from_the_style_the_text_uses(tmp_path, home):
+    from sketch2cad.drawing.text import _BUNDLED_FONT
+    from sketch2cad.learning import _font_in_use
+
+    doc = ezdxf.new("R2018", setup=True)
+    doc.styles.add("UNUSED", font="missing-first.ttf")
+    doc.styles.add("USED", font=str(_BUNDLED_FONT))
+    doc.modelspace().add_text("HELLO", dxfattribs={"style": "USED", "height": 2.5, "insert": (0, 0)})
+    assert _font_in_use(doc) == str(_BUNDLED_FONT)
+    assert _font_in_use(doc) != "missing-first.ttf"
+
+
+def test_reading_the_profile_does_not_create_the_learning_folder(tmp_path, monkeypatch):
+    monkeypatch.setenv("SKETCH2CAD_HOME", str(tmp_path / "home"))
+    project, _doc = _project(tmp_path)
+    assert load_profile(project)["final_count"] == 0
+    assert not (tmp_path / "home" / "learning").exists()
+    assert not (project.path / "learning").exists()
 
 
 def test_oda_27_9_is_found_when_the_setting_is_empty(tmp_path, monkeypatch):

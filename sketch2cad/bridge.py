@@ -320,7 +320,7 @@ def _fill_package(project: Project, doc: Document, out: Path, request: str,
     (out / "catalog.txt").write_text(_catalog_lines(relevant_catalog(catalog, spec)) + "\n", encoding="utf-8")
     agent = _agent_text()
     from .learning import house_style_text
-    style = house_style_text()
+    style = house_style_text(project=project)
     if style:
         agent = agent.rstrip() + "\n\n" + style
     (out / "AGENT.md").write_text(agent, encoding="utf-8")

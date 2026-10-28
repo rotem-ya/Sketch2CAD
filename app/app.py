@@ -540,7 +540,7 @@ def tab_finals(p: Project, d: Document) -> None:
         if entry.get("original_path"):
             st.caption(entry["original_path"])
     st.subheader(T("learned_title"))
-    lines = learned_lines()
+    lines = learned_lines(project=p)
     if not lines:
         st.caption(T("learned_empty"))
     for line in lines:
@@ -1486,10 +1486,9 @@ def page_settings() -> None:
     ss.setdefault("set_root", settings.default_projects_root)
     root = folder_input(T("default_root"), "set_root")
     oda = st.text_input(T("oda_path"), value=settings.oda_converter_path)
-    from sketch2cad.learning import load_profile
-    learned = bool(load_profile().get("final_count"))
-    style_default = learned if settings.apply_house_style is None else bool(settings.apply_house_style)
+    style_default = settings.apply_house_style is not False
     apply_style = st.checkbox(T("apply_my_style"), value=style_default)
+    style_global = st.checkbox(T("style_global"), value=bool(settings.house_style_global))
     st.subheader(T("claude_runner"))
     st.caption(T("claude_runner_help"))
     claude_auto = st.checkbox(T("claude_auto"), value=bool(settings.claude_auto_run))
@@ -1519,6 +1518,7 @@ def page_settings() -> None:
             return
         settings.default_projects_root, settings.oda_converter_path = root, oda
         settings.apply_house_style = bool(apply_style)
+        settings.house_style_global = bool(style_global)
         settings.claude_auto_run = bool(claude_auto)
         settings.claude_exe = claude_exe.strip()
         settings.claude_accounts = accounts
