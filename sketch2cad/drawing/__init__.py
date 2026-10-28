@@ -357,14 +357,14 @@ def render(spec: dict, out_dir, basename: str, *, project=None, document=None, c
     from .standards import apply_submission_standard
     apply_submission_standard(ctx.doc)
     try:
-        from ..learning import apply_profile, style_enabled
+        from ..learning import apply_profile, sheet_kind, style_enabled
         if style_enabled(project):
             try:
                 sheet_scale = float(spec.get("scale"))
             except (TypeError, ValueError):
                 sheet_scale = None
             apply_profile(ctx.doc, project=project, spec_units=str(spec.get("units") or ""),
-                          sheet_scale=sheet_scale)
+                          sheet_scale=sheet_scale, sheet_kind=sheet_kind(spec))
     except Exception as exc:  # noqa: BLE001 - a style profile must not stop the sheet
         warnings.append(f"house style was not applied: {exc}")
 

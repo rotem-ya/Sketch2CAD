@@ -6,6 +6,7 @@ and header variables only. Entity counts, text and coordinates stay as the rende
 from __future__ import annotations
 
 import json
+import os
 import re
 from collections import Counter
 from datetime import datetime
@@ -198,10 +199,18 @@ def observe(doc) -> dict:
             heights[f"{float(entity.dxf.height):.2f}"] += 1
         elif kind == "MTEXT" and entity.dxf.hasattr("char_height"):
             heights[f"{float(entity.dxf.char_height):.2f}"] += 1
+    used_dims: Counter = Counter()
+    for layout in doc.layouts:
+        for entity in layout:
+            if entity.dxftype() == "DIMENSION" and entity.dxf.hasattr("dimstyle"):
+                used_dims[str(entity.dxf.dimstyle)] += 1
     dimstyles = {}
-    for style in doc.dimstyles:
-        name = str(style.dxf.name)
+    for name in used_dims:
         if name.upper() in {"STANDARD", "EZDXF"}:
+            continue
+        try:
+            style = doc.dimstyles.get(name)
+        except Exception:  # noqa: BLE001
             continue
         dimstyles[name] = {var: _dimvar(style, var) for var in _DIMVARS}
     styles = [str(style.dxf.name) for style in doc.styles if str(style.dxf.name).upper() != "STANDARD"]
@@ -321,35 +330,57 @@ def layer_map_from(app_doc, final_doc) -> dict:
 def _font_in_use(doc) -> str:
     """The font file named by the text style that TEXT and MTEXT actually use."""
     counts: Counter = Counter()
-    for entity in doc.modelspace().query("TEXT MTEXT"):
-        try:
-            style = doc.styles.get(str(entity.dxf.style))
-        except Exception:  # noqa: BLE001
-            continue
-        font = str(getattr(style.dxf, "font", "") or "")
-        if font:
-            counts[font] += 1
+    for layout in doc.layouts:
+        for entity in layout.query("TEXT MTEXT"):
+            try:
+                style = doc.styles.get(str(entity.dxf.style))
+            except Exception:  # noqa: BLE001
+                continue
+            font = str(getattr(style.dxf, "font", "") or "")
+            if font:
+                counts[font] += 1
     if not counts:
         return ""
     return counts.most_common(1)[0][0]
 
 
 def _font_file_exists(font: str) -> bool:
+    """True when the font file is absolute, bundled, or in the Windows fonts folder.
+
+    A bare name is not resolved against the working directory.
+    """
     if not font:
         return False
-    return Path(font).is_file()
+    path = Path(font)
+    if path.is_absolute() and path.is_file():
+        return True
+    name = path.name
+    if not name or path.is_absolute():
+        return False
+    from .drawing.text import _BUNDLED_FONT
+    if (_BUNDLED_FONT.parent / name).is_file():
+        return True
+    windir = os.environ.get("WINDIR") or os.environ.get("SystemRoot") or ""
+    if windir and (Path(windir) / "Fonts" / name).is_file():
+        return True
+    return False
 
 
-def _sheet_scale(document: Document | None) -> float | None:
+def _spec_of(document: Document | None) -> dict:
     if document is None:
-        return None
+        return {}
     spec_path = document.path / "spec.json"
     if not spec_path.is_file():
-        return None
+        return {}
     try:
         spec = json.loads(spec_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
-        return None
+        return {}
+    return spec if isinstance(spec, dict) else {}
+
+
+def _sheet_scale(document: Document | None) -> float | None:
+    spec = _spec_of(document)
     try:
         scale = float(spec.get("scale"))
     except (TypeError, ValueError):
@@ -359,10 +390,18 @@ def _sheet_scale(document: Document | None) -> float | None:
     return scale
 
 
-def _scale_key(scale: float | None) -> str:
+def sheet_kind(spec: dict | None) -> str:
+    """``paper`` for a multiview sheet (paper-space LTSCALE), otherwise ``model``."""
+    views = spec.get("views") if isinstance(spec, dict) else None
+    if isinstance(views, list) and any(isinstance(view, dict) for view in views):
+        return "paper"
+    return "model"
+
+
+def _scale_key(scale: float | None, kind: str | None = "model") -> str:
     if scale is None:
         return ""
-    return f"{float(scale):g}"
+    return f"{float(scale):g}|{kind or 'model'}"
 
 
 def _summary(before: dict | None, after: dict) -> dict:
@@ -424,7 +463,7 @@ def _merge(profile: dict, seen: dict, weight: int) -> dict:
         if len(keys) > 1:
             for key in keys:
                 mapped.pop(key, None)
-    scale_key = _scale_key(seen.get("sheet_scale"))
+    scale_key = _scale_key(seen.get("sheet_scale"), seen.get("sheet_kind") or "model")
     if scale_key and seen.get("ltscale") is not None:
         table = profile.setdefault("ltscale_by_scale", {})
         _vote(table.setdefault(scale_key, {}), seen.get("ltscale"), weight)
@@ -438,7 +477,12 @@ def _merge(profile: dict, seen: dict, weight: int) -> dict:
         for name, variables in seen["dimstyles"].items():
             node["counts"][name] = node["counts"].get(name, 0) + weight
             last = name
-        chosen = max(node["counts"], key=lambda item: (node["counts"][item], item == last))
+        def _dim_rank(item: str) -> tuple:
+            tail = item.rsplit("_", 1)[-1]
+            scaled = tail.replace(".", "", 1).isdigit()
+            return (node["counts"][item], 0 if scaled else 1)
+
+        chosen = max(node["counts"], key=_dim_rank)
         chosen_vars = seen["dimstyles"].get(chosen) or {}
         node["name"] = chosen
         node["vars"] = {var: chosen_vars.get(var) for var in size_vars}
@@ -450,7 +494,8 @@ def _merge(profile: dict, seen: dict, weight: int) -> dict:
             node["counts"][name] = node["counts"].get(name, 0) + weight
             last = name
             node["vars"] = variables
-        node["value"] = max(node["counts"], key=lambda item: (node["counts"][item], item == last))
+        node["value"] = max(node["counts"], key=lambda item: (
+            node["counts"][item], 0 if item.rsplit("_", 1)[-1].replace(".", "", 1).isdigit() else 1))
         if node["value"] in seen["dimstyles"]:
             node["vars"] = {key: value for key, value in seen["dimstyles"][node["value"]].items()
                             if key not in {"dimlfac", "dimdec"}}
@@ -509,7 +554,9 @@ def learn_from_final(doc: Document, entry: dict, project=None) -> list[str]:
     before = observe(app_doc) if app_doc is not None else None
     final["layer_map"] = layer_map_from(app_doc, final_doc)
     final["font"] = _font_in_use(final_doc)
+    spec = _spec_of(doc)
     final["sheet_scale"] = _sheet_scale(doc)
+    final["sheet_kind"] = sheet_kind(spec)
     profile = load_profile(project)
     weight = int(profile.get("final_count", 0)) + 1
     profile = _merge(profile, final, weight)
@@ -565,11 +612,19 @@ def learned_lines(profile: dict | None = None, project=None) -> list[str]:
         return []
     scope = "כל הפרויקטים" if profile.get("scope") == "global" else "הפרויקט"
     lines = [f"היקף: {scope}", f"גרסאות סופיות: {profile['final_count']}"]
-    for key, label in (("units", "יחידות"), ("ltscale", "קנה מידה לסוג קו"),
-                       ("language", "שפת הטקסט"), ("plot_style", "סגנון הדפסה"), ("paper", "גודל גיליון")):
+    for key, label in (("units", "יחידות"), ("language", "שפת הטקסט"),
+                       ("plot_style", "סגנון הדפסה"), ("paper", "גודל גיליון")):
         value = (profile.get(key) or {}).get("value")
         if value not in (None, ""):
             lines.append(f"{label}: {value}")
+    for key in sorted(profile.get("ltscale_by_scale") or {}):
+        value = (profile["ltscale_by_scale"][key] or {}).get("value")
+        if value not in (None, ""):
+            lines.append(f"LTSCALE {key}: {value}")
+    if not profile.get("ltscale_by_scale"):
+        value = (profile.get("ltscale") or {}).get("value")
+        if value not in (None, ""):
+            lines.append(f"LTSCALE: {value}")
     dimstyle = (profile.get("dimstyle") or {}).get("value")
     if dimstyle:
         lines.append(f"סגנון מידות: {dimstyle}")
@@ -632,8 +687,47 @@ def _set_layer_color(layer, color: int) -> None:
         layer.on()
 
 
+def _mappings_that_do_not_collapse(doc, layer_map: dict) -> dict:
+    """Drop a rename onto an app layer that is staying put.
+
+    A swap is kept: both layers are renamed away, so neither is a place the other set falls into.
+    """
+    present = {normalize_layer(layer.dxf.name) for layer in doc.layers}
+    renamed_away = set()
+    for key, info in layer_map.items():
+        if normalize_layer(str(info.get("name") or "")) != key:
+            renamed_away.add(key)
+    kept = {}
+    for key, info in layer_map.items():
+        target = normalize_layer(str(info.get("name") or ""))
+        if target and target != key and target in present and target not in renamed_away:
+            continue
+        kept[key] = info
+    return kept
+
+
+def _purge_emptied_app_layers(doc, renamed_away: set[str]) -> None:
+    """Remove an app-created source layer only after every entity has left it."""
+    if not renamed_away:
+        return
+    from .drawing.context import LAYERS
+    app_names = {name for name, *_rest in LAYERS}
+    used = set()
+    for layout in doc.layouts:
+        for entity in layout:
+            if entity.dxf.hasattr("layer"):
+                used.add(normalize_layer(entity.dxf.layer))
+    for layer in list(doc.layers):
+        key = normalize_layer(layer.dxf.name)
+        if key in renamed_away and key not in used and layer.dxf.name in app_names:
+            try:
+                doc.layers.remove(layer.dxf.name)
+            except Exception:  # noqa: BLE001
+                continue
+
+
 def apply_profile(doc, profile: dict | None = None, *, project=None, spec_units: str | None = None,
-                  sheet_scale: float | None = None) -> bool:
+                  sheet_scale: float | None = None, sheet_kind: str = "model") -> bool:
     """Restyle from a per-layer map. Linetype, visibility and geometry stay as they are.
 
     LTSCALE and the size dimension variables are applied only when this sheet's scale is
@@ -644,51 +738,66 @@ def apply_profile(doc, profile: dict | None = None, *, project=None, spec_units:
     if not profile.get("final_count"):
         return False
     changed = False
-    scale_key = _scale_key(sheet_scale)
+    scale_key = _scale_key(sheet_scale, sheet_kind)
     learned_scale = (profile.get("ltscale_by_scale") or {}).get(scale_key) or {}
     if scale_key and learned_scale.get("value") not in (None, ""):
         new_scale = float(learned_scale["value"])
         if float(doc.header.get("$LTSCALE", 1) or 1) != new_scale:
             doc.header["$LTSCALE"] = new_scale
             changed = True
-    for source_key, info in (profile.get("layer_map") or {}).items():
-        target_name = str(info.get("name") or "")
-        source_name = str(info.get("source") or source_key)
-        if not target_name or target_name.upper() in {"0", "DEFPOINTS"}:
-            continue
+    kept = _mappings_that_do_not_collapse(doc, profile.get("layer_map") or {})
+    planned = []
+    for layout in doc.layouts:
+        for entity in layout:
+            if not entity.dxf.hasattr("layer"):
+                continue
+            source_key = normalize_layer(entity.dxf.layer)
+            info = kept.get(source_key)
+            if not info:
+                continue
+            target_name = str(info.get("name") or "")
+            if not target_name:
+                continue
+            planned.append((entity, source_key, str(entity.dxf.layer), target_name, info))
+    for entity, source_key, source_name, target_name, info in planned:
         try:
             source_layer = doc.layers.get(source_name)
         except Exception:  # noqa: BLE001
             continue
-        same_name = normalize_layer(target_name) == normalize_layer(source_name)
-        same_color = _absolute_color(source_layer) == abs(int(info.get("color") or 0))
-        same_weight = int(source_layer.dxf.lineweight or 0) == int(info.get("lineweight") or 0)
-        if same_name and same_color and same_weight:
-            continue
+        same_name = normalize_layer(target_name) == source_key
         if target_name not in doc.layers:
             doc.layers.add(target_name, color=abs(int(info.get("color") or 7)),
                            lineweight=int(info.get("lineweight") or -1),
                            linetype=str(source_layer.dxf.linetype or "CONTINUOUS"))
             changed = True
-        target = doc.layers.get(target_name if target_name in doc.layers else source_name)
-        if not same_color:
+            if _layer_is_off(source_layer):
+                doc.layers.get(target_name).off()
+        if not same_name:
+            entity_lt = str(entity.dxf.linetype) if entity.dxf.hasattr("linetype") else "BYLAYER"
+            target_layer = doc.layers.get(target_name)
+            source_lt = str(source_layer.dxf.linetype or "CONTINUOUS")
+            if entity_lt in {"", "BYLAYER"} and str(target_layer.dxf.linetype or "CONTINUOUS") != source_lt:
+                entity.dxf.linetype = source_lt
+            entity.dxf.layer = target_name
+            changed = True
+    for source_key, info in kept.items():
+        target_name = str(info.get("name") or "")
+        source_name = str(info.get("source") or source_key)
+        if target_name not in doc.layers:
+            continue
+        try:
+            source_layer = doc.layers.get(source_name)
+        except Exception:  # noqa: BLE001
+            source_layer = None
+        target = doc.layers.get(target_name)
+        if source_layer is not None and _absolute_color(target) != abs(int(info.get("color") or 0)):
             _set_layer_color(target, abs(int(info["color"])))
             changed = True
-        if not same_weight:
+        if int(target.dxf.lineweight or 0) != int(info.get("lineweight") or 0):
             target.dxf.lineweight = int(info["lineweight"])
             changed = True
-        if not same_name:
-            for entity in doc.modelspace():
-                if entity.dxf.hasattr("layer") and normalize_layer(entity.dxf.layer) == source_key:
-                    entity.dxf.layer = target_name
-            # Keep the source layer's visibility. A final that is off must not turn this one off,
-            # and moving onto a new layer must not turn a visible layer off or an off layer on.
-            if _layer_is_off(source_layer):
-                if not _layer_is_off(target):
-                    target.off()
-            elif _layer_is_off(target):
-                target.on()
-            changed = True
+    _purge_emptied_app_layers(doc, {key for key, info in kept.items()
+                                    if normalize_layer(str(info.get("name") or "")) != key})
     if scale_key:
         node = (profile.get("dims_by_scale") or {}).get(scale_key) or {}
         variables = node.get("vars") or {}
@@ -712,8 +821,9 @@ def apply_profile(doc, profile: dict | None = None, *, project=None, spec_units:
     font = str((profile.get("font") or {}).get("value") or "")
     if font and _font_file_exists(font):
         seen_styles = set()
-        for entity in doc.modelspace().query("TEXT MTEXT"):
-            seen_styles.add(str(entity.dxf.style))
+        for layout in doc.layouts:
+            for entity in layout.query("TEXT MTEXT"):
+                seen_styles.add(str(entity.dxf.style))
         for name in seen_styles:
             try:
                 style = doc.styles.get(name)

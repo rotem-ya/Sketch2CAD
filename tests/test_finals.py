@@ -50,8 +50,10 @@ def _dxf(path, *, units, ltscale, layers, entities, dimstyles=(), texts=(), fram
             doc.modelspace().add_line(geom[0], geom[1], dxfattribs=attribs)
         elif kind == "LWPOLYLINE":
             doc.modelspace().add_lwpolyline(geom, dxfattribs=attribs)
-    for style in dimstyles:
+    for index, style in enumerate(dimstyles):
         doc.dimstyles.duplicate_entry("EZDXF", style)
+        doc.modelspace().add_linear_dim(
+            base=(0, 8 + index), p1=(index, 0), p2=(5 + index, 0), dimstyle=style)
     for text, height in texts:
         doc.modelspace().add_text(text, dxfattribs={"height": height, "layer": "TEXT", "insert": (1, 1)})
     if "TEXT" not in [layer.dxf.name for layer in doc.layers]:
@@ -155,6 +157,8 @@ def test_profile_from_two_synthetic_finals_prefers_the_newer_one(tmp_path, home)
     assert profile["ltscale"]["value"] == "1000.0"
     assert profile["ltscale"]["counts"]["250.0"] == 1
     assert profile["ltscale"]["counts"]["1000.0"] == 2
+    assert profile["ltscale_by_scale"]["250|model"]["value"] == "1000.0"
+    assert "250|paper" not in profile["ltscale_by_scale"]
     assert profile["units"]["value"] == "m"
     assert profile["language"]["value"] == "en"
     assert profile["plot_style"]["value"] == "Screening 100%.ctb"
@@ -193,12 +197,12 @@ def test_applying_the_profile_keeps_counts_and_coordinates(tmp_path, home):
     profile = {
         "final_count": 1,
         "scope": "project",
-        "ltscale_by_scale": {"250": {"value": "1000"}},
+        "ltscale_by_scale": {"250|model": {"value": "1000"}},
         "layer_map": {
             "NEW": {"source": "NEW", "name": "$$$-DP400", "color": 1, "lineweight": 35},
         },
         "font": {"value": str(tmp_path / "missing-font.ttf")},
-        "dims_by_scale": {"250": {"name": "EZDXF", "vars": {"dimtxt": 99, "dimlfac": 0.001, "dimdec": 0}}},
+        "dims_by_scale": {"250|model": {"name": "EZDXF", "vars": {"dimtxt": 99, "dimlfac": 0.001, "dimdec": 0}}},
     }
     doc.dimstyles.get("EZDXF").dxf.dimtxt = 2.5
     assert apply_profile(doc, profile, sheet_scale=250) is True
@@ -298,6 +302,113 @@ def test_an_unchanged_final_changes_nothing(tmp_path, home):
     loaded.saveas(after)
     assert _mask(before.read_text(encoding="utf-8", errors="replace")) == _mask(
         after.read_text(encoding="utf-8", errors="replace"))
+
+
+def test_single_sheet_and_multiview_at_the_same_scale_stay_apart(tmp_path, home):
+    project, doc = _project(tmp_path)
+    _dxf(doc.path / "sheet.dxf", units="mm", ltscale=1250,
+         layers=[("NEW", 1, 25, "CONTINUOUS")],
+         entities=[("LINE", "NEW", ((0, 0), (10, 0)))])
+    doc.outputs = {"dxf": "sheet.dxf"}
+    (doc.path / "spec.json").write_text(json.dumps({"scale": 500, "units": "mm"}), encoding="utf-8")
+    doc.save()
+    register_final(doc, name="model.dxf", data=(doc.path / "sheet.dxf").read_bytes(), project=project)
+    paper = _dxf(tmp_path / "paper.dxf", units="mm", ltscale=2.5,
+                 layers=[("NEW", 1, 25, "CONTINUOUS")],
+                 entities=[("LINE", "NEW", ((0, 0), (10, 0)))])
+    (doc.path / "spec.json").write_text(json.dumps({
+        "scale": 500, "units": "mm", "views": [{"id": "side", "scale": 50}],
+    }), encoding="utf-8")
+    doc.outputs = {"dxf": "paper.dxf"}
+    (doc.path / "paper.dxf").write_bytes(paper.read_bytes())
+    doc.save()
+    register_final(doc, name="paper.dxf", source=doc.path / "paper.dxf", project=project)
+    profile = load_profile(project)
+    assert profile["ltscale_by_scale"]["500|model"]["value"] == "1250.0"
+    assert profile["ltscale_by_scale"]["500|paper"]["value"] == "2.5"
+    single = ezdxf.readfile(doc.path / "sheet.dxf")
+    multi = ezdxf.readfile(doc.path / "paper.dxf")
+    apply_profile(multi, profile, sheet_scale=500, sheet_kind="paper")
+    apply_profile(single, profile, sheet_scale=500, sheet_kind="model")
+    assert multi.header["$LTSCALE"] == 2.5
+    assert single.header["$LTSCALE"] == 1250
+
+
+def test_swapping_dash_layers_keeps_the_sets_apart():
+    doc = ezdxf.new("R2018", setup=True)
+    doc.layers.add("NEW", color=1, linetype="CONTINUOUS")
+    doc.layers.add("NEW_DASH", color=1, linetype="DASHED")
+    solid = doc.modelspace().add_line((0, 0), (12, 0), dxfattribs={"layer": "NEW"})
+    dashed = doc.modelspace().add_line((0, 4), (16, 4), dxfattribs={"layer": "NEW_DASH"})
+    profile = {
+        "final_count": 1,
+        "layer_map": {
+            "NEW": {"source": "NEW", "name": "NEW_DASH", "color": 1, "lineweight": 35},
+            "NEW_DASH": {"source": "NEW_DASH", "name": "NEW", "color": 1, "lineweight": 25},
+        },
+    }
+    apply_profile(doc, profile)
+    assert solid.dxf.layer == "NEW_DASH"
+    assert dashed.dxf.layer == "NEW"
+    assert dashed.dxf.linetype == "DASHED"
+    assert solid.dxf.linetype == "CONTINUOUS"
+    assert sum(1 for entity in doc.modelspace() if entity.dxf.layer == "NEW") == 1
+    assert sum(1 for entity in doc.modelspace() if entity.dxf.layer == "NEW_DASH") == 1
+
+
+def test_a_target_that_is_an_unmapped_app_layer_is_skipped():
+    doc = ezdxf.new("R2018", setup=True)
+    doc.layers.add("NEW", color=1, linetype="CONTINUOUS")
+    doc.layers.add("EXISTING", color=8, linetype="DASHED")
+    line = doc.modelspace().add_line((0, 0), (4, 0), dxfattribs={"layer": "NEW", "linetype": "DASHED"})
+    kept = doc.modelspace().add_line((0, 1), (4, 1), dxfattribs={"layer": "EXISTING"})
+    profile = {
+        "final_count": 1,
+        "layer_map": {
+            "NEW": {"source": "NEW", "name": "EXISTING", "color": 8, "lineweight": 25},
+        },
+    }
+    apply_profile(doc, profile)
+    assert line.dxf.layer == "NEW"
+    assert line.dxf.linetype == "DASHED"
+    assert kept.dxf.layer == "EXISTING"
+    assert doc.layers.get("NEW").is_off() is False
+    assert doc.layers.get("EXISTING").is_off() is False
+
+
+def test_paper_space_text_follows_the_layer_mapping():
+    doc = ezdxf.new("R2018", setup=True)
+    doc.layers.add("TEXT", color=7)
+    paper = doc.layouts.new("SHEET")
+    text = paper.add_text("TITLE", dxfattribs={"layer": "TEXT", "height": 2.5, "insert": (1, 1)})
+    profile = {
+        "final_count": 1,
+        "layer_map": {
+            "TEXT": {"source": "TEXT", "name": "NOTES", "color": 7, "lineweight": 18},
+            "UNUSED": {"source": "UNUSED", "name": "NOWHERE", "color": 1, "lineweight": 25},
+        },
+    }
+    apply_profile(doc, profile)
+    assert text.dxf.layer == "NOTES"
+    assert "NOTES" in doc.layers
+    assert "NOWHERE" not in doc.layers
+
+
+def test_dimstyle_is_the_one_dimensions_use(tmp_path, home):
+    project, doc = _project(tmp_path)
+    drawing = ezdxf.new("R2018", setup=True)
+    drawing.dimstyles.duplicate_entry("EZDXF", "SKETCH2CAD_50")
+    drawing.dimstyles.duplicate_entry("EZDXF", "SKETCH2CAD")
+    drawing.modelspace().add_linear_dim(
+        base=(0, 3), p1=(0, 0), p2=(10, 0), dimstyle="SKETCH2CAD")
+    path = doc.path / "sheet.dxf"
+    drawing.saveas(path)
+    doc.outputs = {"dxf": "sheet.dxf"}
+    doc.save()
+    register_final(doc, name="sheet.dxf", data=path.read_bytes(), project=project)
+    profile = load_profile(project)
+    assert profile["dimstyle"]["value"] == "SKETCH2CAD"
+    assert "SKETCH2CAD_50" not in profile["dimstyle"]["counts"]
 
 
 def test_final_that_is_off_does_not_turn_a_layer_off(tmp_path, home):
