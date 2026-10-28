@@ -216,6 +216,60 @@ def download(label: str, path: Path, key: str) -> None:
         st.download_button(label, Path(path).read_bytes(), file_name=Path(path).name, key=key)
 
 
+def _open_drawing(path: str) -> None:
+    """Open the drawing in the program registered for it. Only the office PC has that program."""
+    if os.name == "nt" and hasattr(os, "startfile"):
+        os.startfile(path)  # type: ignore[attr-defined]
+
+
+def _finals_badge(d: Document) -> str:
+    """List badge naming the rev a final closes. An older rev is dimmed."""
+    from sketch2cad.codes import rev_is_older
+    entry = d.badge_final()
+    if entry is None:
+        return ""
+    rev = str(entry.get("rev") or "").strip()
+    label = T("final_badge") + (f" Rev {rev}" if rev else "")
+    if rev_is_older(rev, d.rev):
+        label = f'<span style="opacity:0.45">{html.escape(label)}</span>'
+    return f"  \n{label}"
+
+
+def current_outputs_strip(d: Document) -> None:
+    """Current revision, its preview, and the files to download, above the tabs."""
+    st.markdown('<div id="current-rev"></div>', unsafe_allow_html=True)
+    note = d.revision_note()
+    title = T("current_rev").format(rev=d.rev)
+    st.markdown(f"**{html.escape(title)}**" + (f" — {html.escape(note)}" if note else ""))
+    preview = d.path / d.outputs.get("preview", "")
+    dwg_rel = d.outputs.get("dwg") or ""
+    pdf_rel = d.outputs.get("pdf") or ""
+    dwg = (d.path / dwg_rel) if dwg_rel else None
+    pdf = (d.path / pdf_rel) if pdf_rel else None
+    thumb, body = st.columns([1, 4], vertical_alignment="center")
+    if preview.is_file():
+        thumb.image(str(preview), width=160)
+    has_dwg = dwg is not None and dwg.is_file()
+    has_pdf = pdf is not None and pdf.is_file()
+    slots = (["dwg"] if has_dwg else []) + (["pdf"] if has_pdf else []) + (["open"] if has_dwg else [])
+    if slots:
+        buttons = body.columns(len(slots))
+        for slot, column in zip(slots, buttons):
+            if slot == "dwg":
+                column.download_button(T("download_dwg"), dwg.read_bytes(), file_name=dwg.name,
+                                       key=f"cur_dwg_{d.code}")
+            elif slot == "pdf":
+                column.download_button(T("download_pdf"), pdf.read_bytes(), file_name=pdf.name,
+                                       key=f"cur_pdf_{d.code}")
+            else:
+                column.button(T("open_in_cad"), key=f"cur_open_{d.code}",
+                              on_click=_open_drawing, args=(str(dwg),))
+        if has_dwg:
+            body.text_input(T("dwg_path"), value=str(dwg.resolve()), disabled=True, key=f"cur_path_{d.code}")
+    else:
+        body.caption(T("no_outputs"))
+
+
 def show_converter_error(e: Exception) -> None:
     from sketch2cad.io.oda import ConverterNotFound
     st.warning(T("no_converter") if isinstance(e, ConverterNotFound) else ui_notice(str(e), L))
@@ -383,8 +437,7 @@ def page_project() -> None:
             st.info(T("no_documents"))
         for d in docs:
             c1, c2, c3, c4 = st.columns([2, 4, 1, 1])
-            badge = f"  \n{T('final_badge')}" if d.finals else ""
-            c1.markdown(f"**{ltr(d.code)}**  \n{ltr('Rev ' + d.rev)}{badge}", unsafe_allow_html=True)
+            c1.markdown(f"**{ltr(d.code)}**  \n{ltr('Rev ' + d.rev)}{_finals_badge(d)}", unsafe_allow_html=True)
             c2.markdown(f"{d.display_title(L)}  \n<small>{d.description}</small>", unsafe_allow_html=True)
             c3.markdown(label_of(STATUSES, d.status))
             c4.button(T("open"), key=f"doc_{d.folder}", on_click=go, args=("document", None, d.folder))
@@ -547,10 +600,14 @@ def tab_finals(p: Project, d: Document) -> None:
             st.error(f"{T('error')}: {exc}")
     if not d.finals:
         st.info(T("final_none"))
+    from sketch2cad.codes import rev_is_older
     for entry in d.finals:
+        rev = str(entry.get("rev") or "")
         sent_mark = " · " + T("final_sent") if entry.get("sent_to_client") else ""
-        st.markdown(f"`{entry.get('name')}` · {ltr('Rev ' + str(entry.get('rev') or ''))}{sent_mark}",
-                    unsafe_allow_html=True)
+        st.markdown(f"`{entry.get('name')}` · {ltr('Rev ' + rev)}{sent_mark}", unsafe_allow_html=True)
+        if rev_is_older(rev, d.rev):
+            st.warning(T("final_older").format(old=rev or "?", new=d.rev))
+            st.markdown(f"[{T('current_files_link')}](#current-rev)")
         if entry.get("original_path"):
             st.caption(entry["original_path"])
         if st.button(T("final_forget"), key=f"forget_{entry.get('file')}"):
@@ -575,6 +632,7 @@ def page_document() -> None:
     st.button(T("back_to_project"), on_click=go, args=("project",))
     st.markdown(f"## {ltr(d.code + '  Rev ' + d.rev)}", unsafe_allow_html=True)
     st.subheader(d.display_title(L))
+    current_outputs_strip(d)
     cat = load_catalog(p)
     (tab_det, tab_src, tab_draw, tab_chk, tab_bom, tab_out, tab_final, tab_pkg, tab_cmp, tab_rev) = st.tabs(
         [T("details"), T("sources"), T("drawing"), T("checks"), T("bom"), T("outputs"), T("final_version"),

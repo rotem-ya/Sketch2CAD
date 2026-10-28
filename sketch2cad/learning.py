@@ -775,6 +775,7 @@ def learn_from_final(doc: Document, entry: dict, project=None) -> list[str]:
         "plot_style": final.get("plot_style"),
         "paper": final.get("paper"),
         "title_block": final.get("title_block"),
+        "comparable": bool(final.get("comparable")),
     }
     root = learning_root(project, create=True)
     if root is None:
@@ -838,18 +839,24 @@ def rebuild_profile(project, settings: Settings | None = None) -> None:
                 learn_from_final(document, entry, scoped)
 
 
-def recent_examples(project=None, limit: int = 3) -> list[dict]:
+def recent_examples(project=None, limit: int = 3, *, comparable_only: bool = False) -> list[dict]:
+    """Newest example diffs. With ``comparable_only``, observation-only finals are left out."""
     root = learning_root(project, create=False)
     folder = (root / "examples") if root is not None else None
     if folder is None or not folder.is_dir():
         return []
     files = sorted(folder.glob("*.json"), key=lambda path: path.stat().st_mtime, reverse=True)
     found = []
-    for path in files[:limit]:
+    for path in files:
         try:
-            found.append(json.loads(path.read_text(encoding="utf-8")))
+            item = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             continue
+        if comparable_only and item.get("comparable") is not True:
+            continue
+        found.append(item)
+        if len(found) >= limit:
+            break
     return found
 
 
@@ -1001,7 +1008,10 @@ def house_style_text(profile: dict | None = None, examples: list[dict] | None = 
         lines = ["## How Rotem finishes drawings", "",
                  "Change style only. Do not drop elements and do not move geometry."]
         lines.extend(f"- {line}" for line in rules)
-        found = recent_examples(project, 3) if examples is None else examples[:3]
+        if examples is None:
+            found = recent_examples(project, 3, comparable_only=True)
+        else:
+            found = [item for item in examples if item.get("comparable") is True][:3]
         if found:
             lines.append("")
             lines.append("### Latest differences")

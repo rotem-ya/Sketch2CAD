@@ -355,6 +355,52 @@ def test_qa_errors_block_apply_until_override(tmp_path):
     assert any(s.value == t("agent_applied", lang) for s in at.success)
 
 
+def test_current_revision_files_are_above_the_tabs_and_an_old_final_is_marked(tmp_path):
+    """Rev B files sit above the tabs. A Rev A final is named and dimmed in the list."""
+    from sketch2cad.config import Settings
+    from sketch2cad.documents import create_document
+    from sketch2cad.i18n import t
+    from sketch2cad.projects import create_project
+    project = create_project(tmp_path / "projects", "20117", "חצרים", "Hatzerim")
+    doc = create_document(project, title_he="ניקוז", title_en="Drainage", discipline="D", subject="SITE")
+    doc.rev = "B"
+    doc.revisions = [
+        {"rev": "A", "date": "2026-10-01", "note": "נוצר"},
+        {"rev": "B", "date": "2026-10-20", "note": "אחרי הערות המזמין"},
+    ]
+    doc.outputs = {"dwg": "sheet.dwg", "pdf": "sheet.pdf", "preview": "preview.png"}
+    (doc.path / "sheet.dwg").write_bytes(b"dwg")
+    (doc.path / "sheet.pdf").write_bytes(b"pdf")
+    from PIL import Image
+    Image.new("RGB", (8, 8), (180, 180, 180)).save(doc.path / "preview.png")
+    doc.finals = [{"file": "finals/old.dxf", "name": "20-10.dxf", "rev": "A"}]
+    doc.save()
+    Settings(ui_language="he", projects=[project.folder]).save()
+
+    at = AppTest.from_file(APP, default_timeout=60)
+    at.session_state["page"] = "document"
+    at.session_state["project_folder"] = project.folder
+    at.session_state["doc_folder"] = doc.folder
+    at.run()
+    assert not at.exception, at.exception
+    text = "\n".join(m.value for m in at.markdown)
+    assert "הגרסה הנוכחית: Rev B" in text
+    assert "אחרי הערות המזמין" in text
+    assert any(b.label == t("download_dwg", "he") for b in at.download_button)
+    assert any(b.label == t("download_pdf", "he") for b in at.download_button)
+    assert any(b.label == t("open_in_cad", "he") for b in at.button)
+    path_box = next(w for w in at.text_input if w.key == f"cur_path_{doc.code}")
+    assert str(path_box.value).endswith("sheet.dwg")
+    assert any("זו הגרסה הסופית של Rev A. הגרסה הנוכחית היא Rev B" in w.value for w in at.warning)
+    assert t("current_files_link", "he") in text
+
+    next(b for b in at.button if b.label == t("back_to_project", "he")).click().run()
+    assert not at.exception, at.exception
+    listed = "\n".join(m.value for m in at.markdown)
+    assert "גרסה סופית Rev A" in listed
+    assert "opacity:0.45" in listed
+
+
 def test_mail_page_opens(tmp_path):
     from sketch2cad.config import Settings
     from sketch2cad.i18n import t

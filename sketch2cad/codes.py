@@ -54,6 +54,24 @@ def next_code(pattern: str, existing: list[str], **fields) -> tuple[str, int]:
     return render(pattern, seq=seq, **fields), seq
 
 
+def rev_rank(rev: str | None) -> tuple[int, int] | None:
+    """Order of a revision letter or a numeric rev. None when the text is not a revision."""
+    text = (rev or "").strip().upper()
+    if text in REV_SEQUENCE:
+        return (0, REV_SEQUENCE.index(text))
+    if text.isdigit():
+        return (1, int(text))
+    return None
+
+
+def rev_is_older(rev: str | None, current: str | None) -> bool:
+    """True when ``rev`` is an earlier revision than ``current`` in the same series."""
+    left, right = rev_rank(rev), rev_rank(current)
+    if left is None or right is None or left[0] != right[0]:
+        return False
+    return left[1] < right[1]
+
+
 def next_rev(rev: str | None) -> str:
     if not rev:
         return REV_SEQUENCE[0]

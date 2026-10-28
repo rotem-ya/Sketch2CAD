@@ -64,6 +64,22 @@ class Document:
     def display_title(self, lang: str) -> str:
         return self.title.get(lang) or self.title.get("en") or self.title.get("he") or self.code
 
+    def revision_note(self) -> str:
+        """The note recorded for the current revision, or empty."""
+        current = str(self.rev).strip().upper()
+        for item in self.revisions:
+            if str(item.get("rev") or "").strip().upper() == current:
+                return str(item.get("note") or "")
+        return ""
+
+    def badge_final(self) -> dict | None:
+        """The final the drawings list should name: the current rev if one exists, else the latest."""
+        if not self.finals:
+            return None
+        current = str(self.rev).strip().upper()
+        same = [item for item in self.finals if str(item.get("rev") or "").strip().upper() == current]
+        return (same or self.finals)[-1]
+
     def save(self) -> None:
         self.updated = datetime.now().isoformat(timespec="seconds")
         data = asdict(self)
