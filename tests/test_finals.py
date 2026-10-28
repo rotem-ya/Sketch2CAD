@@ -2,9 +2,11 @@
 
 The DXFs here are built in the test. Nothing from a real project is stored in the repository.
 """
+import hashlib
 import json
 import os
 import re
+from pathlib import Path
 
 import ezdxf
 import pytest
@@ -16,7 +18,7 @@ from sketch2cad.finals import lock_path, newest_dwg, register_final
 from sketch2cad.io import oda
 from sketch2cad.learning import (
     PROFILE_VERSION, apply_profile, forget_final, house_style_text, layer_map_from, learned_lines,
-    load_profile, normalize_layer, style_enabled, _matched_pairs,
+    load_profile, normalize_layer, rebuild_profile, style_enabled, _as_dxf, _matched_pairs,
 )
 from sketch2cad.projects import Project, create_project
 
@@ -951,3 +953,77 @@ def test_global_forget_keeps_finals_from_other_projects(tmp_path, home):
     assert profile["final_count"] == 1
     assert profile["layer_map"]["new"]["name"] == "NEW"
     assert profile["scope"] == "global"
+
+
+def _snapshot(folder):
+    return {path.name: path.read_bytes() for path in folder.iterdir() if path.is_file()}
+
+
+def _stored_dwg(folder, stem: str, payload: bytes):
+    dwg = folder / f"20261020_120000_{stem}.dwg"
+    dxf = folder / f"20261020_120000_{stem}.dxf"
+    dwg.write_bytes(payload)
+    drawing = ezdxf.new("R2018")
+    drawing.modelspace().add_line((0, 0), (1, 0))
+    drawing.saveas(dxf)
+    entry = {
+        "file": f"finals/{dwg.name}",
+        "name": f"{stem}.dwg",
+        "md5": hashlib.md5(payload).hexdigest(),
+        "rev": "A",
+    }
+    return dwg, dxf, entry
+
+
+def test_rebuild_and_forget_leave_existing_final_files_unchanged(tmp_path, home, monkeypatch):
+    """A stored DXF next to an unchanged DWG is reused. Nothing already in finals/ is rewritten."""
+    project, doc = _project(tmp_path)
+    folder = doc.path / "finals"
+    folder.mkdir()
+    kept_dwg, kept_dxf, kept = _stored_dwg(folder, "kept", b"KEPT-DWG")
+    drop_dwg, drop_dxf, dropped = _stored_dwg(folder, "drop", b"DROP-DWG")
+    (folder / "note.txt").write_bytes(b"leave-me")
+    doc.finals = [kept, dropped]
+    doc.save()
+    before = _snapshot(folder)
+
+    def converted(*_args, **_kwargs):
+        raise AssertionError("an unchanged final was converted again")
+
+    monkeypatch.setattr(oda, "convert", converted)
+    rebuild_profile(project)
+    assert _snapshot(folder) == before
+    forget_final(doc, project, dropped["file"])
+    after = _snapshot(folder)
+    assert drop_dwg.name not in after
+    for name, data in before.items():
+        if name == drop_dwg.name:
+            continue
+        assert after[name] == data
+    assert kept_dxf.read_bytes() == before[kept_dxf.name]
+    assert drop_dxf.read_bytes() == before[drop_dxf.name]
+
+
+def test_a_changed_dwg_is_converted_to_a_new_file(tmp_path, monkeypatch):
+    project, doc = _project(tmp_path)
+    folder = doc.path / "finals"
+    folder.mkdir()
+    dwg, dxf, entry = _stored_dwg(folder, "plan", b"OLD-DWG")
+    original = dxf.read_bytes()
+    dwg.write_bytes(b"NEW-DWG")
+    written = []
+
+    def fake_convert(src, fmt, out_dir=None, **_kwargs):
+        dest = Path(out_dir) / f"{Path(src).stem}.dxf"
+        dest.write_bytes(b"CONVERTED")
+        written.append(dest)
+        return dest
+
+    monkeypatch.setattr(oda, "convert", fake_convert)
+    produced = _as_dxf(dwg, entry)
+    assert produced is not None and produced != dxf
+    assert produced.parent == folder
+    assert produced.name != dxf.name
+    assert produced.read_bytes() == b"CONVERTED"
+    assert dxf.read_bytes() == original
+    assert not any(path.parent == folder and path.name == dxf.name for path in written)

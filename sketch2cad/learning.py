@@ -5,10 +5,12 @@ and header variables only. Entity counts, text and coordinates stay as the rende
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
 import shutil
+import tempfile
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
@@ -692,14 +694,51 @@ def _read_dxf(path: Path):
     return ezdxf.readfile(path)
 
 
-def _as_dxf(path: Path) -> Path | None:
+def _file_md5(path: Path) -> str:
+    return hashlib.md5(path.read_bytes()).hexdigest()
+
+
+def _dxf_for_dwg(dwg: Path) -> Path | None:
+    """The DXF saved under the same name as this DWG, if it is already there."""
+    sidecar = dwg.with_suffix(".dxf")
+    return sidecar if sidecar.is_file() else None
+
+
+def _fresh_dxf_name(dwg: Path) -> Path:
+    """A new name in the same folder. Never a path that already exists."""
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    dest = dwg.parent / f"{stamp}_{dwg.stem}.dxf"
+    extra = 1
+    while dest.exists():
+        dest = dwg.parent / f"{stamp}_{extra}_{dwg.stem}.dxf"
+        extra += 1
+    return dest
+
+
+def _as_dxf(path: Path, entry: dict | None = None) -> Path | None:
+    """DXF for a stored final. An unchanged DWG reuses its DXF; a new conversion gets a new name."""
     if path.suffix.lower() == ".dxf" and path.is_file():
         return path
     if path.suffix.lower() != ".dwg" or not path.is_file():
         return None
+    recorded = str((entry or {}).get("md5") or "").lower()
+    existing = _dxf_for_dwg(path)
+    if existing is not None and recorded and _file_md5(path).lower() == recorded:
+        return existing
     try:
         from .io import oda
-        return oda.convert(path, "dxf", path.parent)
+        with tempfile.TemporaryDirectory(prefix="s2c_final_") as tmp:
+            produced = oda.convert(path, "dxf", tmp)
+            data = Path(produced).read_bytes()
+            while True:
+                dest = _fresh_dxf_name(path)
+                try:
+                    handle = os.open(dest, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+                except FileExistsError:
+                    continue
+                with os.fdopen(handle, "wb") as out:
+                    out.write(data)
+                return dest
     except Exception as exc:  # noqa: BLE001 - a missing converter must not lose the final
         raise RuntimeError(str(exc)) from exc
 
@@ -724,7 +763,7 @@ def learn_from_final(doc: Document, entry: dict, project=None) -> list[str]:
     warnings: list[str] = []
     stored = doc.path / entry["file"]
     try:
-        dxf = _as_dxf(stored)
+        dxf = _as_dxf(stored, entry)
     except RuntimeError as exc:
         warnings.append(str(exc))
         return warnings
