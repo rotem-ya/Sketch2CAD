@@ -51,6 +51,8 @@ class Document:
     title_overrides: dict = field(default_factory=dict)
     sources: list = field(default_factory=list)   # paths relative to the document folder
     outputs: dict = field(default_factory=dict)   # {"dwg": rel, "dxf": rel, "pdf": rel, "preview": rel}
+    finals: list = field(default_factory=list)    # outside AutoCAD copies; never replaces outputs
+    linked_folder: str = ""                       # PC folder whose newest DWG can be filed as a final
     revisions: list = field(default_factory=list)
     created: str = field(default_factory=lambda: date.today().isoformat())
     updated: str = field(default_factory=lambda: datetime.now().isoformat(timespec="seconds"))
