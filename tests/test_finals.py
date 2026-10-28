@@ -996,12 +996,12 @@ def test_rebuild_and_forget_leave_existing_final_files_unchanged(tmp_path, home,
     forget_final(doc, project, dropped["file"])
     after = _snapshot(folder)
     assert drop_dwg.name not in after
+    assert drop_dxf.name not in after
     for name, data in before.items():
-        if name == drop_dwg.name:
+        if name in {drop_dwg.name, drop_dxf.name}:
             continue
         assert after[name] == data
     assert kept_dxf.read_bytes() == before[kept_dxf.name]
-    assert drop_dxf.read_bytes() == before[drop_dxf.name]
 
 
 def test_a_changed_dwg_is_converted_to_a_new_file(tmp_path, monkeypatch):
@@ -1027,3 +1027,45 @@ def test_a_changed_dwg_is_converted_to_a_new_file(tmp_path, monkeypatch):
     assert produced.read_bytes() == b"CONVERTED"
     assert dxf.read_bytes() == original
     assert not any(path.parent == folder and path.name == dxf.name for path in written)
+
+
+def test_register_converts_a_dwg_once_and_forget_removes_its_dxf(tmp_path, home, monkeypatch):
+    """Register, then rebuild twice: one DXF, one conversion. Forget removes that pair only."""
+    project, doc = _project(tmp_path)
+    calls = []
+
+    def stub(src, fmt, out_dir=None, **_kwargs):
+        calls.append(Path(src).name)
+        dest = Path(out_dir) / f"{Path(src).stem}.dxf"
+        drawing = ezdxf.new("R2018")
+        drawing.modelspace().add_line((0, 0), (1, 0))
+        drawing.saveas(dest)
+        return dest
+
+    monkeypatch.setattr(oda, "convert", stub)
+    source = tmp_path / "plan.dwg"
+    source.write_bytes(b"DWG-ONCE")
+    entry, warnings = register_final(doc, name="plan.dwg", source=source, project=project)
+    assert not any("converter" in warning.lower() for warning in warnings)
+    assert calls == [Path(entry["file"]).name]
+    folder = doc.path / "finals"
+    (folder / "note.txt").write_bytes(b"keep-me")
+    other = folder / "other.dxf"
+    other.write_bytes(b"someone-else")
+    stored = doc.path / entry["file"]
+    saved = Document.load(doc.path)
+    recorded = saved.finals[0]
+    assert recorded["dxf_md5"] == recorded["md5"]
+    assert Path(recorded["dxf"]).name == stored.with_suffix(".dxf").name
+    before = _snapshot(folder)
+    rebuild_profile(project)
+    rebuild_profile(project)
+    assert calls == [stored.name]
+    assert _snapshot(folder) == before
+    forget_final(Document.load(doc.path), project, recorded["file"])
+    after = _snapshot(folder)
+    assert stored.name not in after
+    assert stored.with_suffix(".dxf").name not in after
+    assert after["note.txt"] == b"keep-me"
+    assert after["other.dxf"] == b"someone-else"
+    assert not any(path.suffix.lower() == ".dxf" and stored.stem in path.name for path in folder.iterdir())
