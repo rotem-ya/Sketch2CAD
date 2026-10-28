@@ -5,10 +5,12 @@ and header variables only. Entity counts, text and coordinates stay as the rende
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
 import shutil
+import tempfile
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
@@ -692,14 +694,105 @@ def _read_dxf(path: Path):
     return ezdxf.readfile(path)
 
 
-def _as_dxf(path: Path) -> Path | None:
+def _file_md5(path: Path) -> str:
+    return hashlib.md5(path.read_bytes()).hexdigest()
+
+
+def _finals_child(doc: Document, rel: str) -> Path | None:
+    """A file directly inside this drawing's ``finals/`` folder, or None."""
+    text = str(rel or "").replace("\\", "/").lstrip("/")
+    if not text or ".." in Path(text).parts:
+        return None
+    root = (doc.path / "finals").resolve()
+    target = (doc.path / text).resolve()
+    if target.parent != root:
+        return None
+    return target
+
+
+def _remember_dxf(doc: Document | None, entry: dict | None, dxf: Path, source_md5: str) -> None:
+    """Remember which DXF belongs to this final so the next rebuild can reuse it."""
+    if doc is None or entry is None:
+        return
+    rel = dxf.resolve().relative_to(doc.path.resolve()).as_posix()
+    owned = [str(item) for item in (entry.get("dxfs") or [])]
+    changed = False
+    if entry.get("dxf") != rel:
+        entry["dxf"] = rel
+        changed = True
+    if str(entry.get("dxf_md5") or "").lower() != source_md5.lower():
+        entry["dxf_md5"] = source_md5.lower()
+        changed = True
+    if rel not in owned:
+        owned.append(rel)
+        entry["dxfs"] = owned
+        changed = True
+    if changed:
+        doc.save()
+
+
+def _fresh_dxf_name(dwg: Path) -> Path:
+    """A new name in the same folder. Never a path that already exists."""
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    dest = dwg.parent / f"{stamp}_{dwg.stem}.dxf"
+    extra = 1
+    while dest.exists():
+        dest = dwg.parent / f"{stamp}_{extra}_{dwg.stem}.dxf"
+        extra += 1
+    return dest
+
+
+def _place_dxf(dwg: Path, data: bytes) -> Path:
+    """Write a conversion. Use ``<stored name>.dxf`` when it is free; otherwise a new name."""
+    preferred = dwg.with_suffix(".dxf")
+    dest = preferred if not preferred.exists() else _fresh_dxf_name(dwg)
+    while True:
+        try:
+            handle = os.open(dest, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except FileExistsError:
+            dest = _fresh_dxf_name(dwg)
+            continue
+        with os.fdopen(handle, "wb") as out:
+            out.write(data)
+        return dest
+
+
+def _as_dxf(path: Path, entry: dict | None = None, doc: Document | None = None) -> Path | None:
+    """DXF for a stored final.
+
+    Reuse the recorded DXF while the DWG's MD5 still matches. The first conversion uses
+    ``<stored name>.dxf`` when that name is free. A timestamped name is used only when that
+    name is already taken and does not belong to this unchanged DWG.
+    """
     if path.suffix.lower() == ".dxf" and path.is_file():
         return path
     if path.suffix.lower() != ".dwg" or not path.is_file():
         return None
+    entry = entry if isinstance(entry, dict) else None
+    current = _file_md5(path).lower()
+    recorded_md5 = str((entry or {}).get("dxf_md5") or "").lower()
+    recorded = _finals_child(doc, str((entry or {}).get("dxf") or "")) if doc is not None else None
+    if recorded is not None and recorded.is_file() and recorded_md5 and recorded_md5 == current:
+        return recorded
+    preferred = path.with_suffix(".dxf")
+    filed_md5 = str((entry or {}).get("md5") or "").lower()
+    inside = doc is None
+    if doc is not None and preferred.is_file():
+        try:
+            rel = preferred.resolve().relative_to(doc.path.resolve()).as_posix()
+        except ValueError:
+            rel = ""
+        inside = _finals_child(doc, rel) is not None
+    if preferred.is_file() and filed_md5 and filed_md5 == current and inside:
+        _remember_dxf(doc, entry, preferred, current)
+        return preferred
     try:
         from .io import oda
-        return oda.convert(path, "dxf", path.parent)
+        with tempfile.TemporaryDirectory(prefix="s2c_final_") as tmp:
+            produced = oda.convert(path, "dxf", tmp)
+            dest = _place_dxf(path, Path(produced).read_bytes())
+        _remember_dxf(doc, entry, dest, current)
+        return dest
     except Exception as exc:  # noqa: BLE001 - a missing converter must not lose the final
         raise RuntimeError(str(exc)) from exc
 
@@ -724,7 +817,7 @@ def learn_from_final(doc: Document, entry: dict, project=None) -> list[str]:
     warnings: list[str] = []
     stored = doc.path / entry["file"]
     try:
-        dxf = _as_dxf(stored)
+        dxf = _as_dxf(stored, entry, doc)
     except RuntimeError as exc:
         warnings.append(str(exc))
         return warnings
@@ -787,13 +880,31 @@ def learn_from_final(doc: Document, entry: dict, project=None) -> list[str]:
     return warnings
 
 
+def _rels_for_final(stored_rel: str, entry: dict) -> list[str]:
+    rels = [stored_rel, str(entry.get("dxf") or "")]
+    rels.extend(str(item) for item in (entry.get("dxfs") or []))
+    stored = Path(stored_rel)
+    if stored.suffix.lower() == ".dwg":
+        rels.append(stored.with_suffix(".dxf").as_posix())
+    return [rel for rel in rels if rel]
+
+
 def forget_final(doc: Document, project, stored_rel: str) -> None:
-    """Drop one final and rebuild the profile from the finals that remain."""
+    """Drop one final, its own DXFs, and rebuild the profile from the finals that remain."""
+    gone = [item for item in doc.finals if item.get("file") == stored_rel]
     doc.finals = [item for item in doc.finals if item.get("file") != stored_rel]
     doc.save()
-    stored = doc.path / stored_rel
-    if stored.is_file() and stored.parent.name == "finals":
-        stored.unlink()
+    keep: set[str] = set()
+    for item in doc.finals:
+        for rel in _rels_for_final(str(item.get("file") or ""), item):
+            keep.add(rel.replace("\\", "/"))
+    for item in gone:
+        for rel in _rels_for_final(stored_rel, item):
+            if rel.replace("\\", "/") in keep:
+                continue
+            target = _finals_child(doc, rel)
+            if target is not None and target.is_file():
+                target.unlink()
     rebuild_profile(project)
 
 
