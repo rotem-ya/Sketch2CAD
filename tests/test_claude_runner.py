@@ -47,6 +47,21 @@ def isolated_home(tmp_path, monkeypatch):
     monkeypatch.setenv("SKETCH2CAD_HOME", str(tmp_path / "home"))
     runner._restricted_cache.clear()
     runner._ui_tick_at = 0.0
+    real_run = runner.hidden_run
+    real_kill = runner.os.kill
+
+    def _no_taskkill(argv, **kwargs):
+        if argv and "taskkill" in str(argv[0]).lower():
+            raise AssertionError("a test tried to run taskkill")
+        return real_run(argv, **kwargs)
+
+    def _no_signal(pid, sig, *args):
+        if sig or runner.os.name == "nt":
+            raise AssertionError("a test tried to signal a process")
+        return real_kill(pid, sig)
+
+    monkeypatch.setattr(runner, "hidden_run", _no_taskkill)
+    monkeypatch.setattr(runner.os, "kill", _no_signal)
 
 
 def _drawing(tmp_path, code="20117"):

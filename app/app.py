@@ -483,10 +483,24 @@ def page_project() -> None:
                 st.error(f"{T('error')}: {e}")
 
 
+def _project_style_control(p: Project) -> None:
+    """Per-project house-style switch. None follows the global setting."""
+    options = ("follow", "on", "off")
+    stored = "on" if p.apply_house_style is True else "off" if p.apply_house_style is False else "follow"
+    choice = st.radio(
+        T("style_project"), options, index=options.index(stored), horizontal=True,
+        format_func=lambda item: T(f"style_project_{item}"), key=f"style_project_{p.code}",
+    )
+    if choice != stored:
+        p.apply_house_style = {"on": True, "off": False, "follow": None}[choice]
+        p.save()
+        st.rerun()
+
+
 def tab_finals(p: Project, d: Document) -> None:
     """Save a DWG, DXF or PDF finished in AutoCAD, and show what was learned from finals."""
     from sketch2cad.finals import newest_dwg, register_final
-    from sketch2cad.learning import learned_lines
+    from sketch2cad.learning import forget_final, learned_lines
 
     st.caption(T("final_help"))
     upload = st.file_uploader(T("final_upload"), type=["dwg", "dxf", "pdf"], key=f"final_up_{d.code}")
@@ -539,7 +553,12 @@ def tab_finals(p: Project, d: Document) -> None:
                     unsafe_allow_html=True)
         if entry.get("original_path"):
             st.caption(entry["original_path"])
+        if st.button(T("final_forget"), key=f"forget_{entry.get('file')}"):
+            forget_final(d, p, entry.get("file") or "")
+            st.success(T("final_forgotten"))
+            st.rerun()
     st.subheader(T("learned_title"))
+    _project_style_control(p)
     lines = learned_lines(project=p)
     if not lines:
         st.caption(T("learned_empty"))
