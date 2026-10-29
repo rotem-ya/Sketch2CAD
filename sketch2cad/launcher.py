@@ -17,7 +17,11 @@ Output of the server and of the supervisor: <data folder>/logs/app.log.
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import os
+import re
+import shutil
 import signal
 import subprocess
 import sys
@@ -637,6 +641,166 @@ def _give_up(reason: str, detail: str) -> None:
     report_error(f"{detail}\n\n{_log_tail()}\n\nThe full log: {log_file()}")
 
 
+def _sha256(data: bytes) -> bytes:
+    return hashlib.sha256(data).digest()
+
+
+def _streamlit_static_dir() -> Path | None:
+    """The installed Streamlit ``static`` folder, or None when it cannot be found."""
+    import streamlit
+    root = Path(streamlit.__file__).resolve().parent / "static"
+    if (root / "index.html").is_file():
+        return root
+    return None
+
+
+def _app_icon_bytes() -> tuple[bytes, bytes | None]:
+    folder = (APP_DIR / "app").resolve()
+    png = folder / "icon.png"
+    ico = folder / "icon.ico"
+    return png.read_bytes(), (ico.read_bytes() if ico.is_file() else None)
+
+
+def _inside(root: Path, path: Path) -> bool:
+    root = root.resolve()
+    path = path.resolve()
+    return path == root or root in path.parents
+
+
+def _local_asset(base: Path, href: str, root: Path) -> Path | None:
+    """A file under ``root`` named by a relative link. Remote and parent links are ignored."""
+    text = href.strip()
+    if not text or text.startswith(("#", "data:")):
+        return None
+    lowered = text.lower()
+    if lowered.startswith(("http://", "https://", "//", "mailto:")):
+        return None
+    text = text.split("?", 1)[0].split("#", 1)[0]
+    if text.startswith("/"):
+        path = (root / text.lstrip("/")).resolve()
+    else:
+        path = (base / text).resolve()
+    if not _inside(root, path) or path.is_dir():
+        return None
+    return path
+
+
+_LINK = re.compile(r"<link\b([^>]*)>", re.IGNORECASE)
+_ATTR = re.compile(r"""([\w:-]+)\s*=\s*["']([^"']*)["']""", re.IGNORECASE)
+_ICON_RELS = {"icon", "shortcut", "apple-touch-icon", "apple-touch-icon-precomposed", "manifest", "mask-icon"}
+
+
+def _link_attrs(tag: str) -> dict[str, str]:
+    return {key.lower(): value for key, value in _ATTR.findall(tag)}
+
+
+def _icon_targets(static: Path, html: str) -> tuple[list[Path], list[Path]]:
+    """Image files and manifest files linked as a favicon, apple-touch icon, or manifest."""
+    images: list[Path] = []
+    manifests: list[Path] = []
+    for tag in _LINK.findall(html):
+        attrs = _link_attrs(tag)
+        rels = {part.strip().lower() for part in attrs.get("rel", "").split()}
+        if not rels & _ICON_RELS:
+            continue
+        href = attrs.get("href", "")
+        path = _local_asset(static, href, static)
+        if path is None:
+            continue
+        if "manifest" in rels:
+            manifests.append(path)
+        else:
+            images.append(path)
+    return images, manifests
+
+
+def _manifest_icons(manifest: Path, root: Path) -> list[Path]:
+    try:
+        data = json.loads(manifest.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return []
+    found = []
+    for item in data.get("icons") or []:
+        if not isinstance(item, dict):
+            continue
+        src = str(item.get("src") or "")
+        path = _local_asset(manifest.parent, src, root)
+        if path is not None:
+            found.append(path)
+    return found
+
+
+def _bytes_for(path: Path, png: bytes, ico: bytes | None) -> bytes | None:
+    if path.suffix.lower() == ".ico":
+        return ico
+    if path.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp", ".gif"}:
+        return png
+    return None
+
+
+def _replace_if_different(path: Path, data: bytes) -> bool:
+    """Write ``data`` only when the file's hash differs. The first old copy is kept as ``.orig``."""
+    if path.is_file() and _sha256(path.read_bytes()) == _sha256(data):
+        return False
+    backup = Path(str(path) + ".orig")
+    if path.is_file() and not backup.exists():
+        shutil.copy2(path, backup)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(data)
+    return True
+
+
+def _retitle(index: Path) -> None:
+    text = index.read_text(encoding="utf-8")
+    new, count = re.subn(r"<title>.*?</title>", "<title>Sketch2CAD</title>", text, count=1, flags=re.IGNORECASE | re.DOTALL)
+    if count and new != text:
+        _replace_if_different(index, new.encode("utf-8"))
+
+
+def _install_browser_icon() -> None:
+    static = _streamlit_static_dir()
+    if static is None:
+        log("favicon: streamlit static folder was not found")
+        return
+    png, ico = _app_icon_bytes()
+    images = [(static / "favicon.png").resolve()]
+    index = static / "index.html"
+    html = ""
+    if index.is_file():
+        html = index.read_text(encoding="utf-8")
+        linked, manifests = _icon_targets(static, html)
+        images.extend(linked)
+        for manifest in manifests:
+            if manifest.is_file():
+                images.extend(_manifest_icons(manifest, static))
+    seen: set[Path] = set()
+    for path in images:
+        if path in seen:
+            continue
+        seen.add(path)
+        payload = _bytes_for(path, png, ico)
+        if payload is None:
+            continue
+        try:
+            if _replace_if_different(path, payload):
+                log(f"favicon: replaced {path.name}")
+        except Exception as exc:  # noqa: BLE001 - one file must not stop the others or the server
+            log(f"favicon: {path.name}: {exc}")
+    if index.is_file():
+        try:
+            _retitle(index)
+        except Exception as exc:  # noqa: BLE001
+            log(f"favicon: index.html: {exc}")
+
+
+def install_browser_icon() -> None:
+    """Point Streamlit's own favicon at the app icon. A failure is logged and does not stop startup."""
+    try:
+        _install_browser_icon()
+    except Exception as exc:  # noqa: BLE001 - the server must still start
+        log(f"favicon: {exc}")
+
+
 def serve(port: int = PORT) -> int:
     """Keep the server running until this supervisor is stopped.
 
@@ -644,6 +808,7 @@ def serve(port: int = PORT) -> int:
     two minutes resets the delay). A server that stays up but stops answering the health check is
     killed and started again, up to MAX_WATCHDOG_RESTARTS times.
     """
+    install_browser_icon()
     ensure_startup_shortcut()
     other = read_live_supervisor()
     if other is not None and other != os.getpid():

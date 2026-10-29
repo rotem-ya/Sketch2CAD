@@ -8,6 +8,7 @@ import pytest
 from sketch2cad import launcher, updater
 
 _REAL_ENSURE = launcher.ensure_startup_shortcut
+_REAL_FAVICON = launcher.install_browser_icon
 
 
 @pytest.fixture(autouse=True)
@@ -17,6 +18,8 @@ def isolated_home(tmp_path, monkeypatch):
     monkeypatch.setattr(launcher, "START_TIMEOUT", 0)        # wait_alive never waits on the clock
     # Never touch the real Startup folder or start PowerShell from these tests.
     monkeypatch.setattr(launcher, "ensure_startup_shortcut", lambda: "skipped")
+    # Never rewrite the real Streamlit package from these tests.
+    monkeypatch.setattr(launcher, "install_browser_icon", lambda: None)
     real_run = launcher.run
     real_kill = launcher.os.kill
 
@@ -630,6 +633,64 @@ def test_page_and_shortcut_use_the_app_icon():
     page = launcher.APP_PY.read_text(encoding="utf-8")
     assert "page_icon=str(ICON)" in page
     assert "resolve()" in page
+
+
+def test_serve_replaces_streamlit_favicon_once_and_keeps_the_original(tmp_path, monkeypatch):
+    """A fake Streamlit static folder gets the app icon, once, with a .orig backup."""
+    static = tmp_path / "streamlit" / "static"
+    icons = static / "icons"
+    icons.mkdir(parents=True)
+    (static / "favicon.png").write_bytes(b"streamlit-favicon")
+    (static / "apple-touch-icon.png").write_bytes(b"streamlit-apple")
+    (icons / "icon-192.png").write_bytes(b"streamlit-192")
+    (static / "manifest.webmanifest").write_text(
+        '{"icons":[{"src":"icons/icon-192.png","sizes":"192x192","type":"image/png"}]}',
+        encoding="utf-8",
+    )
+    (static / "index.html").write_text(
+        "<html><head>"
+        '<link rel="shortcut icon" href="./favicon.png" />'
+        '<link rel="apple-touch-icon" href="./apple-touch-icon.png" />'
+        '<link rel="manifest" href="./manifest.webmanifest" />'
+        '<link rel="icon" href="https://example.com/remote.png" />'
+        '<link rel="icon" href="../secret.png" />'
+        "<title>Streamlit</title>"
+        "</head></html>",
+        encoding="utf-8",
+    )
+    secret = tmp_path / "streamlit" / "secret.png"
+    app_png = tmp_path / "app-icon.png"
+    app_png.write_bytes(b"sketch2cad-icon")
+    monkeypatch.setattr(launcher, "_streamlit_static_dir", lambda: static)
+    monkeypatch.setattr(launcher, "_app_icon_bytes", lambda: (app_png.read_bytes(), None))
+
+    launcher._install_browser_icon()
+    assert (static / "favicon.png").read_bytes() == b"sketch2cad-icon"
+    assert (static / "apple-touch-icon.png").read_bytes() == b"sketch2cad-icon"
+    assert (icons / "icon-192.png").read_bytes() == b"sketch2cad-icon"
+    assert (static / "favicon.png.orig").read_bytes() == b"streamlit-favicon"
+    assert (static / "apple-touch-icon.png.orig").read_bytes() == b"streamlit-apple"
+    assert (icons / "icon-192.png.orig").read_bytes() == b"streamlit-192"
+    assert "<title>Sketch2CAD</title>" in (static / "index.html").read_text(encoding="utf-8")
+    assert "Streamlit" in (static / "index.html.orig").read_text(encoding="utf-8")
+    assert not secret.exists()
+    orig_bytes = (static / "favicon.png.orig").read_bytes()
+    orig_html = (static / "index.html.orig").read_bytes()
+
+    launcher._install_browser_icon()
+    assert (static / "favicon.png").read_bytes() == b"sketch2cad-icon"
+    assert (static / "favicon.png.orig").read_bytes() == orig_bytes
+    assert (static / "index.html.orig").read_bytes() == orig_html
+    assert (static / "index.html").read_text(encoding="utf-8").count("<title>Sketch2CAD</title>") == 1
+
+
+def test_favicon_install_logs_and_does_not_raise(monkeypatch):
+    def boom():
+        raise OSError("denied")
+
+    monkeypatch.setattr(launcher, "_install_browser_icon", boom)
+    _REAL_FAVICON()
+    assert "favicon: denied" in launcher.log_file().read_text(encoding="utf-8")
 
 
 def test_startup_shortcut_is_skipped_off_windows(monkeypatch):
