@@ -331,6 +331,15 @@ STRINGS: dict[str, dict[str, str]] = {
     "spec_saved": {"en": "Spec saved. Render the drawing below.", "he": "המפרט נשמר. הפק את השרטוט למטה."},
     "no_spec": {"en": "No spec yet. Choose a typical detail, send a sketch to the agent, or paste JSON.",
                 "he": "אין עדיין מפרט. בחרו פרט טיפוסי, שלחו סקיצה לסוכן, או הדביקו JSON."},
+    "delete": {"en": "Delete", "he": "מחק"},
+    "cancel": {"en": "Cancel", "he": "ביטול"},
+    "confirm_delete_source": {"en": "Delete {name}? It is removed from the document and moved to the "
+                                     "_deleted_sources folder of the drawing (not erased).",
+                              "he": "למחוק את {name}? הקובץ יוסר מהמסמך ויועבר לתיקייה _deleted_sources "
+                                    "של השרטוט (לא נמחק לצמיתות)."},
+    "preview_unavailable": {"en": "No preview (the file is not a readable image)",
+                            "he": "אין תצוגה מקדימה (הקובץ אינו תמונה תקינה)"},
+    "source_deleted": {"en": "Deleted: {name}", "he": "נמחק: {name}"},
     "sketch_sources": {"en": "These sources go into the package: {names}",
                        "he": "המקורות האלה נכנסים לחבילה: {names}"},
     "sketch_no_sources": {"en": "No sketch or photo in Sources yet. You can still send a package.",

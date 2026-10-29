@@ -150,3 +150,21 @@ def test_relocate_to_where_it_already_is_is_a_no_op(tmp_path):
     assert relocate_project(p, p.path).path == p.path                 # the project folder itself
     linked = relocate_project(p, p.path.parent, move_files=False)     # parent chosen in "link" mode
     assert linked.path == p.path
+
+
+def test_remove_source_moves_the_file_aside(tmp_path):
+    from sketch2cad.documents import DELETED_SOURCES, Document, remove_source
+    p = create_project(tmp_path, "20117", "חצרים", "Hatzerim")
+    d = create_document(p, title_he="סקיצה", title_en="Sketch", discipline="D", subject="TD")
+    rel = add_source(d, name="sketch.jpg", data=b"jpg")
+    keep = add_source(d, name="other.pdf", data=b"pdf")
+    moved = remove_source(d, rel)
+    assert moved is not None and moved.parent == d.path / DELETED_SOURCES and moved.read_bytes() == b"jpg"
+    assert not (d.path / rel).exists()
+    assert Document.load(d.folder).sources == [keep]                       # saved
+    rel2 = add_source(d, name="sketch.jpg", data=b"new")                    # the name is free again
+    assert rel2 == rel
+    with pytest.raises(ValueError):
+        remove_source(d, "sources/not-there.png")
+    (d.path / keep).unlink()
+    assert remove_source(d, keep) is None and d.sources == [rel2]          # a missing file still leaves the list

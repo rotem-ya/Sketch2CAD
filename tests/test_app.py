@@ -421,3 +421,35 @@ def test_mail_page_opens(tmp_path):
     next(b for b in at.button if b.label.endswith(t("nav_mail", "he"))).click().run()
     assert not at.exception
     assert any(h.value.endswith(t("nav_mail", "he")) for h in at.header)
+
+
+def test_delete_a_sketch_asks_first_and_moves_it_aside(tmp_path):
+    from sketch2cad.config import Settings
+    from sketch2cad.documents import DELETED_SOURCES, Document, add_source, create_document
+    from sketch2cad.i18n import t
+    from sketch2cad.projects import create_project
+    p = create_project(tmp_path / "projects", "20117", "חצרים", "Hatzerim")
+    d = create_document(p, title_he="סקיצה", title_en="Sketch", discipline="D", subject="TD")
+    import pymupdf
+    pix = pymupdf.Pixmap(pymupdf.csRGB, pymupdf.IRect(0, 0, 8, 8), False)
+    pix.clear_with(200)
+    rel = add_source(d, name="WhatsApp Image.jpeg", data=pix.tobytes("jpeg"))
+    bad = add_source(d, name="broken.png", data=b"not an image")              # must not break the tab
+    Settings(ui_language="he", projects=[p.folder]).save()
+    at = AppTest.from_file(APP, default_timeout=60)
+    at.session_state["page"] = "document"
+    at.session_state["project_folder"] = p.folder
+    at.session_state["doc_folder"] = d.folder
+    at.run()
+    assert not at.exception
+    next(b for b in at.button if b.key == f"src_del_{rel}").click().run()
+    assert any("WhatsApp Image.jpeg" in w.value for w in at.warning)          # asks first
+    assert Document.load(d.folder).sources == [rel, bad]
+    next(b for b in at.button if b.key == f"src_del_no_{rel}").click().run()  # cancel keeps it
+    assert Document.load(d.folder).sources == [rel, bad]
+    next(b for b in at.button if b.key == f"src_del_{rel}").click().run()
+    next(b for b in at.button if b.key == f"src_del_yes_{rel}").click().run()
+    assert not at.exception
+    assert Document.load(d.folder).sources == [bad]
+    assert len(list((d.path / DELETED_SOURCES).iterdir())) == 1
+    assert any(t("source_deleted", "he").format(name="WhatsApp Image.jpeg") in s.value for s in at.success)

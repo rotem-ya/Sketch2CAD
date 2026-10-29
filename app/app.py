@@ -40,7 +40,7 @@ from sketch2cad.catalog import CATEGORIES, Catalog, load_catalog, save_item  # n
 from sketch2cad.checks import run_checks  # noqa: E402
 from sketch2cad.config import Settings, app_home  # noqa: E402
 from sketch2cad.documents import (DOC_TYPES, STATUSES, Document, add_source, create_document,  # noqa: E402
-                                  list_documents, new_revision)
+                                  list_documents, new_revision, remove_source)
 from sketch2cad.i18n import notice as ui_notice, t  # noqa: E402
 from sketch2cad.projects import Project, create_project, is_project_folder, relocate_project  # noqa: E402
 
@@ -210,6 +210,40 @@ def folder_input(label: str, key: str) -> str:
     c2.button(f"📂 {T('browse')}", key=f"{key}_browse", on_click=_browse, args=(key, label),
               width="stretch")
     return ss[key]
+
+
+def _delete_source(p: Project, d: Document, rel: str) -> None:
+    remove_source(d, rel)
+    search.store_content(d, Path(rel).name, "")              # drop its text from the search index
+    reindex(p, d)
+    ss.pop("confirm_delete", None)
+    ss.src_deleted = Path(rel).name
+
+
+def source_rows(p: Project, d: Document, rels: list[str], prefix: str, preview: bool = True) -> None:
+    """One row per source: name, download, delete (asks first; the file moves to _deleted_sources)."""
+    name = ss.pop("src_deleted", None)
+    if name:
+        st.success(T("source_deleted").format(name=name))
+    for rel in rels:
+        fp = d.path / rel
+        c1, c2, c3 = st.columns([5, 1, 1])
+        c1.markdown(f"`{rel}`")
+        if fp.exists():
+            c2.download_button(T("download"), fp.read_bytes(), file_name=fp.name, key=f"{prefix}_dl_{rel}")
+        c3.button(f"🗑️ {T('delete')}", key=f"{prefix}_del_{rel}", on_click=ss.__setitem__,
+                  args=("confirm_delete", (d.folder, rel)))
+        if ss.get("confirm_delete") == (d.folder, rel):
+            st.warning(T("confirm_delete_source").format(name=Path(rel).name))
+            k1, k2, _ = st.columns([1, 1, 4])
+            k1.button(T("delete"), key=f"{prefix}_del_yes_{rel}", type="primary",
+                      on_click=_delete_source, args=(p, d, rel))
+            k2.button(T("cancel"), key=f"{prefix}_del_no_{rel}", on_click=ss.pop, args=("confirm_delete", None))
+        if preview and fp.exists() and fp.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp"):
+            try:
+                st.image(str(fp), width=320)
+            except Exception:  # noqa: BLE001 - a broken image must not hide the delete button
+                st.caption(T("preview_unavailable"))
 
 
 def download(label: str, path: Path, key: str) -> None:
@@ -684,14 +718,7 @@ def page_document() -> None:
             st.rerun()
         for w in ss.pop("src_warnings", []):
             st.warning(w)
-        for rel in d.sources:
-            fp = d.path / rel
-            c1, c2 = st.columns([5, 1])
-            c1.markdown(f"`{rel}`")
-            if fp.exists():
-                c2.download_button(T("download"), fp.read_bytes(), file_name=fp.name, key=f"dl_{rel}")
-                if fp.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp"):
-                    st.image(str(fp), width=320)
+        source_rows(p, d, list(d.sources), "src")
 
     with tab_draw:
         tab_drawing(p, d, cat)
@@ -807,6 +834,7 @@ def tab_drawing(p: Project, d: Document, cat: Catalog) -> None:
                                                                      ".pdf", ".tif", ".tiff", ".bmp")]
         if usable:
             st.caption(T("sketch_sources").format(names=", ".join(usable)))
+            source_rows(p, d, usable, "sk", preview=False)
         else:
             st.info(T("sketch_no_sources"))
         st.caption(T("sketch_use_panel"))

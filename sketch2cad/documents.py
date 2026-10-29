@@ -146,6 +146,27 @@ def add_source(doc: Document, file_path: Path | str | None = None, *, name: str 
     return rel
 
 
+DELETED_SOURCES = "_deleted_sources"
+
+
+def remove_source(doc: Document, rel: str) -> Path | None:
+    """Take a source off the document. The file is never erased: it moves to
+    <document>/_deleted_sources/<time>_<name>, outside sources/, so packages and the agent no longer see it.
+    Returns the new location, or None when the file was already missing."""
+    if rel not in doc.sources:
+        raise ValueError(f"not a source of {doc.code}: {rel}")
+    src = (doc.path / rel).resolve()
+    moved = None
+    if src.is_file() and src.is_relative_to(doc.path.resolve()):
+        trash = doc.path / DELETED_SOURCES
+        trash.mkdir(exist_ok=True)
+        moved = trash / f"{datetime.now():%Y%m%d_%H%M%S_%f}_{src.name}"
+        shutil.move(str(src), str(moved))
+    doc.sources.remove(rel)
+    doc.save()
+    return moved
+
+
 def new_revision(doc: Document, project: Project, note: str = "") -> str:
     """Advance the revision letter; archive the current outputs to <project>/90_Archive/<code>_Rev<X>/."""
     if doc.outputs:
