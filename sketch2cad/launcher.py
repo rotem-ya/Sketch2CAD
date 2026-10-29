@@ -60,18 +60,25 @@ if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Force -P
 $curTarget = ''
 $curArgs = ''
 $curWd = ''
+$curIcon = ''
 if (Test-Path -LiteralPath $path) {
     $s = $sh.CreateShortcut($path)
     $curTarget = [string]$s.TargetPath
     $curArgs = [string]$s.Arguments
     $curWd = [string]$s.WorkingDirectory
+    $curIcon = [string]$s.IconLocation
 }
 function Norm([string]$p) {
     if ([string]::IsNullOrWhiteSpace($p)) { return '' }
     try { return ([IO.Path]::GetFullPath($p)).TrimEnd('\').ToLowerInvariant() }
     catch { return $p.Trim().ToLowerInvariant() }
 }
-$same = (Norm $curTarget) -eq (Norm $env:S2C_TARGET) -and $curArgs -eq $env:S2C_ARGS -and (Norm $curWd) -eq (Norm $env:S2C_WD)
+function IconPath([string]$p) {
+    if ([string]::IsNullOrWhiteSpace($p)) { return '' }
+    return Norm (($p -split ',', 2)[0])
+}
+$iconOk = [string]::IsNullOrWhiteSpace($env:S2C_ICON) -or ((IconPath $curIcon) -eq (IconPath $env:S2C_ICON))
+$same = (Norm $curTarget) -eq (Norm $env:S2C_TARGET) -and $curArgs -eq $env:S2C_ARGS -and (Norm $curWd) -eq (Norm $env:S2C_WD) -and $iconOk
 if ($same) { Write-Output 'unchanged'; exit 0 }
 $s = $sh.CreateShortcut($path)
 $s.TargetPath = $env:S2C_TARGET
@@ -490,7 +497,7 @@ def startup_folder() -> Path | None:
 
 def shortcut_spec() -> dict[str, str]:
     """Where the Startup shortcut must point: this install's pythonw, ``--serve``."""
-    icon = APP_DIR / "app" / "icon.ico"
+    icon = (APP_DIR / "app" / "icon.ico").resolve()
     folder = startup_folder()
     return {
         "lnk": str((folder / SHORTCUT_NAME) if folder else SHORTCUT_NAME),

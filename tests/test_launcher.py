@@ -1,6 +1,7 @@
 """The background launcher: serve (keep the server running, restart it when it falls, give up after repeated
 failures), open (start if needed, then the browser), stop (supervisor first), and the update command."""
 import os
+from pathlib import Path
 
 import pytest
 
@@ -617,6 +618,18 @@ def test_repair_leaves_a_live_supervisor(monkeypatch, capsys):
     _alive(monkeypatch, [False])
     assert launcher.repair() == 0
     assert "55" in capsys.readouterr().out
+
+
+def test_page_and_shortcut_use_the_app_icon():
+    """The browser tab and the Startup shortcut use the same drawing-and-pencil mark."""
+    png = (launcher.APP_PY.parent / "icon.png").resolve()
+    ico = Path(launcher.shortcut_spec()["icon"])
+    assert png.is_file() and png.is_absolute()
+    assert ico.is_file() and ico.is_absolute()
+    assert ico == png.with_suffix(".ico")
+    page = launcher.APP_PY.read_text(encoding="utf-8")
+    assert "page_icon=str(ICON)" in page
+    assert "resolve()" in page
 
 
 def test_startup_shortcut_is_skipped_off_windows(monkeypatch):

@@ -44,8 +44,13 @@ from sketch2cad.documents import (DOC_TYPES, STATUSES, Document, add_source, cre
 from sketch2cad.i18n import notice as ui_notice, t  # noqa: E402
 from sketch2cad.projects import Project, create_project, is_project_folder, relocate_project  # noqa: E402
 
-ICON = Path(__file__).with_name("icon.png")
-st.set_page_config(page_title="Sketch2CAD", page_icon=str(ICON) if ICON.exists() else None, layout="wide")
+# Absolute path: a relative one is missed when Windows starts the app from another folder.
+ICON = (Path(__file__).resolve().parent / "icon.png")
+st.set_page_config(
+    page_title="Sketch2CAD",
+    page_icon=str(ICON) if ICON.is_file() else None,
+    layout="wide",
+)
 
 if os.name == "nt":
     from sketch2cad.native import disable_console_quick_edit  # noqa: E402
