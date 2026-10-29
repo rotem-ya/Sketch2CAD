@@ -100,11 +100,21 @@ class Document:
 
 
 def list_documents(project: Project) -> list[Document]:
+    from .procutil import is_dir, is_file, long_path
     docs = []
-    if project.drawings_dir.exists():
-        for sub in sorted(project.drawings_dir.iterdir()):
-            if (sub / DOC_FILE).exists():
-                docs.append(Document.load(sub))
+    root = project.drawings_dir
+    if not is_dir(root):
+        return docs
+    try:
+        names = sorted(
+            entry.name for entry in os.scandir(long_path(root)) if entry.is_dir()
+        )
+    except OSError:
+        return docs
+    for name in names:
+        sub = root / name
+        if is_file(sub / DOC_FILE):
+            docs.append(Document.load(sub))
     return docs
 
 

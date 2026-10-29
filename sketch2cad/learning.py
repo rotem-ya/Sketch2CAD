@@ -75,7 +75,8 @@ def _empty_profile(settings: Settings | None = None) -> dict:
 def _read_profile(path: Path, settings: Settings | None = None) -> dict:
     empty = _empty_profile(settings)
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        from .procutil import read_text
+        data = json.loads(read_text(path))
     except (OSError, json.JSONDecodeError):
         return empty
     if not isinstance(data, dict):
@@ -92,7 +93,8 @@ def load_profile(project=None, *, settings: Settings | None = None, migrate: boo
     before it is used. Entries written by that rebuild carry an explicit confident or verified flag.
     """
     path = profile_path(project, settings=settings, create=False)
-    if path is None or not path.is_file():
+    from .procutil import is_file as _is_file
+    if path is None or not _is_file(path):
         return _empty_profile(settings)
     data = _read_profile(path, settings)
     if not migrate or data.get("profile_version") == PROFILE_VERSION:

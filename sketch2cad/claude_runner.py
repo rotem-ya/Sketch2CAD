@@ -308,8 +308,12 @@ def watch_package(package: Path | str, settings: Settings | None = None) -> Path
     None when the runner is off. Raises ``RunnerError`` when the global lock is held or the
     task cannot be created. A held lock does not mark the package seen, so the next tick starts it.
     """
-    package = Path(package).resolve()
-    if not (package / "manifest.json").is_file():
+    try:
+        package = Path(package).resolve()
+    except OSError:
+        package = Path(os.path.abspath(package))
+    from .procutil import is_file
+    if not is_file(package / "manifest.json"):
         return None
     settings = settings or Settings.load()
     if not configured(settings):
@@ -322,7 +326,7 @@ def watch_package(package: Path | str, settings: Settings | None = None) -> Path
     with _global_lock() as got:
         if not got:
             raise RunnerError("claude_runner_busy")
-        if not seen_path.exists():
+        if not is_file(seen_path):
             others = {item.name for item in _packages(exchange) if item.name != package.name}
             _write_names(seen_path, others)
         existing = _task_for(exchange, package.name)
@@ -495,7 +499,8 @@ def query_process(pid: int) -> dict:
 def reply_is_valid(path: Path) -> bool:
     """True when the file is a JSON object with the four envelope keys."""
     try:
-        data = json.loads(path.read_text(encoding="utf-8-sig"))
+        from .procutil import read_text
+        data = json.loads(read_text(path, encoding="utf-8-sig"))
     except (OSError, json.JSONDecodeError, UnicodeError):
         return False
     return (
@@ -510,7 +515,8 @@ def reply_is_valid(path: Path) -> bool:
 def read_log_text(path: Path) -> str:
     """Log text. PowerShell 5.1 redirection is UTF-16; Out-File -Encoding utf8 is UTF-8 with a BOM."""
     try:
-        data = path.read_bytes()
+        from .procutil import read_bytes
+        data = read_bytes(path)
     except OSError:
         return ""
     if not data:
@@ -526,8 +532,9 @@ def read_log_text(path: Path) -> str:
 
 def ensure_marker(exchange: Path) -> bool:
     """Create the first-look marker. True only on the call that created it."""
+    from .procutil import is_file
     path = _seen_path(exchange)
-    if path.exists():
+    if is_file(path):
         return False
     names = {item.name for item in _packages(exchange)}
     _write_names(path, names)
@@ -591,15 +598,20 @@ def _claude_help(exe: str) -> str:
 
 def _write_ps1(path: Path, text: str) -> None:
     """UTF-8 with BOM so Windows PowerShell 5.1 does not read the script as the ANSI code page."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8-sig", newline="\n")
+    from .procutil import write_text
+    write_text(path, text, encoding="utf-8-sig", newline="\n")
 
 
 def _packages(exchange: Path) -> list[Path]:
+    from .procutil import is_dir, is_file, long_path
     outbox = exchange / "outbox"
-    if not outbox.is_dir():
+    if not is_dir(outbox):
         return []
-    found = [folder for folder in outbox.iterdir() if folder.is_dir() and (folder / "manifest.json").is_file()]
+    try:
+        names = [entry.name for entry in os.scandir(long_path(outbox)) if entry.is_dir()]
+    except OSError:
+        return []
+    found = [outbox / name for name in names if is_file(outbox / name / "manifest.json")]
     found.sort(key=lambda path: path.name)
     return found
 
@@ -609,15 +621,16 @@ def _seen_path(exchange: Path) -> Path:
 
 
 def _read_names(path: Path) -> set[str]:
-    if not path.is_file():
+    from .procutil import is_file, read_text
+    if not is_file(path):
         return set()
-    return {line.strip() for line in path.read_text(encoding="utf-8").splitlines() if line.strip()}
+    return {line.strip() for line in read_text(path).splitlines() if line.strip()}
 
 
 def _write_names(path: Path, names: set[str]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
+    from .procutil import write_text
     text = "\n".join(sorted(names))
-    path.write_text((text + "\n") if text else "", encoding="utf-8")
+    write_text(path, (text + "\n") if text else "")
 
 
 def _task_dirs(exchange: Path) -> list[Path]:
@@ -682,7 +695,8 @@ def _create_task(package: Path, settings: Settings) -> Path:
     try:
         shutil.copytree(long_path(package), long_path(task / "package"))
         _copy_qa_report(package, task)
-        has_qa = (task / "qa_report.json").is_file()
+        from .procutil import is_file
+        has_qa = is_file(task / "qa_report.json")
         from .procutil import write_text
         write_text(task / "TASK.md", task_markdown(package.name, has_qa=has_qa))
         write_text(task / "p.txt", PROMPT, encoding="utf-8-sig")
@@ -703,7 +717,8 @@ def _create_task(package: Path, settings: Settings) -> Path:
             "warnings": warnings,
         })
     except Exception:
-        shutil.rmtree(task, ignore_errors=True)
+        from .procutil import remove_tree
+        remove_tree(task)
         raise
     return task
 
@@ -712,7 +727,8 @@ def _mark_failed(exchange: Path, package_name: str, exc: BaseException) -> None:
     """One stable failed task so a bad package is visible and is not started again."""
     digest = hashlib.sha1(package_name.encode("utf-8")).hexdigest()[:12]
     task = exchange / "claude_tasks" / f"failed-{digest}"                 # short: see _create_task
-    task.mkdir(parents=True, exist_ok=True)
+    from .procutil import ensure_dir
+    ensure_dir(task)
     _write_state(task, {
         "package": package_name,
         "status": "failed",
@@ -730,7 +746,8 @@ def _mark_failed(exchange: Path, package_name: str, exc: BaseException) -> None:
 def _copy_qa_report(package: Path, task: Path) -> None:
     """Newest trial report for this drawing, when a previous receive already wrote one."""
     try:
-        manifest = json.loads((package / "manifest.json").read_text(encoding="utf-8"))
+        from .procutil import read_text
+        manifest = json.loads(read_text(package / "manifest.json"))
     except (OSError, json.JSONDecodeError):
         return
     if not isinstance(manifest, dict):
@@ -738,7 +755,10 @@ def _copy_qa_report(package: Path, task: Path) -> None:
     code = manifest.get("document_code")
     if not code:
         return
-    project_dir = package.resolve().parents[2]
+    try:
+        project_dir = package.resolve().parents[2]
+    except OSError:
+        project_dir = Path(os.path.abspath(package)).parents[2]
     try:
         from .documents import list_documents
         from .projects import Project
@@ -746,15 +766,28 @@ def _copy_qa_report(package: Path, task: Path) -> None:
     except (OSError, json.JSONDecodeError, ValueError):
         return
     newest = None
+    from .procutil import is_dir, is_file
     for doc in list_documents(project):
         if doc.code != code:
             continue
         trials = doc.path / "bridge_trials"
-        if not trials.is_dir():
+        if not is_dir(trials):
             return
-        reports = [path for path in trials.glob("*/report.json") if path.is_file()]
+        try:
+            reports = []
+            for entry in os.scandir(long_path(trials)):
+                if not entry.is_dir():
+                    continue
+                report = trials / entry.name / "report.json"
+                if is_file(report):
+                    reports.append(report)
+        except OSError:
+            return
         if reports:
-            newest = max(reports, key=lambda path: (path.stat().st_mtime, path.name))
+            newest = max(
+                reports,
+                key=lambda path: (Path(long_path(path)).stat().st_mtime, path.name),
+            )
         break
     if newest is not None:
         shutil.copy2(long_path(newest), long_path(task / "qa_report.json"))
@@ -801,9 +834,10 @@ def _has_working(exchange: Path) -> bool:
 
 
 def _any_working(settings: Settings) -> bool:
+    from .procutil import is_dir
     for root in _project_roots(settings, None):
         exchange = root / "agent_exchange"
-        if exchange.is_dir() and _has_working(exchange):
+        if is_dir(exchange) and _has_working(exchange):
             return True
     return False
 
@@ -834,7 +868,8 @@ def _observe(task: Path, settings: Settings, now: float) -> None:
         if process_status(*_identity(state)) == "alive":
             _stop_tracked(state)
         return
-    if (task / "DONE.txt").is_file() and reply_is_valid(task / "reply.json"):
+    from .procutil import is_file
+    if is_file(task / "DONE.txt") and reply_is_valid(task / "reply.json"):
         if _publish_reply(task, str(state.get("package") or "")):
             if process_status(*_identity(state)) == "alive":
                 _stop_tracked(state)
@@ -921,10 +956,11 @@ def _finish_attempt(task: Path, state: dict, settings: Settings) -> None:
 
 
 def _clear_outputs(task: Path) -> None:
+    from .procutil import is_file, long_path
     for name in ("DONE.txt", "reply.json"):
         path = task / name
-        if path.is_file():
-            path.unlink()
+        if is_file(path):
+            Path(long_path(path)).unlink()
 
 
 def _publish_reply(task: Path, package_name: str) -> bool:
@@ -988,7 +1024,8 @@ def _launch(task: Path, settings: Settings, now: float) -> None:
     try:
         result = launch_hidden(hidden_launch_command(task / "run.ps1"))
     except OSError as exc:
-        (task / "run.log").write_text(str(exc) + "\n", encoding="utf-8")
+        from .procutil import write_text
+        write_text(task / "run.log", str(exc) + "\n")
         result = {"pid": 0, "image": "", "created": ""}
     if isinstance(result, int):
         pid, image, created = result, "", ""
@@ -1071,12 +1108,13 @@ def _stop_tracked(state: dict) -> bool:
 
 
 def _project_roots(settings: Settings, projects: list | None) -> list[Path]:
+    from .procutil import is_file
     raw = list(projects or []) + list(getattr(settings, "projects", None) or [])
     roots, seen = [], set()
     for item in raw:
         path = Path(item)
         key = str(path)
-        if key in seen or not (path / "project.json").is_file():
+        if key in seen or not is_file(path / "project.json"):
             continue
         seen.add(key)
         roots.append(path)
