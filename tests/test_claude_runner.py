@@ -4,6 +4,7 @@ import os
 import shutil
 import subprocess
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -94,7 +95,8 @@ def _patch_launch(monkeypatch, *, alive_after=True):
         alive[pid] = alive_after
         marker = "-File "
         ps1 = command[command.rfind(marker) + len(marker):].strip().strip('"')
-        scripts.append(Path(ps1).read_text(encoding="utf-8-sig"))
+        from sketch2cad.procutil import read_text
+        scripts.append(read_text(ps1, encoding="utf-8-sig"))
         return {"pid": pid, "image": "conhost.exe", "created": f"2026-01-01T00:00:{pid % 60:02d}+00:00"}
 
     def status(pid, image, created):
@@ -928,6 +930,106 @@ def test_failed_run_shows_the_log_tail(tmp_path):
     assert not (project.path / "agent_exchange" / "claude_tasks" / "seen.txt").exists()
 
 
+@contextmanager
+def _limit_plain_paths(monkeypatch):
+    """A plain path of 260 characters or more raises OSError, as Windows does without ``\\\\?\\``."""
+    import builtins
+
+    from sketch2cad import procutil
+
+    enabled = [True]
+
+    def simulating_long_path(path):
+        text = os.fspath(path)
+        if text.startswith("\\\\?\\"):
+            return text
+        text = os.path.abspath(text)
+        if len(text) >= 260:
+            return "\\\\?\\" + text.replace("/", "\\")
+        return text
+
+    def plain_of(path):
+        text = os.fspath(path)
+        if text.startswith("\\\\?\\UNC\\"):
+            return ("\\\\" + text[len("\\\\?\\UNC\\"):]).replace("\\", "/")
+        if text.startswith("\\\\?\\"):
+            return text[4:].replace("\\", "/")
+        if len(text) >= 260:
+            raise OSError(3, "The system cannot find the path specified")
+        return text
+
+    def call_limited(fn):
+        enabled[0] = False
+        try:
+            return fn()
+        finally:
+            enabled[0] = True
+
+    monkeypatch.setattr(procutil, "long_path", simulating_long_path)
+    monkeypatch.setattr(runner, "long_path", simulating_long_path)
+
+    def wrap_function(module, name, indexes):
+        original = getattr(module, name)
+
+        def inner(*args, **kwargs):
+            if not enabled[0]:
+                return original(*args, **kwargs)
+            args = list(args)
+            for index in indexes:
+                if index < len(args) and not isinstance(args[index], int):
+                    args[index] = plain_of(args[index])
+            return call_limited(lambda: original(*args, **kwargs))
+
+        monkeypatch.setattr(module, name, inner)
+
+    for name, indexes in (
+        ("makedirs", (0,)), ("mkdir", (0,)), ("walk", (0,)), ("scandir", (0,)),
+        ("remove", (0,)), ("unlink", (0,)), ("listdir", (0,)), ("stat", (0,)),
+        ("utime", (0,)), ("rename", (0, 1)), ("replace", (0, 1)),
+    ):
+        wrap_function(os, name, indexes)
+    for name, indexes in (
+        ("copy2", (0, 1)), ("copy", (0, 1)), ("copyfile", (0, 1)),
+        ("copytree", (0, 1)), ("rmtree", (0,)),
+    ):
+        wrap_function(shutil, name, indexes)
+
+    def wrap_method(name, extra=()):
+        original = getattr(Path, name)
+
+        def inner(self, *args, **kwargs):
+            if not enabled[0]:
+                return original(self, *args, **kwargs)
+            target = Path(plain_of(self))
+            args = list(args)
+            for index in extra:
+                if index < len(args) and isinstance(args[index], (str, Path, os.PathLike)):
+                    args[index] = Path(plain_of(args[index]))
+            return call_limited(lambda: original(target, *args, **kwargs))
+
+        monkeypatch.setattr(Path, name, inner)
+
+    for name in (
+        "write_text", "write_bytes", "read_text", "read_bytes", "mkdir", "exists",
+        "is_file", "is_dir", "stat", "lstat", "unlink", "iterdir", "open", "resolve",
+        "rmdir", "touch", "glob", "rglob",
+    ):
+        wrap_method(name)
+    wrap_method("replace", extra=(0,))
+    wrap_method("rename", extra=(0,))
+
+    original_open = builtins.open
+
+    def wrapped_open(file, *args, **kwargs):
+        if not enabled[0] or isinstance(file, int) or not isinstance(file, (str, Path, os.PathLike)):
+            return original_open(file, *args, **kwargs)
+        plain = plain_of(file)
+        return call_limited(lambda: original_open(plain, *args, **kwargs))
+
+    monkeypatch.setattr(builtins, "open", wrapped_open)
+    yield
+
+
 def test_task_folder_does_not_repeat_the_long_package_name(tmp_path, monkeypatch):
     """Field failure 29.10.2026: a long Hebrew drawing under a long base (Temp, or Google Drive)
     made the package copy fail with WinError 3."""
@@ -944,13 +1046,21 @@ def test_task_folder_does_not_repeat_the_long_package_name(tmp_path, monkeypatch
     add_source(doc, src)
     settings = _settings(project)
     _patch_launch(monkeypatch)
-    package = export_to_outbox(doc.path, request="sketch")
-    task = runner.watch_package(package, settings)
-    assert task is not None
-    assert package.name not in task.name and len(task.name) <= 22          # YYYYmmdd_HHMMSS_ffffff
-    assert runner._read_state(task)["package"] == package.name             # identity lives in state.json
-    copied = task / "package" / "sources" / src.name
-    assert Path(runner.long_path(copied)).read_bytes() == b"%PDF-1.4\n"
+    with _limit_plain_paths(monkeypatch):
+        with pytest.raises(OSError):
+            (base / ("n" * 40)).write_text("plain", encoding="utf-8")
+        package = export_to_outbox(doc.path, request="sketch")
+        task = runner.watch_package(package, settings)
+        assert task is not None
+        assert package.name not in task.name and len(task.name) <= 22      # YYYYmmdd_HHMMSS_ffffff
+        assert runner._read_state(task)["package"] == package.name         # identity lives in state.json
+        copied = task / "package" / "sources" / src.name
+        assert Path(runner.long_path(copied)).read_bytes() == b"%PDF-1.4\n"
+        package_dir = task / "package"
+        assert Path(runner.long_path(package_dir / "spec_format.md")).read_text(encoding="utf-8")
+        assert Path(runner.long_path(package_dir / "catalog.txt")).read_text(encoding="utf-8")
+        manifest = Path(runner.long_path(package_dir / "manifest.json")).read_text(encoding="utf-8")
+        assert "sketch2cad-work-package" in manifest
     assert len(str(package / "sources" / src.name)) > 260
     assert runner._task_for(project.path / "agent_exchange", package.name) == task
     # the same Windows path as in the field report now fits under MAX_PATH

@@ -16,7 +16,8 @@ CATEGORIES = ("gate_valve", "elbow", "pipe", "flange", "connector", "gasket", "b
 
 
 def _read_yaml(path: Path) -> list[dict]:
-    data = yaml.safe_load(path.read_text(encoding="utf-8")) or []
+    from .procutil import read_text
+    data = yaml.safe_load(read_text(path)) or []
     return [d for d in data if isinstance(d, dict) and d.get("id")]
 
 
@@ -57,9 +58,10 @@ class Catalog:
 
 
 def catalog_files(project=None) -> list[Path]:
+    from .procutil import is_file
     files = sorted(REPO_CATALOG.glob("*.yaml"))
     files += sorted((app_home() / "catalog").glob("*.yaml"))
-    if project is not None and (project.path / "catalog.yaml").exists():
+    if project is not None and is_file(project.path / "catalog.yaml"):
         files.append(project.path / "catalog.yaml")
     return files
 

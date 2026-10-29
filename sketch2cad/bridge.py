@@ -23,7 +23,9 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from .procutil import copy_file, ensure_dir, is_file, iter_files, read_bytes
+from .procutil import (
+    copy_file, ensure_dir, is_dir, is_file, iter_files, read_bytes, read_text, remove_tree, write_text,
+)
 from .spec import _catalog_lines, _spec_format, normalize_spec, parse_reply
 from .catalog import Catalog, load_catalog
 from .checks import items_used, run_checks
@@ -128,10 +130,10 @@ def open_drawing(folder: Path | str, drawing: str | None = None) -> tuple[Projec
 
 def read_spec(doc: Document) -> dict | None:
     path = doc.path / "spec.json"
-    if not path.is_file():
+    if not is_file(path):
         return None
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(read_text(path))
     except json.JSONDecodeError as exc:
         raise BridgeError(f"spec.json is not valid JSON: {exc}") from exc
     if not isinstance(data, dict):
@@ -163,14 +165,19 @@ def relevant_catalog(catalog: Catalog | None, spec: dict | None) -> Catalog | No
 def _preview_file(doc: Document) -> tuple[Path | None, bool]:
     """Newest marked sheet if the drawing screen saved one, otherwise the rendered preview."""
     markup_dir = doc.path / "markups"
-    marked = sorted(markup_dir.glob("markup_*.png")) if markup_dir.is_dir() else []
-    if marked and marked[-1].is_file():
+    marked = []
+    if is_dir(markup_dir):
+        marked = sorted(
+            path for path in iter_files(markup_dir)
+            if path.name.startswith("markup_") and path.suffix.lower() == ".png"
+        )
+    if marked and is_file(marked[-1]):
         return marked[-1], True
     rel = (doc.outputs or {}).get("preview")
-    if rel and (doc.path / rel).is_file():
+    if rel and is_file(doc.path / rel):
         return doc.path / rel, False
     plain = doc.path / "preview.png"
-    if plain.is_file():
+    if is_file(plain):
         return plain, False
     return None, False
 
@@ -288,14 +295,14 @@ def export_package(folder: Path | str, out: Path | str, *, drawing: str | None =
     """Build a work package for `folder`. Raises BridgeError and leaves no package folder on failure."""
     project, doc = open_drawing(folder, drawing)
     out = Path(out)
-    if out.exists() and any(iter_files(out)):
+    if is_dir(out) and any(iter_files(out)):
         raise BridgeError(f"output folder is not empty: {out}")
     ensure_dir(out)
     try:
         _fill_package(project, doc, out, request.strip(), extra_sources)
         _assert_no_secrets(out)
     except Exception:
-        shutil.rmtree(out, ignore_errors=True)
+        remove_tree(out)
         raise
     return out
 
@@ -311,7 +318,7 @@ def _fill_package(project: Project, doc: Document, out: Path, request: str,
         if src is None:
             excluded.append({"name": rel, "reason": "outside the drawing folder"})
             continue
-        if not src.is_file():
+        if not is_file(src):
             excluded.append({"name": rel, "reason": "missing"})
             continue
         reason = _source_skip_reason(src)
@@ -330,21 +337,21 @@ def _fill_package(project: Project, doc: Document, out: Path, request: str,
         copy_file(doc.path / "spec.json", spec_path)
         if _has_secret(read_bytes(spec_path)):
             raise BridgeError("refusing to export: spec.json contains a secret marker")
-    (out / "spec_format.md").write_text(_spec_format() + "\n", encoding="utf-8")
-    (out / "catalog.txt").write_text(_catalog_lines(relevant_catalog(catalog, spec)) + "\n", encoding="utf-8")
+    write_text(out / "spec_format.md", _spec_format() + "\n")
+    write_text(out / "catalog.txt", _catalog_lines(relevant_catalog(catalog, spec)) + "\n")
     agent = _agent_text()
     from .learning import house_style_text
     style = house_style_text(project=project)
     if style:
         agent = agent.rstrip() + "\n\n" + style
-    (out / "AGENT.md").write_text(agent, encoding="utf-8")
+    write_text(out / "AGENT.md", agent)
     if request:
-        (out / "request.txt").write_text(request + "\n", encoding="utf-8")
-        if _has_secret((out / "request.txt").read_bytes()):
+        write_text(out / "request.txt", request + "\n")
+        if _has_secret(read_bytes(out / "request.txt")):
             raise BridgeError("refusing to export: the request contains a secret marker")
     preview, marked = _preview_file(doc)
     if preview is not None:
-        if _has_secret(preview.read_bytes()):
+        if _has_secret(read_bytes(preview)):
             excluded.append({"name": preview.name, "reason": "secret marker"})
         else:
             copy_file(preview, out / "preview.png")
@@ -362,7 +369,7 @@ def _fill_package(project: Project, doc: Document, out: Path, request: str,
         "units": units,
         "language": language,
         "items_used": sorted({item_id for _, item_id in items_used(spec or {})}),
-        "preview_marked": bool(marked and (out / "preview.png").is_file()),
+        "preview_marked": bool(marked and is_file(out / "preview.png")),
         "files": files,
         "excluded": excluded,
         "return_envelope": RETURN_ENVELOPE,
@@ -370,8 +377,7 @@ def _fill_package(project: Project, doc: Document, out: Path, request: str,
         "precision_source": {"en": PAPIS_NOTE_EN, "he": PAPIS_NOTE_HE},
         "exchange": dict(EXCHANGE),
     }
-    (out / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
-                                       encoding="utf-8")
+    write_text(out / "manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2) + "\n")
 
 
 def _take_extra_sources(out: Path, extras: list[Path] | None, excluded: list) -> None:
@@ -380,7 +386,7 @@ def _take_extra_sources(out: Path, extras: list[Path] | None, excluded: list) ->
     for raw in extras or []:
         src = Path(raw)
         label = src.name or str(raw)
-        if not src.is_file():
+        if not is_file(src):
             excluded.append({"name": label, "reason": "missing"})
             continue
         if src.suffix.lower() not in allowed:
@@ -391,7 +397,7 @@ def _take_extra_sources(out: Path, extras: list[Path] | None, excluded: list) ->
             continue
         dest = out / "sources" / src.name
         stem, suffix, n = dest.stem, dest.suffix, 1
-        while dest.exists():
+        while is_file(dest):
             dest = dest.with_name(f"{stem}_{n}{suffix}")
             n += 1
         copy_file(src, dest)

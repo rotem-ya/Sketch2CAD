@@ -92,6 +92,17 @@ def is_file(path: Path | str) -> bool:
         return False
 
 
+def is_dir(path: Path | str) -> bool:
+    try:
+        return Path(long_path(path)).is_dir()
+    except OSError:
+        return False
+
+
+def remove_tree(path: Path | str) -> None:
+    shutil.rmtree(long_path(path), ignore_errors=True)
+
+
 def copy_file(src: Path | str, dest: Path | str) -> None:
     """Copy one file. On Windows the ``\\\\?\\`` form is used so a long path does not fail."""
     ensure_dir(Path(dest).parent)
@@ -111,9 +122,9 @@ def read_text(path: Path | str, encoding: str = "utf-8") -> str:
     return Path(long_path(path)).read_text(encoding=encoding)
 
 
-def write_text(path: Path | str, text: str, encoding: str = "utf-8") -> None:
+def write_text(path: Path | str, text: str, encoding: str = "utf-8", newline: str | None = None) -> None:
     ensure_dir(Path(path).parent)
-    Path(long_path(path)).write_text(text, encoding=encoding)
+    Path(long_path(path)).write_text(text, encoding=encoding, newline=newline)
 
 
 def iter_files(root: Path) -> list[Path]:
