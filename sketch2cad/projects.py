@@ -16,6 +16,7 @@ from datetime import date
 from pathlib import Path
 
 from .codes import DEFAULT_PATTERN
+from .procutil import ensure_dir, is_file, read_text, write_text
 
 PROJECT_FILE = "project.json"
 SUBFOLDERS = ("00_Sources", "10_Drawings", "20_Imports", "90_Archive")
@@ -63,12 +64,15 @@ class Project:
     def save(self) -> None:
         data = asdict(self)
         data.pop("folder")                      # the folder is wherever the file lives
-        (self.path / PROJECT_FILE).write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        write_text(self.path / PROJECT_FILE, json.dumps(data, ensure_ascii=False, indent=2))
 
     @classmethod
     def load(cls, folder: Path | str) -> "Project":
-        folder = Path(folder).resolve()
-        data = json.loads((folder / PROJECT_FILE).read_text(encoding="utf-8"))
+        try:
+            folder = Path(folder).resolve()
+        except OSError:
+            folder = Path(os.path.abspath(folder))
+        data = json.loads(read_text(folder / PROJECT_FILE))
         known = {k: v for k, v in data.items() if k in cls.__dataclass_fields__}
         return cls(folder=str(folder), **known)
 
@@ -82,19 +86,19 @@ def safe_folder_name(code: str, name_en: str) -> str:
 def create_project(parent: Path | str, code: str, name_he: str = "", name_en: str = "", **kwargs) -> Project:
     if not code.strip():
         raise ValueError("project code is required")
-    folder = Path(parent).resolve() / safe_folder_name(code.strip(), name_en or name_he)
-    if (folder / PROJECT_FILE).exists():
+    folder = Path(os.path.abspath(parent)) / safe_folder_name(code.strip(), name_en or name_he)
+    if is_file(folder / PROJECT_FILE):
         raise FileExistsError(f"a project already exists in {folder}")
-    folder.mkdir(parents=True, exist_ok=True)
+    ensure_dir(folder)
     for sub in SUBFOLDERS:
-        (folder / sub).mkdir(exist_ok=True)
+        ensure_dir(folder / sub)
     project = Project(code=code.strip(), name={"he": name_he, "en": name_en}, folder=str(folder), **kwargs)
     project.save()
     return project
 
 
 def is_project_folder(folder: Path | str) -> bool:
-    return (Path(folder) / PROJECT_FILE).exists()
+    return is_file(Path(folder) / PROJECT_FILE)
 
 
 def relocate_project(project: Project, new_parent_or_folder: Path | str, move_files: bool = True) -> Project:
