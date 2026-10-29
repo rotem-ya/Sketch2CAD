@@ -929,12 +929,15 @@ def test_failed_run_shows_the_log_tail(tmp_path):
 
 
 def test_task_folder_does_not_repeat_the_long_package_name(tmp_path, monkeypatch):
-    """Field failure 29.10.2026: claude_tasks/<time>-<time>_<code with a long Hebrew subject>/package/sources/<file>
-    reached 269 characters inside a Google Drive project folder and the copy failed with WinError 3."""
-    project = create_project(tmp_path / "projects", "20117", "חצרים", "Hatzerim")
+    """Field failure 29.10.2026: a long Hebrew drawing under a long base (Temp, or Google Drive)
+    made the package copy fail with WinError 3."""
+    # Stand-in for ``C:\\Users\\...\\AppData\\Local\\Temp\\pytest-...``, which already ate most of MAX_PATH.
+    base = tmp_path / ("Temp" * 40)
+    project = create_project(base / "projects", "20117", "חצרים", "Hatzerim")
     doc = create_document(project, title_he="סקיצה", title_en="Sketch", discipline="D",
                           subject="סקיצה-לחיבור-תעלות-ניקוז-לשוחות-תוכנית-חתך")
-    (doc.path / "spec.json").write_text(json.dumps(PIPE), encoding="utf-8")
+    from sketch2cad.procutil import write_text
+    write_text(doc.path / "spec.json", json.dumps(PIPE))
     src = tmp_path / "TD2MH connection 21-10-26 (Papis comments).pdf"
     src.write_bytes(b"%PDF-1.4\n")
     from sketch2cad.documents import add_source
@@ -946,7 +949,9 @@ def test_task_folder_does_not_repeat_the_long_package_name(tmp_path, monkeypatch
     assert task is not None
     assert package.name not in task.name and len(task.name) <= 22          # YYYYmmdd_HHMMSS_ffffff
     assert runner._read_state(task)["package"] == package.name             # identity lives in state.json
-    assert (task / "package" / "sources" / src.name).read_bytes() == b"%PDF-1.4\n"
+    copied = task / "package" / "sources" / src.name
+    assert Path(runner.long_path(copied)).read_bytes() == b"%PDF-1.4\n"
+    assert len(str(package / "sources" / src.name)) > 260
     assert runner._task_for(project.path / "agent_exchange", package.name) == task
     # the same Windows path as in the field report now fits under MAX_PATH
     base = r"E:\GoogleDrive\עבודה\יעקב יעקב\פרוייקטים בביצוע\CDM\חצרים\ביצוע\חצרים_HATZERIM\agent_exchange"

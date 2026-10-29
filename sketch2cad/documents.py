@@ -2,12 +2,14 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 from dataclasses import asdict, dataclass, field
 from datetime import date, datetime
 from pathlib import Path
 
 from . import codes
+from .procutil import copy_file, ensure_dir, is_file, make_dir, read_text, write_bytes, write_text
 from .projects import Project
 
 DOC_FILE = "document.json"
@@ -84,12 +86,15 @@ class Document:
         self.updated = datetime.now().isoformat(timespec="seconds")
         data = asdict(self)
         data.pop("folder")
-        (self.path / DOC_FILE).write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        write_text(self.path / DOC_FILE, json.dumps(data, ensure_ascii=False, indent=2))
 
     @classmethod
     def load(cls, folder: Path | str) -> "Document":
-        folder = Path(folder).resolve()
-        data = json.loads((folder / DOC_FILE).read_text(encoding="utf-8"))
+        try:
+            folder = Path(folder).resolve()
+        except OSError:
+            folder = Path(os.path.abspath(folder))
+        data = json.loads(read_text(folder / DOC_FILE))
         known = {k: v for k, v in data.items() if k in cls.__dataclass_fields__}
         return cls(folder=str(folder), **known)
 
@@ -116,8 +121,8 @@ def create_document(project: Project, *, title_he: str = "", title_en: str = "",
         code, seq = codes.next_code(project.doc_code_pattern, existing, prj=project.code, disc=discipline,
                                     subj=subject, typ=type)
     folder = project.drawings_dir / code
-    folder.mkdir(parents=True, exist_ok=False)
-    (folder / "sources").mkdir()
+    make_dir(folder)
+    ensure_dir(folder / "sources")
     doc = Document(code=code, seq=seq, title={"he": title_he, "en": title_en}, folder=str(folder),
                    description=description, discipline=discipline, subject=subject, type=type,
                    tags=list(tags or []), revisions=[asdict(Revision("A", date.today().isoformat(), "Created"))])
@@ -133,13 +138,13 @@ def add_source(doc: Document, file_path: Path | str | None = None, *, name: str 
     name = name or Path(file_path).name
     dest = doc.path / "sources" / name
     stem, suffix, n = dest.stem, dest.suffix, 1
-    while dest.exists():                                   # never overwrite an existing source
+    while is_file(dest):                                   # never overwrite an existing source
         dest = dest.with_name(f"{stem}_{n}{suffix}")
         n += 1
     if data is not None:
-        dest.write_bytes(data)
+        write_bytes(dest, data)
     else:
-        shutil.copy2(file_path, dest)
+        copy_file(file_path, dest)
     rel = dest.relative_to(doc.path).as_posix()
     doc.sources.append(rel)
     doc.save()

@@ -24,7 +24,7 @@ from datetime import datetime
 from pathlib import Path
 
 from .config import Settings, app_home
-from .procutil import run as hidden_run
+from .procutil import extended_form, long_path, run as hidden_run
 
 PROMPT = (
     "You are headless Claude on this PC. Read TASK.md in this folder and carry it out, "
@@ -621,10 +621,15 @@ def _write_names(path: Path, names: set[str]) -> None:
 
 
 def _task_dirs(exchange: Path) -> list[Path]:
+    from .procutil import is_file, long_path
     root = exchange / "claude_tasks"
-    if not root.is_dir():
+    try:
+        if not Path(long_path(root)).is_dir():
+            return []
+        names = [entry.name for entry in os.scandir(long_path(root)) if entry.is_dir(follow_symlinks=False)]
+    except OSError:
         return []
-    found = [path for path in root.iterdir() if path.is_dir() and (path / "state.json").is_file()]
+    found = [root / name for name in names if is_file(root / name / "state.json")]
     found.sort(key=lambda path: path.name)
     return found
 
@@ -637,7 +642,8 @@ def _task_for(exchange: Path, package_name: str) -> Path | None:
 def _read_state(task: Path) -> dict:
     path = task / "state.json"
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        from .procutil import read_text
+        data = json.loads(read_text(path))
     except (OSError, json.JSONDecodeError):
         return {}
     return data if isinstance(data, dict) else {}
@@ -648,10 +654,12 @@ def _write_state(task: Path, state: dict) -> None:
 
 
 def _write_json(path: Path, data: dict) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
+    from .procutil import ensure_dir, long_path
+    ensure_dir(path.parent)
     temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    temporary.replace(path)
+    Path(long_path(temporary)).write_text(
+        json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    Path(long_path(temporary)).replace(Path(long_path(path)))
 
 
 def _warnings_for(settings: Settings) -> list[list[str]]:
@@ -662,22 +670,6 @@ def _warnings_for(settings: Settings) -> list[list[str]]:
     return found
 
 
-def long_path(path: Path) -> str:
-    """Windows: the extended-length form of `path`, so a copy deeper than MAX_PATH (260) still works when
-    LongPathsEnabled is off. Other systems: the plain absolute path."""
-    text = str(Path(path).absolute())
-    return extended_form(text) if os.name == "nt" else text
-
-
-def extended_form(text: str) -> str:
-    r"""``C:\a`` -> ``\\?\C:\a``; ``\\server\share`` -> ``\\?\UNC\server\share``; already extended: unchanged."""
-    if text.startswith("\\\\?\\"):
-        return text
-    if text.startswith("\\\\"):
-        return "\\\\?\\UNC\\" + text[2:]
-    return "\\\\?\\" + text
-
-
 def _create_task(package: Path, settings: Settings) -> Path:
     exchange = package.parent.parent
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
@@ -685,18 +677,19 @@ def _create_task(package: Path, settings: Settings) -> Path:
     # subject) is already in state.json. Repeating it here pushed sources past 260 characters
     # (WinError 3) inside Google Drive project folders.
     task = exchange / "claude_tasks" / stamp
-    task.mkdir(parents=True)
+    from .procutil import ensure_dir
+    ensure_dir(task)
     try:
         shutil.copytree(long_path(package), long_path(task / "package"))
         _copy_qa_report(package, task)
         has_qa = (task / "qa_report.json").is_file()
-        (task / "TASK.md").write_text(
-            task_markdown(package.name, has_qa=has_qa), encoding="utf-8")
-        (task / "p.txt").write_text(PROMPT, encoding="utf-8-sig")
+        from .procutil import write_text
+        write_text(task / "TASK.md", task_markdown(package.name, has_qa=has_qa))
+        write_text(task / "p.txt", PROMPT, encoding="utf-8-sig")
         warnings = _warnings_for(settings)
         if warnings:
             lines = [f"{code} {path}" for code, path in warnings]
-            (task / "preflight.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
+            write_text(task / "preflight.txt", "\n".join(lines) + "\n")
         _write_state(task, {
             "package": package.name,
             "status": "queued",

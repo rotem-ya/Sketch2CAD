@@ -17,11 +17,13 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import shutil
 import sys
 from datetime import datetime
 from pathlib import Path
 
+from .procutil import copy_file, ensure_dir, is_file, iter_files, read_bytes
 from .spec import _catalog_lines, _spec_format, normalize_spec, parse_reply
 from .catalog import Catalog, load_catalog
 from .checks import items_used, run_checks
@@ -80,7 +82,7 @@ class ReplyError(BridgeError):
 
 
 def _sha256(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    return hashlib.sha256(read_bytes(path)).hexdigest()
 
 
 def _has_secret(data: bytes) -> bool:
@@ -90,22 +92,26 @@ def _has_secret(data: bytes) -> bool:
 
 def _project_above(doc: Document) -> Project:
     for parent in doc.path.parents:
-        if (parent / PROJECT_FILE).is_file():
+        if is_file(parent / PROJECT_FILE):
             return Project.load(parent)
     raise BridgeError(f"no {PROJECT_FILE} above {doc.path}")
 
 
 def open_drawing(folder: Path | str, drawing: str | None = None) -> tuple[Project, Document]:
     """A project folder, or one drawing folder inside a project."""
-    folder = Path(folder).resolve()
-    if not folder.is_dir():
+    try:
+        folder = Path(folder).resolve()
+    except OSError:
+        folder = Path(os.path.abspath(folder))
+    from .procutil import long_path
+    if not Path(long_path(folder)).is_dir():
         raise BridgeError(f"not a folder: {folder}")
-    if (folder / DOC_FILE).is_file():
+    if is_file(folder / DOC_FILE):
         doc = Document.load(folder)
         if drawing and drawing != doc.code:
             raise BridgeError(f"--drawing {drawing} does not match document {doc.code}")
         return _project_above(doc), doc
-    if (folder / PROJECT_FILE).is_file():
+    if is_file(folder / PROJECT_FILE):
         project = Project.load(folder)
         docs = list_documents(project)
         if drawing:
@@ -210,9 +216,16 @@ def _agent_text() -> str:
 
 def _contained(root: Path, rel: str) -> Path | None:
     """A path that stays inside `root`. Absolute paths and `..` are rejected."""
-    root = root.resolve()
-    path = (root / rel).resolve()
-    if path == root or root not in path.parents:
+    if Path(rel).is_absolute() or ".." in Path(rel).parts:
+        return None
+    try:
+        root_abs = root.resolve()
+        path = (root_abs / rel).resolve()
+    except OSError:
+        # A path past 260 characters cannot be resolved on Windows until it is extended.
+        root_abs = Path(os.path.abspath(root))
+        path = Path(os.path.abspath(root_abs / rel))
+    if path == root_abs or root_abs not in path.parents:
         return None
     return path
 
@@ -222,19 +235,20 @@ def _source_skip_reason(path: Path) -> str | None:
         return "sensitive file name"
     if path.suffix.lower() not in SOURCE_SUFFIXES:
         return "not a sketch, image or PDF"
-    if _has_secret(path.read_bytes()):
+    if _has_secret(read_bytes(path)):
         return "secret marker"
     return None
 
 
 def _file_entry(path: Path, root: Path, role: str) -> dict:
+    from .procutil import long_path
     return {"name": path.relative_to(root).as_posix(), "role": role, "sha256": _sha256(path),
-            "bytes": path.stat().st_size}
+            "bytes": Path(long_path(path)).stat().st_size}
 
 
 def _assert_no_secrets(root: Path) -> None:
-    for path in root.rglob("*"):
-        if path.is_file() and _has_secret(path.read_bytes()):
+    for path in iter_files(root):
+        if _has_secret(read_bytes(path)):
             raise BridgeError(f"refusing to write the package: {path.name} contains a secret marker")
 
 
@@ -253,8 +267,8 @@ def export_to_outbox(folder: Path | str, *, drawing: str | None = None, request:
     """Write one work package under `<project>/agent_exchange/outbox/<time>_<code>/`."""
     project, doc = open_drawing(folder, drawing)
     dest = project.path / EXCHANGE_OUTBOX / f"{datetime.now():%Y%m%d_%H%M%S_%f}_{doc.code}"
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    (project.path / EXCHANGE_INBOX).mkdir(parents=True, exist_ok=True)
+    ensure_dir(dest.parent)
+    ensure_dir(project.path / EXCHANGE_INBOX)
     return export_package(doc.path, dest, request=request, extra_sources=extra_sources)
 
 
@@ -274,9 +288,9 @@ def export_package(folder: Path | str, out: Path | str, *, drawing: str | None =
     """Build a work package for `folder`. Raises BridgeError and leaves no package folder on failure."""
     project, doc = open_drawing(folder, drawing)
     out = Path(out)
-    if out.exists() and any(out.iterdir()):
+    if out.exists() and any(iter_files(out)):
         raise BridgeError(f"output folder is not empty: {out}")
-    out.mkdir(parents=True, exist_ok=True)
+    ensure_dir(out)
     try:
         _fill_package(project, doc, out, request.strip(), extra_sources)
         _assert_no_secrets(out)
@@ -308,13 +322,13 @@ def _fill_package(project: Project, doc: Document, out: Path, request: str,
         if dest is None:
             excluded.append({"name": rel, "reason": "outside the drawing folder"})
             continue
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(src, dest)
+        ensure_dir(dest.parent)
+        copy_file(src, dest)
     _take_extra_sources(out, extra_sources, excluded)
     if spec is not None:
         spec_path = out / "spec.json"
-        shutil.copy2(doc.path / "spec.json", spec_path)
-        if _has_secret(spec_path.read_bytes()):
+        copy_file(doc.path / "spec.json", spec_path)
+        if _has_secret(read_bytes(spec_path)):
             raise BridgeError("refusing to export: spec.json contains a secret marker")
     (out / "spec_format.md").write_text(_spec_format() + "\n", encoding="utf-8")
     (out / "catalog.txt").write_text(_catalog_lines(relevant_catalog(catalog, spec)) + "\n", encoding="utf-8")
@@ -333,9 +347,9 @@ def _fill_package(project: Project, doc: Document, out: Path, request: str,
         if _has_secret(preview.read_bytes()):
             excluded.append({"name": preview.name, "reason": "secret marker"})
         else:
-            shutil.copy2(preview, out / "preview.png")
+            copy_file(preview, out / "preview.png")
     files = []
-    for path in sorted(p for p in out.rglob("*") if p.is_file()):
+    for path in sorted(iter_files(out)):
         role = _role_for(path.relative_to(out).as_posix(), marked)
         files.append(_file_entry(path, out, role))
     manifest = {
@@ -372,7 +386,7 @@ def _take_extra_sources(out: Path, extras: list[Path] | None, excluded: list) ->
         if src.suffix.lower() not in allowed:
             excluded.append({"name": label, "reason": "not a PDF, DWG or image"})
             continue
-        if _has_secret(src.read_bytes()):
+        if _has_secret(read_bytes(src)):
             excluded.append({"name": label, "reason": "secret marker"})
             continue
         dest = out / "sources" / src.name
@@ -380,8 +394,7 @@ def _take_extra_sources(out: Path, extras: list[Path] | None, excluded: list) ->
         while dest.exists():
             dest = dest.with_name(f"{stem}_{n}{suffix}")
             n += 1
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(src, dest)
+        copy_file(src, dest)
 
 
 def _role_for(name: str, marked: bool) -> str:
