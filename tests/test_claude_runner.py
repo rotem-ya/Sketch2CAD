@@ -950,6 +950,9 @@ def _limit_plain_paths(monkeypatch):
 
     def plain_of(path):
         text = os.fspath(path)
+        if os.name == "nt" and text.startswith("\\\\?\\"):
+            # The real Windows call keeps ``\\?\``: without LongPathsEnabled the plain form fails there too.
+            return text
         if text.startswith("\\\\?\\UNC\\"):
             return ("\\\\" + text[len("\\\\?\\UNC\\"):]).replace("\\", "/")
         if text.startswith("\\\\?\\"):
@@ -1084,3 +1087,12 @@ def test_extended_length_paths_for_windows_copies():
     assert runner.extended_form("\\\\?\\E:\\a") == "\\\\?\\E:\\a"
     if os.name != "nt":
         assert runner.long_path(Path("/tmp/x")) == "/tmp/x"
+
+
+def test_long_path_reaches_a_folder_past_max_path(tmp_path):
+    from sketch2cad import procutil
+    folder = tmp_path / ("a" * 120) / ("b" * 120)
+    procutil.ensure_dir(folder)
+    assert len(str(folder)) > 260
+    assert procutil.is_dir(folder) and Path(procutil.long_path(folder)).is_dir()
+    assert procutil.is_dir(str(folder).replace("\\", "/"))
