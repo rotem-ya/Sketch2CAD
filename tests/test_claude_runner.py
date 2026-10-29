@@ -926,3 +926,46 @@ def test_failed_run_shows_the_log_tail(tmp_path):
     assert "UNIQUE-LOG-TAIL-xyz" in blob
     assert t("agent_recv", "he") in {b.label for b in at.button}
     assert not (project.path / "agent_exchange" / "claude_tasks" / "seen.txt").exists()
+
+
+def test_task_folder_does_not_repeat_the_long_package_name(tmp_path, monkeypatch):
+    """Field failure 29.10.2026: claude_tasks/<time>-<time>_<code with a long Hebrew subject>/package/sources/<file>
+    reached 269 characters inside a Google Drive project folder and the copy failed with WinError 3."""
+    project = create_project(tmp_path / "projects", "20117", "חצרים", "Hatzerim")
+    doc = create_document(project, title_he="סקיצה", title_en="Sketch", discipline="D",
+                          subject="סקיצה-לחיבור-תעלות-ניקוז-לשוחות-תוכנית-חתך")
+    (doc.path / "spec.json").write_text(json.dumps(PIPE), encoding="utf-8")
+    src = tmp_path / "TD2MH connection 21-10-26 (Papis comments).pdf"
+    src.write_bytes(b"%PDF-1.4\n")
+    from sketch2cad.documents import add_source
+    add_source(doc, src)
+    settings = _settings(project)
+    _patch_launch(monkeypatch)
+    package = export_to_outbox(doc.path, request="sketch")
+    task = runner.watch_package(package, settings)
+    assert task is not None
+    assert package.name not in task.name and len(task.name) <= 22          # YYYYmmdd_HHMMSS_ffffff
+    assert runner._read_state(task)["package"] == package.name             # identity lives in state.json
+    assert (task / "package" / "sources" / src.name).read_bytes() == b"%PDF-1.4\n"
+    assert runner._task_for(project.path / "agent_exchange", package.name) == task
+    # the same Windows path as in the field report now fits under MAX_PATH
+    base = r"E:\GoogleDrive\עבודה\יעקב יעקב\פרוייקטים בביצוע\CDM\חצרים\ביצוע\חצרים_HATZERIM\agent_exchange"
+    assert len(rf"{base}\claude_tasks\{task.name}\package\sources\{src.name}") < 260
+
+
+def test_failed_marker_name_is_short_and_stable(tmp_path):
+    exchange = tmp_path / "agent_exchange"
+    name = "20261029_103110_120086_20117-D-" + "סקיצה-לחיבור-תעלות-ניקוז-לשוחות-תוכנית-חתך" * 3
+    runner._mark_failed(exchange, name, RuntimeError("x"))
+    runner._mark_failed(exchange, name, RuntimeError("y"))
+    tasks = runner._task_dirs(exchange)
+    assert len(tasks) == 1 and len(tasks[0].name) == len("failed-") + 12
+    assert runner._task_for(exchange, name) == tasks[0]
+
+
+def test_extended_length_paths_for_windows_copies():
+    assert runner.extended_form(r"E:\GoogleDrive\a.pdf") == "\\\\?\\E:\\GoogleDrive\\a.pdf"
+    assert runner.extended_form(r"\\server\share\a") == "\\\\?\\UNC\\server\\share\\a"
+    assert runner.extended_form("\\\\?\\E:\\a") == "\\\\?\\E:\\a"
+    if os.name != "nt":
+        assert runner.long_path(Path("/tmp/x")) == "/tmp/x"

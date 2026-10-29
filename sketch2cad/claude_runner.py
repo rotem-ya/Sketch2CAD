@@ -12,6 +12,7 @@ keeps the launcher and the app from starting two runs. Nothing here schedules a 
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -661,13 +662,32 @@ def _warnings_for(settings: Settings) -> list[list[str]]:
     return found
 
 
+def long_path(path: Path) -> str:
+    """Windows: the extended-length form of `path`, so a copy deeper than MAX_PATH (260) still works when
+    LongPathsEnabled is off. Other systems: the plain absolute path."""
+    text = str(Path(path).absolute())
+    return extended_form(text) if os.name == "nt" else text
+
+
+def extended_form(text: str) -> str:
+    r"""``C:\a`` -> ``\\?\C:\a``; ``\\server\share`` -> ``\\?\UNC\server\share``; already extended: unchanged."""
+    if text.startswith("\\\\?\\"):
+        return text
+    if text.startswith("\\\\"):
+        return "\\\\?\\UNC\\" + text[2:]
+    return "\\\\?\\" + text
+
+
 def _create_task(package: Path, settings: Settings) -> Path:
     exchange = package.parent.parent
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-    task = exchange / "claude_tasks" / f"{stamp}-{package.name}"
+    # The folder is named by time only: the package name (time + document code, often a long Hebrew
+    # subject) is already in state.json. Repeating it here pushed sources past 260 characters
+    # (WinError 3) inside Google Drive project folders.
+    task = exchange / "claude_tasks" / stamp
     task.mkdir(parents=True)
     try:
-        shutil.copytree(package, task / "package")
+        shutil.copytree(long_path(package), long_path(task / "package"))
         _copy_qa_report(package, task)
         has_qa = (task / "qa_report.json").is_file()
         (task / "TASK.md").write_text(
@@ -697,7 +717,8 @@ def _create_task(package: Path, settings: Settings) -> Path:
 
 def _mark_failed(exchange: Path, package_name: str, exc: BaseException) -> None:
     """One stable failed task so a bad package is visible and is not started again."""
-    task = exchange / "claude_tasks" / f"failed-{package_name}"
+    digest = hashlib.sha1(package_name.encode("utf-8")).hexdigest()[:12]
+    task = exchange / "claude_tasks" / f"failed-{digest}"                 # short: see _create_task
     task.mkdir(parents=True, exist_ok=True)
     _write_state(task, {
         "package": package_name,
@@ -743,7 +764,7 @@ def _copy_qa_report(package: Path, task: Path) -> None:
             newest = max(reports, key=lambda path: (path.stat().st_mtime, path.name))
         break
     if newest is not None:
-        shutil.copy2(newest, task / "qa_report.json")
+        shutil.copy2(long_path(newest), long_path(task / "qa_report.json"))
 
 
 def _sync(exchange: Path, settings: Settings) -> None:
