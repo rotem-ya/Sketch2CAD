@@ -200,20 +200,66 @@ def index_source(doc: Document, path: Path) -> list[str]:
     return list(info.warnings)
 
 
-def _browse(key: str, title: str) -> None:
-    from sketch2cad.native import pick_folder
-    path = pick_folder(ss.get(key, ""), title)
-    if path:
-        ss[key] = path
+def _fb_toggle(key: str) -> None:
+    """Browse: open the in-app folder browser at the typed folder (or its nearest parent); again: close."""
+    from sketch2cad.folderbrowse import start_dir
+    if f"{key}_fb" in ss:
+        ss.pop(f"{key}_fb")
+    else:
+        ss[f"{key}_fb"] = start_dir(ss.get(key, ""))
+
+
+def _fb_go(key: str, path: str) -> None:
+    ss[f"{key}_fb"] = path
+
+
+def _fb_pick(key: str, path: str) -> None:
+    ss[key] = path
+    ss.pop(f"{key}_fb", None)
+
+
+def folder_browser(key: str) -> None:
+    """Folders of the PC that runs the server, listed by the server: works from any browser or phone,
+    with no native Windows dialog (that one opened on the server's desktop and blocked the page)."""
+    from sketch2cad import folderbrowse as fb
+    cur = ss[f"{key}_fb"]
+    box = st.container(border=True)
+    box.markdown(f"📁 `{cur}`" if cur else f"💽 **{T('fb_drives')}**")
+    b1, b2, b3, b4 = box.columns(4)
+    b1.button(f"⬆️ {T('fb_up')}", key=f"{key}_fb_up", on_click=_fb_go, args=(key, fb.parent(cur)),
+              disabled=not cur, width="stretch")
+    b2.button(f"💽 {T('fb_drives')}", key=f"{key}_fb_drives", on_click=_fb_go, args=(key, ""),
+              width="stretch")
+    b3.button(f"✅ {T('fb_select')}", key=f"{key}_fb_ok", on_click=_fb_pick, args=(key, cur),
+              disabled=not cur, type="primary", width="stretch")
+    b4.button(f"✖️ {T('cancel')}", key=f"{key}_fb_close", on_click=ss.pop, args=(f"{key}_fb", None),
+              width="stretch")
+    if cur:
+        names, more, err = fb.subfolders(cur)
+        entries = [(n, os.path.join(cur, n)) for n in names]
+    else:
+        more, err = False, ""
+        entries = [(d, d) for d in fb.drives()]
+    if err:
+        box.warning(f"{T('fb_error')}: {err}")
+    elif not entries:
+        box.caption(T("fb_empty"))
+    if more:
+        box.caption(T("fb_more").format(n=fb.MAX_ENTRIES))
+    rows = box.container(height=320) if len(entries) > 8 else box
+    for i, (name, path) in enumerate(entries):
+        rows.button(f"📁 {name}", key=f"{key}_fb_{i}", on_click=_fb_go, args=(key, path), width="stretch")
 
 
 def folder_input(label: str, key: str) -> str:
-    """Text box for a folder path + a button that opens the Windows folder picker."""
+    """Text box for a folder path + a Browse button that opens the in-app folder browser."""
     ss.setdefault(key, "")
     c1, c2 = st.columns([6, 1], vertical_alignment="bottom")
     c1.text_input(label, key=key)
-    c2.button(f"📂 {T('browse')}", key=f"{key}_browse", on_click=_browse, args=(key, label),
+    c2.button(f"📂 {T('browse')}", key=f"{key}_browse", on_click=_fb_toggle, args=(key,),
               width="stretch")
+    if f"{key}_fb" in ss:
+        folder_browser(key)
     return ss[key]
 
 

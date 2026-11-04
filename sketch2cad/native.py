@@ -2,8 +2,11 @@
 from __future__ import annotations
 
 import os
+import subprocess
 
 from .procutil import run as hidden_run
+
+PICK_TIMEOUT_S = 120
 
 PS_PICK_FOLDER = r"""
 [Console]::OutputEncoding = [Text.Encoding]::UTF8
@@ -21,11 +24,16 @@ def pick_folder(initial: str = "", title: str = "") -> str | None:
     """Show the OS folder picker; returns the chosen folder, or None (cancelled / no desktop)."""
     if os.name == "nt":
         env = {**os.environ, "S2C_START": initial or "", "S2C_TITLE": title or ""}
-        # gui=True: hide the PowerShell console, not the folder dialog itself.
-        proc = hidden_run(
-            ["powershell", "-NoProfile", "-WindowStyle", "Hidden", "-STA", "-Command", PS_PICK_FOLDER],
-            capture_output=True, env=env, gui=True)
-        path = proc.stdout.decode("utf-8", "ignore").strip()
+        # gui=True: hide the PowerShell console, not the folder dialog itself. The dialog opens on the
+        # server's desktop (unseen from a phone, behind windows, or no desktop at all): a time limit,
+        # so a caller is never blocked for good. The app itself uses the in-app browser (folderbrowse).
+        try:
+            proc = hidden_run(
+                ["powershell", "-NoProfile", "-WindowStyle", "Hidden", "-STA", "-Command", PS_PICK_FOLDER],
+                capture_output=True, env=env, gui=True, timeout=PICK_TIMEOUT_S)
+        except (subprocess.TimeoutExpired, OSError):
+            return None
+        path = (proc.stdout or b"").decode("utf-8", "ignore").strip()
         return path or None
     try:
         import tkinter
@@ -33,10 +41,14 @@ def pick_folder(initial: str = "", title: str = "") -> str | None:
         root = tkinter.Tk()
     except Exception:  # noqa: BLE001 - no tkinter or no display (server / CI)
         return None
-    root.withdraw()
-    root.attributes("-topmost", True)
-    path = filedialog.askdirectory(master=root, initialdir=initial or None, title=title or None)
-    root.destroy()
+    try:
+        root.withdraw()
+        root.attributes("-topmost", True)
+        path = filedialog.askdirectory(master=root, initialdir=initial or None, title=title or None)
+    except Exception:  # noqa: BLE001 - a broken display must not break the caller
+        path = None
+    finally:
+        root.destroy()
     return path or None
 
 
