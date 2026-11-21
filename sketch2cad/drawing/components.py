@@ -242,6 +242,11 @@ def draw_floor(ctx: DrawContext, el: dict):
     return Vec2(pts[0]).lerp(Vec2(pts[len(pts) // 2])), 0.0
 
 
+def draw_ceiling(ctx: DrawContext, el: dict):
+    """Ceiling outline in plan, the same closed shape as a floor."""
+    return draw_floor(ctx, el)
+
+
 def draw_rect(ctx: DrawContext, el: dict):
     """Rectangle (building, thrust block, sand bed) with optional hatch."""
     (x0, y0), (x1, y1) = el["corners"]
@@ -426,7 +431,7 @@ DRAWERS = {
     "connector": draw_connector, "manhole": draw_manhole, "trench_drain": draw_trench_drain,
     "rect": draw_rect, "polyline": draw_polyline, "text": draw_text, "flow_arrow": draw_flow_arrow,
     "north_arrow": draw_north_arrow, "weld": draw_weld, "break": draw_break, "circle": draw_circle,
-    "wall": draw_wall, "opening": draw_opening, "floor": draw_floor,
+    "wall": draw_wall, "opening": draw_opening, "floor": draw_floor, "ceiling": draw_ceiling,
 }
 
 

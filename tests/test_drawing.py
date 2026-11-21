@@ -162,6 +162,7 @@ ALL_TYPES = [
     {"type": "wall", "points": [[-2000, -3200], [2000, -3200]], "height": 3000, "thickness": 200},
     {"type": "opening", "at": [0, -3200], "width": 900, "height": 2100, "kind": "door"},
     {"type": "floor", "corners": [[-2000, -4000], [2000, -3300]], "thickness": 200},
+    {"type": "ceiling", "corners": [[-2000, -5200], [2000, -4500]], "z": 2700, "thickness": 20},
 ]
 
 
