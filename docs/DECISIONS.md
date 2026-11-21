@@ -65,3 +65,33 @@ verifies, so this prototype does not launch it.
 
 אב-טיפוס בלבד: סריקת as-built נשמרת כהפניה, וקירות, פתחים, רצפות ותקרות נכתבים כסצנה של Pascal
 ולצד זה כ-IFC. אין מפתח ואין קריאה לרשת.
+
+## IDEAS-14 — Clash and defect check (IfcClash, BCF 2.1)
+
+The check is a separate call, `sketch2cad.io.clash.check_model`. `render` does not run it, and
+`install.bat` does not install it. IfcClash (LGPL-3.0, https://docs.ifcopenshell.org/ifcclash.html)
+is imported from `requirements-clash.txt`. Its source is not in this repository.
+
+IfcClash can write BCF itself, and that path imports the PyPI package `bcf-client`, which is
+GPL-3.0. This module does not import it. It keeps the records IfcClash returns (the two
+IfcGuids, the class and name, the two points, the distance in metres) and writes a BCF 2.1 zip
+in the buildingSMART shape: `bcf.version`, one folder per topic, `markup.bcf`, `viewpoint.bcfv`.
+Paths inside the zip use `/`. The camera looks at the midpoint of the two clash points and is in
+metres, which is the BCF unit, including when the IFC file is in millimetres.
+
+Default sets are intersections, tolerance 2 mm, worst distance kept (`check_all`). Walls against
+floors, walls against ceilings, and walls against walls. A pair that shares one Sketch2CAD
+`ElementId` is two segments of one wall and is not a topic. A second file can be the opposing
+group (`other=`): walls in the first file against walls, slabs and coverings in the second. Doors
+and windows are not in a default set, because a filling sits in its opening.
+
+A defect does not need IfcClash. It is one of: no geometric body, no base quantity set, a length
+or area or volume that is not positive, or an `IfcOpeningElement` that no `IfcRelVoidsElement`
+points at. Topic types are `Clash` and `Defect`, status `Open`. A missing IfcClash install still
+writes the defects and says the clash check was skipped.
+
+ifc-lite (MPL-2.0) was evaluated and is not a dependency. The note is in `docs/CLASH.md`, including
+how Mida can read this BCF later. Mida is not called from here.
+
+בדיקה נפרדת, לא חלק מההפקה: IfcClash מוצא חדירות, והתוצאה נכתבת כ-BCF בלי חבילת ה-GPL.
+ליקוי הוא גוף חסר, כמות חסרה, כמות שאינה חיובית, או פתח בלי מארח. ifc-lite לא שולב.

@@ -34,6 +34,8 @@
 
 **Pascal Editor:** אב-טיפוס לשרשרת as-built. סריקה, ואז קירות, פתחים, רצפות ותקרות שאפשר לערוך, ואז IFC. הפרטים ב-[docs/PASCAL.md](docs/PASCAL.md). אין בזה מפתח ואין קריאה לרשת.
 
+**התנגשויות וליקויי מודל (רשות):** לא רץ בהפקה. אחרי ייצוא IFC, `sketch2cad.io.clash.check_model` בודק התנגשויות עם IfcClash (LGPL-3.0, `pip install -r requirements-clash.txt`) וליקויים שאפשר למדוד (גוף חסר, כמות חסרה, כמות שאינה חיובית, פתח בלי מארח), וכותב BCF 2.1. דוגמה: `examples/clash/crossing-walls.ifc`. פירוט, כולל למה ifc-lite לא נכנס לתוכנה ואיך מידה תוכל לקרוא את ה-BCF אחר כך: [docs/CLASH.md](docs/CLASH.md).
+
 ## גשר עבודה (הדרך היחידה לשיקול דעת)
 התוכנה עצמה לא קוראת למודל ולא לרשת בשביל שרטוט. היא מייצאת חבילת עבודה לסוכן חיצוני ומייבאת ממנו spec. שורת הפקודה:
 
@@ -65,4 +67,5 @@ python -m sketch2cad.bridge import (<תשובה.json> | --from-inbox) --drawing 
 pip install -r requirements.txt
 python -m pytest -q
 ```
+בדיקת ההתנגשויות דורשת גם `pip install -r requirements-clash.txt`. בלי IfcClash הבדיקות האלה מדולגות, ובדיקת הליקויים עדיין רצה.
 את בדיקת ההמרה ל-DWG מריצים כשמשתנה הסביבה `ODA_CONVERTER` מצביע על הממיר. בלי הממיר הבדיקה מדולגת.
