@@ -49,8 +49,11 @@ writes a scene in the node shapes Pascal publishes (`site`, `building`, `level`,
 
 Plan metres are Pascal's `[x, z]` (their Y is up). A door or window is a child of its wall; its
 `position` is the centre in wall-local coordinates, which is the placement Pascal's schema
-describes. Storeys become levels whose height is the gap up to the next storey, and
-`baseElevation` is only the extra offset above that stack.
+describes. Storeys become levels whose height is the gap up to the next storey. The stack starts
+at zero, so a basement keeps its datum as `baseElevation`, and each level above adds only the extra
+offset. Import reads that stack (order, height, baseElevation), not the elevation cached at export.
+Node ids are `{prefix}_{slug}` and a second id that slugs the same gains a suffix, so `wall_1` and
+`wall-1` stay two walls.
 
 A scan path is not a `scan.url` unless it matches Pascal's asset allowlist (`https`, `asset://`,
 `artifact://` plus a 64-digit hash, `blob:`, `data:image/`, an app-relative path, or

@@ -18,7 +18,10 @@ writes four files into a folder:
 Plan coordinates in the scene are Pascal's `[x, z]`. Their Y is up. A door or window is a child of
 its wall, and `position` is the centre in that wall's coordinates (`[along, sill + height/2, 0]`),
 which is what Pascal's schema calls the wall-local centre. Level `height` is the distance up to the
-next storey. `baseElevation` is only the leftover offset above that stack.
+next storey. The stack starts at zero, so the lowest storey's `baseElevation` is its datum, and each
+storey above that adds only the extra offset. Reading the scene back uses that live stack, not the
+elevation saved when the file was written. Node ids stay unique when two spec ids slug to the same
+text (`wall_1` and `wall-1`).
 
 To open the editor locally (Pascal documents macOS; Linux is the Docker image):
 

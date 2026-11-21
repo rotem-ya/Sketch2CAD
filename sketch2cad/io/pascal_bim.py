@@ -75,10 +75,11 @@ def scene_from_spec(spec: dict, *, scan=None) -> tuple[dict, list[str]]:
         units = "mm"
     to_m = _TO_M[units]
     elements = [el for el in (spec.get("elements") or []) if isinstance(el, dict)]
-    levels = _levels(elements, to_m)
+    ids = _Ids()
+    levels = _levels(elements, to_m, ids)
     nodes: dict[str, dict] = {}
-    site_id = "site_sketch2cad"
-    building_id = "building_sketch2cad"
+    site_id = ids.take("site", "sketch2cad", "site")
+    building_id = ids.take("building", "sketch2cad", "building")
     title = _title(spec)
     nodes[site_id] = {
         "object": "node", "id": site_id, "type": "site", "name": title,
@@ -104,24 +105,24 @@ def scene_from_spec(spec: dict, *, scan=None) -> tuple[dict, list[str]]:
     for el in elements:
         kind = el.get("type")
         if kind == "wall":
-            for run in _wall_nodes(el, by_level, to_m, warnings):
+            for run in _wall_nodes(el, by_level, to_m, warnings, ids):
                 nodes[run["id"]] = run
                 walls.setdefault(str(el.get("id") or run["id"]), []).append(run)
                 nodes[run["parentId"]]["children"].append(run["id"])
         elif kind == "floor":
-            node = _slab_node(el, by_level, to_m, warnings)
+            node = _slab_node(el, by_level, to_m, warnings, ids)
             if node:
                 nodes[node["id"]] = node
                 nodes[node["parentId"]]["children"].append(node["id"])
         elif kind == "ceiling":
-            node = _ceiling_node(el, by_level, to_m, warnings)
+            node = _ceiling_node(el, by_level, to_m, warnings, ids)
             if node:
                 nodes[node["id"]] = node
                 nodes[node["parentId"]]["children"].append(node["id"])
     for el in elements:
         if el.get("type") != "opening":
             continue
-        node = _opening_node(el, walls, to_m, warnings)
+        node = _opening_node(el, walls, to_m, warnings, ids)
         if node is None:
             continue
         nodes[node["id"]] = node
@@ -129,7 +130,7 @@ def scene_from_spec(spec: dict, *, scan=None) -> tuple[dict, list[str]]:
         if host is not None:
             host.setdefault("children", []).append(node["id"])
     for item in _scan_items(scan):
-        node, note = _scan_node(item, by_level)
+        node, note = _scan_node(item, by_level, ids)
         if note:
             warnings.append(note)
         if node is None:
@@ -143,7 +144,7 @@ def scene_from_spec(spec: dict, *, scan=None) -> tuple[dict, list[str]]:
         "units": "m",
         "notes": (
             "Plan coordinates are Pascal's [x, z]. Y is up. "
-            "Level baseElevation is the extra offset above the stack of lower storey heights. "
+            "Level baseElevation is the offset above the stack that starts at zero, so the lowest storey keeps its datum. "
             "Load this graph in Pascal, or open model.ifc with @pascal-app/ifc-converter."
         ),
         "nodes": nodes,
@@ -155,6 +156,8 @@ def spec_from_scene(scene: dict) -> tuple[dict, dict]:
     """Read a scene this module wrote back into a spec, plus scans and warnings.
 
     Distances come back in the units recorded on the site (millimetres when none were recorded).
+    A level's datum is its baseElevation above the stack of lower levels, starting at zero,
+    so an edit to a height or a base offset is kept. The elevation saved at export is not reused.
     """
     warnings: list[str] = []
     nodes = scene.get("nodes") or {}
@@ -165,6 +168,7 @@ def spec_from_scene(scene: dict) -> tuple[dict, dict]:
         units = "mm"
     scale = 1.0 / _TO_M[units]  # metres -> drawing units
     levels = {n["id"]: n for n in nodes.values() if n.get("type") == "level"}
+    datums = _level_datums(levels)
     walls_by_id: dict[str, list[dict]] = {}
     for node in nodes.values():
         if node.get("type") != "wall":
@@ -188,7 +192,7 @@ def spec_from_scene(scene: dict) -> tuple[dict, dict]:
             "points": points,
             "height": float(first.get("height") or 3) * scale,
             "thickness": float(first.get("thickness") or 0.2) * scale,
-            "z": float((level.get("metadata") or {}).get("sketch2cad", {}).get("elevation") or 0) * scale,
+            "z": datums.get(level.get("id"), 0.0) * scale,
         })
     wall_index = {n["id"]: n for runs in walls_by_id.values() for n in runs}
     for node in nodes.values():
@@ -223,9 +227,9 @@ def spec_from_scene(scene: dict) -> tuple[dict, dict]:
         })
     for node in nodes.values():
         if node.get("type") == "slab":
-            elements.append(_surface_element(node, "floor", scale, levels))
+            elements.append(_surface_element(node, "floor", scale, levels, datums))
         elif node.get("type") == "ceiling":
-            elements.append(_surface_element(node, "ceiling", scale, levels))
+            elements.append(_surface_element(node, "ceiling", scale, levels, datums))
     scans = []
     for node in nodes.values():
         if node.get("type") != "scan":
@@ -315,6 +319,23 @@ def _slug(prefix: str, raw, fallback: str) -> str:
     return f"{prefix}_{cleaned}"
 
 
+class _Ids:
+    """Pascal ids are `{prefix}_{rest}`. A slug is lossy, so a taken id gains a suffix."""
+
+    def __init__(self):
+        self.used: set[str] = set()
+
+    def take(self, prefix: str, raw, fallback: str) -> str:
+        base = _slug(prefix, raw, fallback)
+        candidate = base
+        n = 2
+        while candidate in self.used:
+            candidate = f"{base}_{n}"
+            n += 1
+        self.used.add(candidate)
+        return candidate
+
+
 def _element_id(node: dict) -> str:
     meta = (node.get("metadata") or {}).get("sketch2cad") or {}
     return str(meta.get("elementId") or node.get("id"))
@@ -324,8 +345,27 @@ def _storey_name(el: dict) -> str:
     return str(el.get("storey") or "Ground Floor")
 
 
-def _levels(elements: list[dict], to_m: float) -> list[dict]:
-    """One Pascal level per storey. Height is the gap to the next storey, else the tallest wall."""
+def _level_datums(levels: dict[str, dict]) -> dict[str, float]:
+    """Datum of each level: baseElevation above a stack that starts at zero.
+
+    The cursor after a level is that datum plus its height, which is where the next level sits
+    before its own baseElevation. An edit to either value moves every level above it.
+    """
+    ordered = sorted(levels.values(), key=lambda n: (float(n.get("level") or 0), str(n.get("id") or "")))
+    cursor = 0.0
+    datums: dict[str, float] = {}
+    for level in ordered:
+        datum = cursor + float(level.get("baseElevation") or 0)
+        datums[level["id"]] = datum
+        cursor = datum + float(level.get("height") or 0)
+    return datums
+
+
+def _levels(elements: list[dict], to_m: float, ids: _Ids) -> list[dict]:
+    """One Pascal level per storey. Height is the gap to the next storey, else the tallest wall.
+
+    The stack starts at zero, so a basement's baseElevation is its real datum.
+    """
     found: dict[str, float] = {}
     heights: dict[str, float] = {}
     for el in elements:
@@ -343,7 +383,7 @@ def _levels(elements: list[dict], to_m: float) -> list[dict]:
         found["Ground Floor"] = 0.0
     ordered = sorted(found, key=lambda name: (found[name], name))
     levels = []
-    stacked = found[ordered[0]]
+    stacked = 0.0
     for index, name in enumerate(ordered):
         absolute = found[name]
         if index + 1 < len(ordered):
@@ -352,14 +392,14 @@ def _levels(elements: list[dict], to_m: float) -> list[dict]:
             height = max(heights.get(name, 0.0), 3.0)
         base = absolute - stacked
         levels.append({
-            "id": _slug("level", name, f"l{index}"),
+            "id": ids.take("level", name, f"l{index}"),
             "name": name,
             "index": index,
             "absolute": absolute,
             "base": base,
             "height": height,
         })
-        stacked += height
+        stacked = absolute + height
     return levels
 
 
@@ -373,7 +413,7 @@ def _meta(el: dict, **extra) -> dict:
     return {"sketch2cad": body}
 
 
-def _wall_nodes(el: dict, levels: dict[str, dict], to_m: float, warnings: list[str]) -> list[dict]:
+def _wall_nodes(el: dict, levels: dict[str, dict], to_m: float, warnings: list[str], ids: _Ids) -> list[dict]:
     pts = _xy(el.get("points"))
     if len(pts) < 2:
         warnings.append(f"Pascal: wall {el.get('id', '?')!r} needs at least two points - skipped")
@@ -392,7 +432,7 @@ def _wall_nodes(el: dict, levels: dict[str, dict], to_m: float, warnings: list[s
         suffix = "" if len(pts) == 2 else f"s{index + 1}"
         nodes.append({
             "object": "node",
-            "id": _slug("wall", f"{el.get('id') or 'w'}{suffix}", f"w{index}"),
+            "id": ids.take("wall", f"{el.get('id') or 'w'}{suffix}", f"w{index}"),
             "type": "wall",
             "name": str(el.get("id") or "wall"),
             "parentId": level["id"],
@@ -411,7 +451,7 @@ def _polygon_m(pts, to_m: float) -> list[list[float]]:
     return [[float(p[0]) * to_m, float(p[1]) * to_m] for p in pts]
 
 
-def _slab_node(el, levels, to_m, warnings) -> dict | None:
+def _slab_node(el, levels, to_m, warnings, ids: _Ids) -> dict | None:
     pts = _outline(el)
     if len(pts) < 3:
         warnings.append(f"Pascal: floor {el.get('id', '?')!r} needs an outline - skipped")
@@ -420,7 +460,7 @@ def _slab_node(el, levels, to_m, warnings) -> dict | None:
     top = float(el.get("z") or 0) * to_m
     return {
         "object": "node",
-        "id": _slug("slab", el.get("id"), "floor"),
+        "id": ids.take("slab", el.get("id"), "floor"),
         "type": "slab",
         "name": str(el.get("id") or "floor"),
         "parentId": level["id"],
@@ -432,7 +472,7 @@ def _slab_node(el, levels, to_m, warnings) -> dict | None:
     }
 
 
-def _ceiling_node(el, levels, to_m, warnings) -> dict | None:
+def _ceiling_node(el, levels, to_m, warnings, ids: _Ids) -> dict | None:
     pts = _outline(el)
     if len(pts) < 3:
         warnings.append(f"Pascal: ceiling {el.get('id', '?')!r} needs an outline - skipped")
@@ -440,7 +480,7 @@ def _ceiling_node(el, levels, to_m, warnings) -> dict | None:
     level = _level_of(el, levels)
     node = {
         "object": "node",
-        "id": _slug("ceiling", el.get("id"), "ceiling"),
+        "id": ids.take("ceiling", el.get("id"), "ceiling"),
         "type": "ceiling",
         "name": str(el.get("id") or "ceiling"),
         "parentId": level["id"],
@@ -453,7 +493,7 @@ def _ceiling_node(el, levels, to_m, warnings) -> dict | None:
     return node
 
 
-def _opening_node(el, walls: dict[str, list[dict]], to_m: float, warnings: list[str]) -> dict | None:
+def _opening_node(el, walls: dict[str, list[dict]], to_m: float, warnings: list[str], ids: _Ids) -> dict | None:
     host_id = str(el.get("host") or "")
     runs = walls.get(host_id) or []
     if not runs:
@@ -475,7 +515,7 @@ def _opening_node(el, walls: dict[str, list[dict]], to_m: float, warnings: list[
     node_type = "window" if kind == "window" else "door"
     return {
         "object": "node",
-        "id": _slug(node_type, el.get("id"), node_type),
+        "id": ids.take(node_type, el.get("id"), node_type),
         "type": node_type,
         "name": str(el.get("id") or node_type),
         "parentId": run["id"],
@@ -525,7 +565,7 @@ def _scan_items(scan) -> list:
     return list(scan)
 
 
-def _scan_node(item, levels: dict[str, dict]) -> tuple[dict | None, str | None]:
+def _scan_node(item, levels: dict[str, dict], ids: _Ids) -> tuple[dict | None, str | None]:
     if isinstance(item, str):
         item = {"path": item}
     level_name = str(item.get("storey") or next(iter(levels)))
@@ -536,7 +576,7 @@ def _scan_node(item, levels: dict[str, dict]) -> tuple[dict | None, str | None]:
     parsed = urlparse(raw)
     if parsed.username or parsed.password:
         return {
-            "object": "node", "id": _slug("scan", item.get("id") or "scan", "scan"),
+            "object": "node", "id": ids.take("scan", item.get("id") or "scan", "scan"),
             "type": "scan", "name": str(item.get("name") or "as-built scan"),
             "parentId": level["id"], "visible": True, "url": None,
             "position": [0, 0, 0], "rotation": [0, 0, 0], "scale": 1, "opacity": 100,
@@ -548,7 +588,7 @@ def _scan_node(item, levels: dict[str, dict]) -> tuple[dict | None, str | None]:
         note = "Pascal: scan path is not an allowed asset URL - kept as a path, not as scan.url"
     node = {
         "object": "node",
-        "id": _slug("scan", item.get("id") or Path(str(raw).split("?")[0]).stem, "scan"),
+        "id": ids.take("scan", item.get("id") or Path(str(raw).split("?")[0]).stem, "scan"),
         "type": "scan",
         "name": str(item.get("name") or "as-built scan"),
         "parentId": level["id"],
@@ -563,9 +603,9 @@ def _scan_node(item, levels: dict[str, dict]) -> tuple[dict | None, str | None]:
     return node, note
 
 
-def _surface_element(node: dict, kind: str, scale: float, levels: dict) -> dict:
+def _surface_element(node: dict, kind: str, scale: float, levels: dict, datums: dict[str, float]) -> dict:
     level = levels.get(node.get("parentId")) or {}
-    datum = float((level.get("metadata") or {}).get("sketch2cad", {}).get("elevation") or 0)
+    datum = datums.get(level.get("id"), 0.0)
     meta = (node.get("metadata") or {}).get("sketch2cad") or {}
     polygon = node.get("polygon") or []
     element = {

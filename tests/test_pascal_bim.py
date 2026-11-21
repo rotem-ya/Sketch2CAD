@@ -119,3 +119,54 @@ def test_upper_storey_stacks_on_the_lower_height():
     assert levels[0]["baseElevation"] == pytest.approx(0)
     assert levels[1]["name"] == "First" and levels[1]["baseElevation"] == pytest.approx(0)
     assert levels[1]["metadata"]["sketch2cad"]["elevation"] == pytest.approx(3)
+
+
+def test_basement_keeps_its_datum():
+    spec = {"units": "mm", "elements": [
+        {"id": "b", "type": "wall", "storey": "Basement", "z": -3000,
+         "points": [[0, 0], [2000, 0]], "height": 3000},
+    ]}
+    scene, _ = scene_from_spec(spec)
+    level = next(n for n in scene["nodes"].values() if n["type"] == "level")
+    assert level["baseElevation"] == pytest.approx(-3)
+    back, _ = spec_from_scene(scene)
+    assert back["elements"][0]["z"] == pytest.approx(-3000)
+
+
+def test_import_uses_the_edited_level_stack():
+    spec = {"units": "mm", "elements": [
+        {"id": "low", "type": "wall", "storey": "Ground", "points": [[0, 0], [2000, 0]], "height": 3000, "z": 0},
+        {"id": "up", "type": "wall", "storey": "First", "points": [[0, 0], [2000, 0]], "height": 2700, "z": 3000},
+        {"id": "f", "type": "floor", "storey": "First", "corners": [[0, 0], [2000, 2000]], "z": 3000},
+    ]}
+    scene, _ = scene_from_spec(spec)
+    levels = {n["name"]: n for n in scene["nodes"].values() if n["type"] == "level"}
+    levels["Ground"]["height"] = 4.0
+    levels["First"]["baseElevation"] = 0.5
+    back, _ = spec_from_scene(scene)
+    by_id = {el["id"]: el for el in back["elements"]}
+    assert by_id["low"]["z"] == pytest.approx(0)
+    assert by_id["up"]["z"] == pytest.approx(4500)   # 4 m stack + 0.5 m offset
+    assert by_id["f"]["z"] == pytest.approx(4500)
+
+
+def test_slugs_that_collide_stay_separate_walls():
+    spec = {"units": "mm", "elements": [
+        {"id": "wall_1", "type": "wall", "points": [[0, 0], [1000, 0]], "thickness": 200},
+        {"id": "wall-1", "type": "wall", "points": [[0, 1000], [1000, 1000]], "thickness": 200},
+        {"id": "Wall1", "type": "wall", "points": [[0, 2000], [1000, 2000]], "thickness": 200},
+        {"id": "o1", "type": "opening", "host": "wall_1", "at": [500, 0], "width": 200, "height": 400},
+        {"id": "o2", "type": "opening", "host": "wall-1", "at": [500, 1000], "width": 200, "height": 400},
+        {"id": "o3", "type": "opening", "host": "Wall1", "at": [500, 2000], "width": 200, "height": 400},
+    ]}
+    scene, _ = scene_from_spec(spec)
+    walls = [n for n in scene["nodes"].values() if n["type"] == "wall"]
+    assert len(walls) == 3
+    assert len({n["id"] for n in walls}) == 3
+    by_element = {(n.get("metadata") or {}).get("sketch2cad", {}).get("elementId"): n for n in walls}
+    doors = [n for n in scene["nodes"].values() if n["type"] == "door"]
+    assert len(doors) == 3
+    hosts = {((n.get("metadata") or {}).get("sketch2cad") or {}).get("elementId"): n["parentId"] for n in doors}
+    assert hosts["o1"] == by_element["wall_1"]["id"]
+    assert hosts["o2"] == by_element["wall-1"]["id"]
+    assert hosts["o3"] == by_element["Wall1"]["id"]
