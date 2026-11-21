@@ -180,7 +180,7 @@ def render_document(p: Project, d: Document, spec: dict, cat: Catalog, formats) 
 
 def last_formats(d: Document) -> list[str]:
     """The formats rendered last time (PNG is always included: it is the preview)."""
-    fmts = [k for k in ("dxf", "dwg", "pdf") if k in d.outputs]
+    fmts = [k for k in ("dxf", "dwg", "pdf", "ifc") if k in d.outputs]
     return fmts + ["png"] if fmts else ["dxf", "dwg", "pdf", "png"]
 
 
@@ -925,7 +925,8 @@ def _sheet_form(p: Project, d: Document, spec: dict, cat: Catalog) -> None:
         c1, c2 = st.columns(2)
         tb = c1.selectbox(T("titleblock"), ids, index=ids.index(current) if current in ids else 0,
                           format_func=lambda i: (templates[i].get("name") or {}).get(L, i))
-        formats = c2.multiselect(T("formats"), ["dxf", "dwg", "pdf", "png"], default=["dxf", "dwg", "pdf", "png"])
+        formats = c2.multiselect(T("formats"), ["dxf", "dwg", "pdf", "png", "ifc"],
+                                 default=["dxf", "dwg", "pdf", "png"])
         c1, c2 = st.columns(2)
         ov_en = c1.text_input(T("title_override_en"), value=d.title_overrides.get("title_en", ""))
         ov_he = c2.text_input(T("title_override_he"), value=d.title_overrides.get("title_he", ""))
