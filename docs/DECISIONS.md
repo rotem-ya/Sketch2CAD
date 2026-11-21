@@ -41,4 +41,24 @@ IfcOpenShell is missing, the sheet is still produced and the warning says IFC wa
 
 ## IDEAS-13 — Pascal Editor (scan to BIM)
 
-Not started on this branch.
+Pascal Editor (https://github.com/pascalorg/editor, MIT) is the open editor for the as-built side
+of the same chain: a scan as a reference, then editable walls, doors, windows, slabs and ceilings,
+then IFC. Sketch2CAD does not vendor Pascal and does not call it. `sketch2cad.io.pascal_bim`
+writes a scene in the node shapes Pascal publishes (`site`, `building`, `level`, `wall`, `door`,
+`window`, `slab`, `ceiling`, `scan`) and the IFC from IDEAS-12, including an `IfcCovering` ceiling.
+
+Plan metres are Pascal's `[x, z]` (their Y is up). A door or window is a child of its wall; its
+`position` is the centre in wall-local coordinates, which is the placement Pascal's schema
+describes. Storeys become levels whose height is the gap up to the next storey, and
+`baseElevation` is only the extra offset above that stack.
+
+A scan path is not a `scan.url` unless it matches Pascal's asset allowlist (`https`, `asset://`,
+`artifact://` plus a 64-digit hash, `blob:`, `data:image/`, an app-relative path, or
+`http://localhost`). A Windows path stays in `metadata.sketch2cad.sourcePath`. `file:` and
+`javascript:` are refused. `connection.json` lists the public CLI (`npx @pascal-app/cli editor
+--no-open` and `pascal mcp connect`). It does not contain an API key, a bearer token or a
+password; the local connector reads `~/.pascal/run` itself. The Linux CLI is not what Pascal
+verifies, so this prototype does not launch it.
+
+אב-טיפוס בלבד: סריקת as-built נשמרת כהפניה, וקירות, פתחים, רצפות ותקרות נכתבים כסצנה של Pascal
+ולצד זה כ-IFC. אין מפתח ואין קריאה לרשת.

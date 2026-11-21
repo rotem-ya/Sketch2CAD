@@ -52,10 +52,11 @@ fitted scale and labelled NTS.
 | `wall` | `points`, `height`, `thickness`, `z`, `storey` | plan: two faces about the centre-line. Defaults: height 3000 mm, thickness 200 mm. IFC: `IfcWall` |
 | `opening` | `host` (wall id), `at` or `along`, `width`, `height`, `sill`, `kind`: `"opening"\|"door"\|"window"` | plan rectangle. Defaults: 900 × 2100 mm, sill 0. IFC: `IfcOpeningElement` voiding the wall; a door or window fills it |
 | `floor` | `points` or `corners`, `thickness`, `z`, `predefined_type` | closed outline. `z` is the top. Default thickness 200 mm. IFC: `IfcSlab` (`FLOOR`, or `ROOF` / `LANDING` / `BASESLAB`) |
+| `ceiling` | `points` or `corners`, `thickness`, `z` | closed outline. `z` is the underside. Default thickness 20 mm. IFC: `IfcCovering` `CEILING` |
 
 Extra keys supported by the renderer:
 - element type `circle` (`at`, `radius`) for small fittings;
-- `wall`, `opening` and `floor` are also written to IFC when the render formats include `ifc` (see `sketch2cad.io.spec2ifc`). Chain `dimensions` become `IfcAnnotation` (`ObjectType` `DIMENSION`). Other element types stay on the drawing and are not given an IFC body;
+- `wall`, `opening`, `floor` and `ceiling` are also written to IFC when the render formats include `ifc` (see `sketch2cad.io.spec2ifc`). Chain `dimensions` become `IfcAnnotation` (`ObjectType` `DIMENSION`). Other element types stay on the drawing and are not given an IFC body;
 - any element: `centerline`, `label_at`, `label_align`, `label_pinned`, `label_height` (paper mm), `leader`, `leader_to`; block size overrides `D`, `t`, `L`, `H`, `Dt`;
 - `pipe`: `slope` (fall/run) and optional `slope_unit` `percent`, `inv` `[start, end]`, optional `inv_stations` `[s0, s1]` or `inv_at` `[[x,y],[x,y]]` for the run between those inverts (the full drawn length is not assumed), `dn`, `sn`, `cover`; a label `SLOPE 0.4%` is a percent; a text `INV` or `INV.` counts when `pipe` names the pipe, or when it lies within about 10 paper-mm of a centre-line (every such pipe, and only the ones that state a slope when any of them does);
 - `nts` (true) or the text `NTS` / `N.T.S.` in `view`, `views`, the sheet scale field or a text element marks the sheet not-to-scale;
@@ -208,7 +209,8 @@ project_name_he, client, date, scale, drawn, checked + anything in `sheet.fields
 | `sketch2cad.io.readers` | `read_any(path, out_dir) -> FileInfo(kind, pages, text, preview_png, dxf_path)` | |
 | `sketch2cad.io.pdf2dxf` | `pdf_to_dxf(pdf, out, page=0, scale=1, units="mm", raster_fallback=True)` | path |
 | `sketch2cad.io.ifc2dxf` | `ifc_to_dxf(ifc, out, cut_height=1.2, mode="plan")` | path |
-| `sketch2cad.io.spec2ifc` | `spec_to_ifc(spec, out, *, project_name=None, warnings=None)`, `validate_ifc(path)` | path / counts. IFC4 via IfcOpenShell (LGPL-3.0). Length unit follows `units`; areas and volumes are m² and m³ |
+| `sketch2cad.io.spec2ifc` | `spec_to_ifc(spec, out, *, project_name=None, warnings=None)`, `validate_ifc(path)` | path / counts. IFC4 via IfcOpenShell (LGPL-3.0). Length unit follows `units`; areas and volumes are m² and m³. A `ceiling` is an `IfcCovering` `CEILING` |
+| `sketch2cad.io.pascal_bim` | `scene_from_spec`, `spec_from_scene`, `write_package`, `scan_url_allowed` | Pascal Editor scene (MIT) beside the IFC. See `docs/PASCAL.md`. No network and no secrets |
 | `sketch2cad.compare` | `compare(a, b, out_png)` (PDF/DXF/PNG) | path + change ratio |
 | `sketch2cad.checks` | `run_checks(spec, catalog, project=None) -> list[Finding]` | includes drawing QA |
 | `sketch2cad.qa` | `review(spec, catalog, project)`, `write_overlay(spec, path, catalog, project)` | paper-space QA and `qa_overlay.png`; defaults in `QA_DEFAULTS`, overridden by `project.qa` |
