@@ -159,6 +159,9 @@ ALL_TYPES = [
     {"type": "weld", "at": [1500, 400], "axis": "v", "od": 168.3},
     {"type": "break", "at": [1500, 800], "axis": "v", "od": 168.3},
     {"type": "circle", "at": [2000, -900], "radius": 50},
+    {"type": "wall", "points": [[-2000, -3200], [2000, -3200]], "height": 3000, "thickness": 200},
+    {"type": "opening", "at": [0, -3200], "width": 900, "height": 2100, "kind": "door"},
+    {"type": "floor", "corners": [[-2000, -4000], [2000, -3300]], "thickness": 200},
 ]
 
 

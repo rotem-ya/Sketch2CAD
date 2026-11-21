@@ -144,6 +144,55 @@ def draw_polyline(ctx: DrawContext, el: dict):
     return Vec2(pts[0]).lerp(Vec2(pts[1])), 0.0
 
 
+def _model_size(ctx: DrawContext, el: dict, key: str, default_mm: float) -> float:
+    """An element length in drawing units. A missing key uses `default_mm`."""
+    if el.get(key) is not None:
+        return float(el[key])
+    return default_mm * ctx.u
+
+
+def draw_wall(ctx: DrawContext, el: dict):
+    """Wall in plan: two faces about the centre-line, closed at the ends. Thickness defaults to 200 mm."""
+    pts = el.get("points") or []
+    if len(pts) < 2:
+        raise ValueError("wall needs at least two points")
+    thickness = _model_size(ctx, el, "thickness", 200.0)
+    attribs = ctx.attribs(el)
+    left = offset_polyline(pts, thickness / 2)
+    right = offset_polyline(pts, -thickness / 2)
+    ctx.msp.add_lwpolyline([(p.x, p.y) for p in left], dxfattribs=attribs)
+    ctx.msp.add_lwpolyline([(p.x, p.y) for p in right], dxfattribs=attribs)
+    ctx.msp.add_line(left[0], right[0], dxfattribs=attribs)
+    ctx.msp.add_line(left[-1], right[-1], dxfattribs=attribs)
+    return Vec2(pts[0]).lerp(Vec2(pts[-1])), thickness / 2
+
+
+def draw_opening(ctx: DrawContext, el: dict):
+    """Opening in plan: a rectangle across the wall at `at`. Width defaults to 900 mm."""
+    at = Vec2(el.get("at") or (0, 0))
+    width = _model_size(ctx, el, "width", 900.0)
+    thickness = _model_size(ctx, el, "thickness", 200.0)
+    angle = math.radians(float(el.get("rotation") or 0))
+    along = Vec2(math.cos(angle), math.sin(angle))
+    across = Vec2(-along.y, along.x)
+    half_w, half_t = along * (width / 2), across * (thickness / 2)
+    corners = [at - half_w - half_t, at + half_w - half_t, at + half_w + half_t, at - half_w + half_t]
+    ctx.msp.add_lwpolyline([(p.x, p.y) for p in corners], close=True, dxfattribs=ctx.attribs(el))
+    return at, 0.0
+
+
+def draw_floor(ctx: DrawContext, el: dict):
+    """Floor outline in plan. `corners` is a rectangle; `points` is a polygon."""
+    pts = el.get("points")
+    if not pts and el.get("corners"):
+        (x0, y0), (x1, y1) = el["corners"]
+        pts = [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
+    if not pts or len(pts) < 3:
+        raise ValueError("floor needs an outline")
+    ctx.msp.add_lwpolyline(pts, close=True, dxfattribs=ctx.attribs(el))
+    return Vec2(pts[0]).lerp(Vec2(pts[len(pts) // 2])), 0.0
+
+
 def draw_rect(ctx: DrawContext, el: dict):
     """Rectangle (building, thrust block, sand bed) with optional hatch."""
     (x0, y0), (x1, y1) = el["corners"]
@@ -328,6 +377,7 @@ DRAWERS = {
     "connector": draw_connector, "manhole": draw_manhole, "trench_drain": draw_trench_drain,
     "rect": draw_rect, "polyline": draw_polyline, "text": draw_text, "flow_arrow": draw_flow_arrow,
     "north_arrow": draw_north_arrow, "weld": draw_weld, "break": draw_break, "circle": draw_circle,
+    "wall": draw_wall, "opening": draw_opening, "floor": draw_floor,
 }
 
 

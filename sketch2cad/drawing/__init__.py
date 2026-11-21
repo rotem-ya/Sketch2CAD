@@ -1,7 +1,7 @@
-"""Drawing engine: spec.json (docs/FORMATS.md) -> DXF (R2018), plus PDF/PNG previews and DWG (ODA).
+"""Drawing engine: spec.json (docs/FORMATS.md) -> DXF (R2018), plus PDF/PNG previews, DWG (ODA) and IFC.
 
     render(spec, out_dir, basename, project=..., document=..., catalog=..., formats=(...))
-      -> {"dxf": Path, "pdf": Path, "png": Path, "dwg": Path, "warnings": [str, ...]}
+      -> {"dxf": Path, "pdf": Path, "png": Path, "dwg": Path, "ifc": Path, "warnings": [str, ...]}
 
 Problems that should not stop a drawing (missing catalog items, a bad element, no DWG converter,
 content larger than the sheet) are reported in "warnings" instead of raising.
@@ -43,6 +43,19 @@ def _load_template(template_id: str, warnings: list[str]) -> dict:
     except KeyError:
         warnings.append(f"title-block template {template_id!r} not found - using {DEFAULT_TEMPLATE}")
         return templates.load_template(DEFAULT_TEMPLATE)
+
+
+def _export_ifc(spec: dict, out_dir: Path, basename: str, warnings: list[str], document=None) -> Path | None:
+    """IFC through IfcOpenShell. A missing library or a bad model is a warning; the sheet is already saved."""
+    try:
+        from ..io.spec2ifc import spec_to_ifc
+        name = None
+        if document is not None:
+            name = getattr(document, "title_en", None) or getattr(document, "title_he", None)
+        return spec_to_ifc(spec, out_dir / f"{basename}.ifc", project_name=name, warnings=warnings)
+    except Exception as exc:                     # IfcOpenShell missing / failed: IFC is optional
+        warnings.append(f"IFC skipped: {exc}")
+        return None
 
 
 def _export_dwg(dxf_path: Path, out_dir: Path, warnings: list[str]) -> Path | None:
@@ -382,5 +395,9 @@ def render(spec: dict, out_dir, basename: str, *, project=None, document=None, c
         dwg = _export_dwg(result["dxf"], out_dir, warnings)
         if dwg:
             result["dwg"] = dwg
+    if "ifc" in formats:
+        ifc = _export_ifc(spec, out_dir, basename, warnings, document)
+        if ifc:
+            result["ifc"] = ifc
     result["warnings"] = warnings
     return result
