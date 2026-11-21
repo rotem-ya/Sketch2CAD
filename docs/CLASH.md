@@ -30,8 +30,9 @@ a filling sits in its opening, and reporting that as a clash hides the pairs tha
 quantity. `other=` adds one more set, walls in the first file against walls, slabs and coverings
 in the second file.
 
-Two products that carry the same Sketch2CAD `ElementId` are segments of one wall. That pair is
-not a topic. A product is not reported against itself.
+Two products in the same file that carry the same Sketch2CAD `ElementId` are segments of one
+wall. That pair is not a topic. The same id in a second file is still a clash: the id is local
+to the drawing. A product is not reported against itself.
 
 A defect does not use IfcClash. It needs the IfcOpenShell already used for IFC export.
 
@@ -64,7 +65,7 @@ directory entry. There is no snapshot.
 | `Header/File/Filename` | the IFC file name, not a disk path |
 | viewpoint `Component/@IfcGuid` | each element in the topic |
 | viewpoint `Lines/Line` | the two IfcClash points, in metres. A defect has no line |
-| camera | metres, looking at the clash midpoint (or the element placement for a defect) |
+| camera | metres, looking at the clash midpoint, or at the element's world placement for a defect (the storey elevation is included) |
 
 `read_bcf` reads that shape back. An empty check is a BCF with no topic folders.
 

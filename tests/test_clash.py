@@ -176,7 +176,7 @@ def test_same_element_segments_are_not_reported(tmp_path):
     model = ifcopenshell.open(str(path))
     walls = list(model.by_type("IfcWall"))
     assert len(walls) == 2
-    products = {wall.GlobalId: wall for wall in walls}
+    products = {wall.GlobalId: (wall, str(path)) for wall in walls}
     issue = clash._clash_issue({
         "a_global_id": walls[0].GlobalId,
         "b_global_id": walls[1].GlobalId,
@@ -190,6 +190,22 @@ def test_same_element_segments_are_not_reported(tmp_path):
         "distance": 0.2,
     }, products, set())
     assert issue is None
+    kept = clash._clash_issue({
+        "a_global_id": walls[0].GlobalId,
+        "b_global_id": walls[1].GlobalId,
+        "a_name": walls[0].Name,
+        "b_name": walls[1].Name,
+        "a_ifc_class": "IfcWall",
+        "b_ifc_class": "IfcWall",
+        "type": "pierce",
+        "p1": [4, 0, 0],
+        "p2": [4, 0, 1],
+        "distance": 0.2,
+    }, {
+        walls[0].GlobalId: (walls[0], "drawing-a.ifc"),
+        walls[1].GlobalId: (walls[1], "drawing-b.ifc"),
+    }, set())
+    assert kept is not None
     report = clash.check_model(path, tmp_path / "corner.bcf", when=WHEN)
     assert report["clashes"] == []
 
@@ -209,3 +225,46 @@ def test_a_second_model_can_be_the_other_group(tmp_path):
     report = clash.check_model(host, tmp_path / "pair.bcf", other=other, when=WHEN)
     titles = [topic["title"] for topic in clash.read_bcf(report["bcf"])]
     assert any("slab" in title for title in titles)
+
+
+@pytest.mark.skipif(not clash.clash_available(), reason="IfcClash is not installed")
+def test_the_same_element_id_in_another_file_is_still_a_clash(tmp_path):
+    left = spec_to_ifc({
+        "units": "mm",
+        "elements": [
+            {"id": "w1", "type": "wall", "points": [[0, 0], [4000, 0]],
+             "height": 3000, "thickness": 200},
+        ],
+    }, tmp_path / "a.ifc")
+    right = spec_to_ifc({
+        "units": "mm",
+        "elements": [
+            {"id": "w1", "type": "wall", "points": [[2000, -2000], [2000, 2000]],
+             "height": 3000, "thickness": 200},
+        ],
+    }, tmp_path / "b.ifc")
+    report = clash.check_model(left, tmp_path / "pair.bcf", other=right, when=WHEN)
+    assert report["clashes"]
+    assert len(set(report["clashes"][0]["guids"])) == 2
+
+
+def test_defect_camera_follows_the_storey(tmp_path):
+    path = spec_to_ifc({
+        "units": "mm",
+        "elements": [
+            {"id": "up", "type": "wall", "storey": "First", "z": 3000,
+             "points": [[1000, 2000], [3000, 2000]], "height": 3000, "thickness": 200},
+        ],
+    }, tmp_path / "upper.ifc")
+    model = ifcopenshell.open(str(path))
+    wall = model.by_type("IfcWall")[0]
+    wall.Representation = None
+    bare = tmp_path / "bare.ifc"
+    model.write(str(bare))
+    defects = clash.find_defects(bare)
+    body = next(item for item in defects if item["code"] == "no_body")
+    assert body["point"] == pytest.approx([1.0, 2.0, 3.0], abs=0.01)
+    report = clash.check_model(bare, tmp_path / "upper.bcf", clashes=False, when=WHEN)
+    topic = next(item for item in clash.read_bcf(report["bcf"]) if item["title"].startswith("no_body"))
+    # The camera stands 4 m, -4 m, 3 m from the world point.
+    assert topic["camera"][2] == pytest.approx(6.0, abs=0.05)

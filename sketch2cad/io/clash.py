@@ -113,8 +113,9 @@ def find_clashes(ifc: Path | str, *, tolerance: float = 0.002, other: Path | str
                  clash_sets: list[dict] | None = None, warnings: list[str] | None = None) -> list[dict]:
     """Run IfcClash. Raises ImportError when IfcClash is not installed.
 
-    Two products that carry the same Sketch2CAD `ElementId` are one wall's
-    segments, and that pair is not reported. A product is not reported against itself.
+    Two products in the same file that carry the same Sketch2CAD `ElementId`
+    are one wall's segments, and that pair is not reported. The same id in
+    another file is still a clash. A product is not reported against itself.
     """
     warnings = warnings if warnings is not None else []
     try:
@@ -306,6 +307,12 @@ def _quantities(product) -> dict:
     return {"present": present, "values": values}
 
 
+def _unpack_product(entry):
+    if isinstance(entry, tuple) and len(entry) == 2:
+        return entry
+    return entry, None
+
+
 def _spec_id(product) -> str:
     import ifcopenshell.util.element
 
@@ -318,16 +325,22 @@ def _spec_id(product) -> str:
 
 
 def _placement_m(product, scale: float) -> list[float]:
+    """World origin of the product, in metres.
+
+    The placement on the product is relative to its storey. The storey carries
+    the elevation, so the camera uses the full PlacementRelTo chain.
+    """
+    import ifcopenshell.util.placement
+
     placement = getattr(product, "ObjectPlacement", None)
     if placement is not None and placement.is_a("IfcLocalPlacement"):
-        relative = placement.RelativePlacement
-        location = getattr(relative, "Location", None) if relative is not None else None
-        coords = list(getattr(location, "Coordinates", None) or [])
-        if coords:
-            point = [float(value) * scale for value in coords[:3]]
-            while len(point) < 3:
-                point.append(0.0)
-            return point
+        try:
+            matrix = ifcopenshell.util.placement.get_local_placement(placement)
+        except Exception:
+            matrix = None
+        if matrix is not None:
+            origin = matrix[:3, 3]
+            return [float(origin[0]) * scale, float(origin[1]) * scale, float(origin[2]) * scale]
     return [0.0, 0.0, 0.0]
 
 
@@ -350,12 +363,13 @@ def _defect(code: str, product, scale: float, detail: str, *, priority: str = ""
 
 
 def _products_by_guid(clasher, ifcopenshell) -> dict:
+    """GlobalId -> (product, source path). The path is the model the product came from."""
     found = {}
-    for model in clasher.ifcs.values():
+    for path, model in clasher.ifcs.items():
         if not isinstance(model, ifcopenshell.file):
             continue
         for product in model.by_type("IfcProduct"):
-            found[product.GlobalId] = product
+            found.setdefault(product.GlobalId, (product, str(path)))
     return found
 
 
@@ -367,11 +381,11 @@ def _clash_issue(clash: dict, products: dict, seen: set) -> dict | None:
     pair = tuple(sorted((left, right)))
     if pair in seen:
         return None
-    product_a = products.get(left)
-    product_b = products.get(right)
+    product_a, source_a = _unpack_product(products.get(left))
+    product_b, source_b = _unpack_product(products.get(right))
     spec_a = _spec_id(product_a) if product_a is not None else ""
     spec_b = _spec_id(product_b) if product_b is not None else ""
-    if spec_a and spec_a == spec_b:
+    if spec_a and spec_a == spec_b and source_a is not None and source_a == source_b:
         return None
     seen.add(pair)
     distance = float(clash.get("distance") or 0)

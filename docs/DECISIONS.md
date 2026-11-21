@@ -81,7 +81,8 @@ metres, which is the BCF unit, including when the IFC file is in millimetres.
 
 Default sets are intersections, tolerance 2 mm, worst distance kept (`check_all`). Walls against
 floors, walls against ceilings, and walls against walls. A pair that shares one Sketch2CAD
-`ElementId` is two segments of one wall and is not a topic. A second file can be the opposing
+`ElementId` inside the same file is two segments of one wall and is not a topic. The same id in
+a second file is still a clash. A second file can be the opposing
 group (`other=`): walls in the first file against walls, slabs and coverings in the second. Doors
 and windows are not in a default set, because a filling sits in its opening.
 
