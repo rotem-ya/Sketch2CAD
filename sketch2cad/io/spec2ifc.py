@@ -1,6 +1,6 @@
 """Sketch2CAD spec -> IFC4, using IfcOpenShell (LGPL-3.0).
 
-Walls, openings (and the door or window that fills them), floors and chain
+Walls, openings (and the door or window that fills them), floors, ceilings and chain
 dimensions become IFC entities so the drawing can go to an open BIM chain
 (quantities, as-made edits, another tool) without Revit. Geometry passed to
 IfcOpenShell is in metres. The file's length unit is the spec's unit (mm or m);
@@ -23,6 +23,7 @@ _WALL_THICKNESS_MM = 200.0
 _OPENING_WIDTH_MM = 900.0
 _OPENING_HEIGHT_MM = 2100.0
 _FLOOR_THICKNESS_MM = 200.0
+_CEILING_THICKNESS_MM = 20.0
 _VOID_CLEARANCE_M = 0.05
 _SLAB_TYPES = {"FLOOR", "ROOF", "LANDING", "BASESLAB"}
 
@@ -39,7 +40,7 @@ def validate_ifc(path: Path | str) -> dict:
             length = {"prefix": str(unit.Prefix), "name": str(unit.Name)}
     classes = (
         "IfcProject", "IfcSite", "IfcBuilding", "IfcBuildingStorey",
-        "IfcWall", "IfcOpeningElement", "IfcDoor", "IfcWindow", "IfcSlab",
+        "IfcWall", "IfcOpeningElement", "IfcDoor", "IfcWindow", "IfcSlab", "IfcCovering",
         "IfcAnnotation", "IfcRelVoidsElement", "IfcRelFillsElement",
         "IfcElementQuantity", "IfcPropertySet",
     )
@@ -93,6 +94,9 @@ def spec_to_ifc(spec: dict, out: Path | str, *, project_name: str | None = None,
 
     elements = [el for el in (spec.get("elements") or []) if isinstance(el, dict)]
     storey_z = _storey_elevations(elements, to_m)
+    for el in elements:
+        if el.get("type") == "ceiling":
+            storey_z.setdefault(_storey_name(el), 0.0)
     if not storey_z:
         storey_z["Ground Floor"] = 0.0
     storeys = {}
@@ -113,6 +117,8 @@ def spec_to_ifc(spec: dict, out: Path | str, *, project_name: str | None = None,
             runs.extend(_add_wall(ctx, el))
         elif kind == "floor":
             _add_floor(ctx, el)
+        elif kind == "ceiling":
+            _add_ceiling(ctx, el)
     by_id: dict[str, list[_WallRun]] = defaultdict(list)
     for run in runs:
         by_id[run.spec_id].append(run)
@@ -339,6 +345,39 @@ def _add_floor(ctx: _Build, el: dict) -> None:
         "GrossVolume": (area * thickness, "volume"),
         "NetVolume": (area * thickness, "volume"),
         "Perimeter": (perimeter, "length"),
+    })
+
+
+def _add_ceiling(ctx: _Build, el: dict) -> None:
+    """IfcCovering CEILING. `z` is the underside; the body rises by the thickness."""
+    pts = _xy(el.get("points"))
+    if len(pts) < 3 and el.get("corners"):
+        corners = _xy(el.get("corners"))
+        if len(corners) == 2:
+            (x0, y0), (x1, y1) = corners
+            pts = [np.array(p, dtype=float) for p in ((x0, y0), (x1, y0), (x1, y1), (x0, y1))]
+    if len(pts) < 3:
+        ctx.warnings.append(f"IFC: ceiling {el.get('id', '?')!r} needs an outline - skipped")
+        return
+    thickness = ctx.metres(el.get("thickness"), _CEILING_THICKNESS_MM)
+    if thickness <= 0:
+        ctx.warnings.append(f"IFC: ceiling {el.get('id', '?')!r} has no positive thickness - skipped")
+        return
+    underside = float(el.get("z") or 0) * ctx.to_m
+    covering = ctx.api.root.create_entity(
+        ctx.model, ifc_class="IfcCovering", name=str(el.get("id") or "ceiling"), predefined_type="CEILING")
+    polyline = [(float(p[0]) * ctx.to_m, float(p[1]) * ctx.to_m) for p in pts]
+    rep = ctx.api.geometry.add_slab_representation(ctx.model, context=ctx.body, depth=thickness, polyline=polyline)
+    ctx.api.geometry.assign_representation(ctx.model, product=covering, representation=rep)
+    _contain(ctx, covering, _storey_name(el))
+    matrix = np.eye(4)
+    matrix[2, 3] = underside
+    ctx.api.geometry.edit_object_placement(ctx.model, product=covering, matrix=matrix)
+    _trace(ctx, covering, el)
+    area = _polygon_area(polyline)
+    _qto(ctx, covering, "Qto_CoveringBaseQuantities", {
+        "GrossArea": (area, "area"),
+        "NetArea": (area, "area"),
     })
 
 

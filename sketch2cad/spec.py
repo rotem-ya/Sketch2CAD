@@ -12,7 +12,7 @@ from pathlib import Path
 FORMATS_DOC = Path(__file__).resolve().parents[1] / "docs" / "FORMATS.md"
 ELEMENT_TYPES = ("pipe", "bend", "flange", "gate_valve", "connector", "manhole", "trench_drain", "rect",
                  "polyline", "text", "flow_arrow", "north_arrow", "weld", "break", "circle",
-                 "wall", "opening", "floor")
+                 "wall", "opening", "floor", "ceiling")
 
 
 def _spec_format() -> str:
