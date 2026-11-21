@@ -167,13 +167,62 @@ def draw_wall(ctx: DrawContext, el: dict):
     return Vec2(pts[0]).lerp(Vec2(pts[-1])), thickness / 2
 
 
+def _host_placement(ctx: DrawContext, el: dict, width: float):
+    """(centre, unit direction, thickness) of an opening on its host wall, or None.
+
+    Same rule as the IFC export: `at` snaps to the nearest host segment it lies on, otherwise `along`
+    (distance from the wall start, to the opening centre) is used on the first segment.
+    """
+    host = el.get("host")
+    if not host:
+        return None
+    segments = []
+    for wall in ctx.elements:
+        if wall.get("type") != "wall" or str(wall.get("id") or "") != str(host):
+            continue
+        thickness = _model_size(ctx, wall, "thickness", 200.0)
+        pts = [Vec2(p) for p in (wall.get("points") or [])]
+        for a, b in zip(pts, pts[1:]):
+            if a.distance(b) > 1e-9:
+                segments.append((a, b, thickness))
+    if not segments:
+        return None
+    if el.get("at") is not None:
+        target = Vec2(el["at"])
+        best = None
+        for a, b, thickness in segments:
+            length = a.distance(b)
+            u = (b - a) / length
+            along = (target - a).dot(u)
+            across = ((target - a) - u * along).magnitude
+            if -width / 2 - 1e-6 <= along <= length + width / 2 + 1e-6 and across <= thickness + 1e-6:
+                rank = (across, 0 if 0 <= along <= length else 1)
+                if best is None or rank < best[0]:
+                    best = (rank, a, u, along, thickness)
+        if best is None:
+            return None
+        _, a, u, along, thickness = best
+    else:
+        a, b, thickness = segments[0]
+        u = (b - a) / a.distance(b)
+        along = float(el.get("along") or 0)
+    return a + u * along, u, thickness
+
+
 def draw_opening(ctx: DrawContext, el: dict):
-    """Opening in plan: a rectangle across the wall at `at`. Width defaults to 900 mm."""
-    at = Vec2(el.get("at") or (0, 0))
+    """Opening in plan: a rectangle across the wall at `at`. Width defaults to 900 mm.
+
+    With a `host` wall the position, direction and thickness come from that wall, so the plan matches the IFC.
+    """
     width = _model_size(ctx, el, "width", 900.0)
-    thickness = _model_size(ctx, el, "thickness", 200.0)
-    angle = math.radians(float(el.get("rotation") or 0))
-    along = Vec2(math.cos(angle), math.sin(angle))
+    hosted = _host_placement(ctx, el, width)
+    if hosted is not None:
+        at, along, thickness = hosted
+    else:
+        at = Vec2(el.get("at") or (0, 0))
+        thickness = _model_size(ctx, el, "thickness", 200.0)
+        angle = math.radians(float(el.get("rotation") or 0))
+        along = Vec2(math.cos(angle), math.sin(angle))
     across = Vec2(-along.y, along.x)
     half_w, half_t = along * (width / 2), across * (thickness / 2)
     corners = [at - half_w - half_t, at + half_w - half_t, at + half_w + half_t, at - half_w + half_t]

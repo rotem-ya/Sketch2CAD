@@ -68,6 +68,7 @@ class DrawContext:
             self.scale = 20.0
         self.k = self.scale * self.u
         self.language = language
+        self.elements = [e for e in (spec.get("elements") or []) if isinstance(e, dict)]
         authored_style = spec.get("style") or {}
         self.style = apply_text_style({**DEFAULT_STYLE, **authored_style}, explicit=set(authored_style))
         self.catalog = catalog or _NoCatalog()

@@ -396,7 +396,12 @@ def _add_opening(ctx: _Build, el: dict, walls: dict[str, list[_WallRun]]) -> Non
     if run is not None:
         ctx.api.feature.add_feature(ctx.model, feature=opening, element=run.product)
     else:
-        _contain(ctx, opening, storey if storey in ctx.storeys else "Ground Floor")
+        if storey not in ctx.storeys:
+            fallback = "Ground Floor" if "Ground Floor" in ctx.storeys else next(iter(ctx.storeys))
+            ctx.warnings.append(
+                f"IFC: opening {el.get('id', '?')!r} storey {storey!r} does not exist - placed on {fallback!r}")
+            storey = fallback
+        _contain(ctx, opening, storey)
     ctx.api.geometry.edit_object_placement(
         ctx.model, product=opening, matrix=_axis_matrix(origin_xy, direction, base))
     _trace(ctx, opening, el)
@@ -499,7 +504,9 @@ def _add_dimension(ctx: _Build, dim: dict, index: int) -> None:
     if storey_name not in ctx.storeys:
         storey_name = next(iter(ctx.storeys))
     storey_z = ctx.storey_z.get(storey_name, 0.0)
-    z = float(dim.get("z") or 0) * ctx.to_m
+    # World coordinates: the annotation keeps an identity placement, so a storey above ground
+    # must not drop to Z=0. A dimension without its own z sits at its storey datum.
+    z = float(dim["z"]) * ctx.to_m if dim.get("z") is not None else storey_z
     for segment, (a, b) in enumerate(zip(pts, pts[1:])):
         a = a * ctx.to_m
         b = b * ctx.to_m
@@ -514,7 +521,7 @@ def _add_dimension(ctx: _Build, dim: dict, index: int) -> None:
         name = str(dim.get("id") or f"DIM-{index + 1}")
         ann = ctx.api.root.create_entity(ctx.model, ifc_class="IfcAnnotation", name=f"{name}/{segment + 1}")
         ann.ObjectType = "DIMENSION"
-        local = [((x - 0.0), (y - 0.0), (zz - storey_z)) for x, y, zz in (p1, p2)]
+        local = [(x, y, zz) for x, y, zz in (p1, p2)]
         curve = ctx.model.createIfcPolyline([
             ctx.model.createIfcCartesianPoint(tuple(ctx.project(c) for c in point)) for point in local
         ])

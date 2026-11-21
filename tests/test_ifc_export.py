@@ -214,3 +214,62 @@ def test_second_storey_keeps_its_elevation(tmp_path):
     upper = next(w for w in model.by_type("IfcWall") if w.Name == "up")
     low, high = _bbox(model, upper)
     assert low[2] == pytest.approx(3, abs=0.02) and high[2] == pytest.approx(6, abs=0.02)
+
+
+def test_opening_without_host_on_unknown_storey_falls_back(tmp_path):
+    """A missing host plus a storey no wall/floor names must not KeyError on 'Ground Floor'."""
+    spec = {"units": "mm", "scale": 50, "elements": [
+        {"id": "w1", "type": "wall", "storey": "Level 2", "z": 3000, "points": [[0, 0], [4000, 0]],
+         "height": 3000, "thickness": 200},
+        {"id": "d9", "type": "opening", "host": "nope", "kind": "door", "at": [500, 0], "width": 900,
+         "height": 2100},
+    ]}
+    warnings: list[str] = []
+    path = spec_to_ifc(spec, tmp_path / "x.ifc", warnings=warnings)
+    assert any("no host wall" in w for w in warnings)
+    assert any("does not exist" in w for w in warnings)
+    model = ifcopenshell.open(str(path))
+    assert len(model.by_type("IfcOpeningElement")) == 1
+
+
+def test_dimension_keeps_storey_elevation(tmp_path):
+    """A dimension on a raised storey stays at that storey's height in world coordinates."""
+    spec = {"units": "mm", "scale": 50, "elements": [
+        {"id": "w1", "type": "wall", "storey": "Level 2", "z": 3000, "points": [[0, 0], [4000, 0]],
+         "height": 3000, "thickness": 200},
+    ], "dimensions": [
+        {"type": "chain", "axis": "h", "base": -500, "storey": "Level 2", "points": [[0, 0], [4000, 0]]},
+    ]}
+    path = spec_to_ifc(spec, tmp_path / "x.ifc", warnings=[])
+    model = ifcopenshell.open(str(path))
+    ann = model.by_type("IfcAnnotation")[0]
+    low, high = _bbox_points(ann)
+    assert low[2] == pytest.approx(3.0) and high[2] == pytest.approx(3.0)
+
+
+def _bbox_points(product):
+    pts = []
+    for rep in product.Representation.Representations:
+        for item in rep.Items:
+            pts += [p.Coordinates for p in item.Points]
+    arr = np.array(pts, dtype=float) / 1000.0
+    return arr.min(axis=0), arr.max(axis=0)
+
+
+def test_plan_opening_follows_host_wall(tmp_path):
+    """The DXF plan rectangle uses the host wall's direction, thickness and `along` position."""
+    spec = {"units": "mm", "scale": 50, "elements": [
+        {"id": "w1", "type": "wall", "points": [[0, 0], [0, 5000]], "height": 3000, "thickness": 300},
+        {"id": "d1", "type": "opening", "host": "w1", "kind": "door", "along": 2000, "width": 900,
+         "height": 2100},
+    ]}
+    spec, _ = normalize_spec(spec)
+    res = render(spec, tmp_path, "host", formats=("dxf",))
+    msp = ezdxf.readfile(str(res["dxf"] if isinstance(res, dict) and "dxf" in res else next(tmp_path.glob("*.dxf")))).modelspace()
+    boxes = [e for e in msp.query("LWPOLYLINE") if e.is_closed and len(e) == 4]
+    spans = []
+    for e in boxes:
+        xs = [p[0] for p in e.get_points()]
+        ys = [p[1] for p in e.get_points()]
+        spans.append((round(min(xs)), round(max(xs)), round(min(ys)), round(max(ys))))
+    assert (-150, 150, 1550, 2450) in spans, spans
