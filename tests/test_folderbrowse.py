@@ -117,3 +117,45 @@ def test_normalize_bare_drive_letter_means_its_root(monkeypatch):
     monkeypatch.setattr(fb.os, "name", "nt")
     monkeypatch.setattr(fb.os.path, "abspath", lambda p: p)
     assert fb.normalize("D:") == "D:\\"
+
+
+def test_start_dir_empty_uses_fallbacks_in_order(tmp_path):
+    last, root = tmp_path / "last", tmp_path / "root"
+    last.mkdir(); root.mkdir()
+    assert fb.start_dir("", str(last), str(root)) == str(last)
+    assert fb.start_dir("  ", str(tmp_path / "gone"), str(root)) == str(root)    # unusable fallback skipped
+    assert fb.start_dir("", "", str(tmp_path / "gone")) == ""                    # nothing usable: drives list
+
+
+def test_start_dir_typed_path_beats_fallbacks(tmp_path):
+    other = tmp_path / "other"
+    other.mkdir()
+    assert fb.start_dir(str(tmp_path / "nope"), str(other)) == str(tmp_path)     # nearest parent, not fallback
+
+
+def test_empty_field_opens_in_the_projects_folder_from_settings(tmp_path):
+    from sketch2cad.config import Settings
+    (tmp_path / "Proj" / "Alpha").mkdir(parents=True)
+    Settings(ui_language="en", default_projects_root=str(tmp_path / "Proj")).save()
+    at = AppTest.from_file(APP, default_timeout=30).run()
+    next(w for w in at.text_input if w.key == "np_parent").set_value("").run()
+    next(b for b in at.button if b.key == "np_parent_browse").click().run()
+    assert not at.exception
+    assert "📁 Alpha" in [b.label for b in at.button if (b.key or "").startswith("np_parent_fb_")]
+    assert at.session_state["np_parent_fb"] == str(tmp_path / "Proj")
+    next(b for b in at.button if b.key == "np_parent_fb_close").click().run()    # cancel still closes
+    assert "np_parent_fb" not in at.session_state
+
+
+def test_last_chosen_folder_is_the_next_start(tmp_path):
+    from sketch2cad.config import Settings
+    (tmp_path / "A" / "Sub").mkdir(parents=True)
+    Settings(ui_language="en", default_projects_root="").save()
+    at = AppTest.from_file(APP, default_timeout=30).run()
+    next(w for w in at.text_input if w.key == "np_parent").set_value(str(tmp_path / "A")).run()
+    next(b for b in at.button if b.key == "np_parent_browse").click().run()
+    next(b for b in at.button if b.key == "np_parent_fb_ok").click().run()
+    assert at.session_state["fb_last"] == str(tmp_path / "A")
+    next(w for w in at.text_input if w.key == "np_parent").set_value("").run()
+    next(b for b in at.button if b.key == "np_parent_browse").click().run()
+    assert at.session_state["np_parent_fb"] == str(tmp_path / "A")

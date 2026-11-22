@@ -38,8 +38,22 @@ def normalize(path: str) -> str:
     return os.path.abspath(text)
 
 
-def start_dir(initial: str) -> str:
-    """Where the browser opens: the folder itself, else its nearest existing parent, else "" (drives)."""
+def start_dir(initial: str, *fallbacks: str) -> str:
+    """Where the browser opens: the folder itself, else its nearest existing parent, else "" (drives).
+
+    When ``initial`` is empty (nothing typed yet) the first usable ``fallbacks`` entry is used instead,
+    e.g. the last chosen folder, then the projects folder from the settings. A typed path that exists
+    nowhere still falls back to the drives list, never to a fallback the user did not ask for.
+    """
+    if not normalize(initial):
+        for extra in fallbacks:
+            path = normalize(extra)
+            try:
+                if path and os.path.isdir(path):     # a fallback must exist itself: no guessing a parent
+                    return path
+            except OSError:
+                continue
+        return ""
     path = normalize(initial)
     while path:
         try:

@@ -206,7 +206,7 @@ def _fb_toggle(key: str) -> None:
     if f"{key}_fb" in ss:
         ss.pop(f"{key}_fb")
     else:
-        ss[f"{key}_fb"] = start_dir(ss.get(key, ""))
+        ss[f"{key}_fb"] = start_dir(ss.get(key, ""), ss.get("fb_last", ""), settings.default_projects_root)
 
 
 def _fb_go(key: str, path: str) -> None:
@@ -215,6 +215,7 @@ def _fb_go(key: str, path: str) -> None:
 
 def _fb_pick(key: str, path: str) -> None:
     ss[key] = path
+    ss["fb_last"] = path                          # the next empty field opens here
     ss.pop(f"{key}_fb", None)
 
 
