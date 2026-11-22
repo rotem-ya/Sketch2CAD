@@ -453,3 +453,40 @@ def test_delete_a_sketch_asks_first_and_moves_it_aside(tmp_path):
     assert Document.load(d.folder).sources == [bad]
     assert len(list((d.path / DELETED_SOURCES).iterdir())) == 1
     assert any(t("source_deleted", "he").format(name="WhatsApp Image.jpeg") in s.value for s in at.success)
+
+
+def test_update_banner_hides_english_commit_title_in_hebrew(monkeypatch):
+    from sketch2cad import updater
+    from sketch2cad.config import Settings
+    Settings(ui_language="he").save()
+    msg = "Merge pull request #22 from someone/feat-x"
+    monkeypatch.setattr(updater, "latest", lambda timeout=5: updater.Release("abcdef1" + "0" * 33, "2026-11-21", msg))
+    at = AppTest.from_file(APP, default_timeout=30).run()
+    next(b for b in at.button if b.label.endswith(t_he("check_updates"))).click().run()
+    assert not at.exception
+    banner = " ".join(w.value for w in at.warning)
+    assert "Merge pull request" not in banner and "abcdef1" in banner
+
+
+def test_update_banner_english_keeps_commit_title(monkeypatch):
+    from sketch2cad import updater
+    from sketch2cad.config import Settings
+    Settings(ui_language="en").save()
+    monkeypatch.setattr(updater, "latest", lambda timeout=5: updater.Release("f" * 40, "2026-11-21", "Fix the thing"))
+    at = AppTest.from_file(APP, default_timeout=30).run()
+    next(b for b in at.button if b.label.endswith(t_he("check_updates", "en"))).click().run()
+    assert any("Fix the thing" in w.value for w in at.warning)
+
+
+def test_closed_sidebar_css_and_page_language_script():
+    from sketch2cad.config import Settings
+    Settings(ui_language="he").save()
+    at = AppTest.from_file(APP, default_timeout=30).run()
+    assert not at.exception
+    css = " ".join(m.value for m in at.markdown)
+    assert 'aria-expanded="false"' in css and "pointer-events: none" in css
+
+
+def t_he(key, lang="he"):
+    from sketch2cad.i18n import t
+    return t(key, lang)

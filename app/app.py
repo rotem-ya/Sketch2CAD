@@ -95,6 +95,11 @@ def _theme_css() -> None:
     .s2c-sev-warning { border-color: #D68910; background: #FEF5E7; }
     .s2c-sev-info { border-color: #2471A3; background: #EAF2F8; }
     </style>""", unsafe_allow_html=True)
+    # closed sidebar on a phone leaked a vertical title and swallowed taps (sprint 22.11 finding 1)
+    st.markdown("""<style>
+    [data-testid="stSidebar"][aria-expanded="false"], [data-testid="stSidebar"][data-collapsed="true"]
+    { visibility: hidden; pointer-events: none; overflow: hidden; min-width: 0 !important; }
+    </style>""", unsafe_allow_html=True)
     if L == "he":
         st.markdown("""<style>
         .stApp, .stMarkdown, [data-testid="stSidebar"], [data-testid="stForm"], .stTabs,
@@ -105,7 +110,27 @@ def _theme_css() -> None:
         </style>""", unsafe_allow_html=True)
 
 
+def _client_fixes() -> None:
+    """Tiny script in a zero-height iframe: page language/direction for the browser (screen readers, native
+    widgets), and on a phone close the sidebar after the page changed (it stayed open and covered the page)."""
+    changed = ss.get("_last_page") not in (None, ss.get("page"))
+    ss["_last_page"] = ss.get("page")
+    html_src = (
+        "<script>(function(){var d=window.parent.document;"
+        f"d.documentElement.lang='{L}';d.documentElement.dir='{'rtl' if L == 'he' else 'ltr'}';"
+        + ("if(window.parent.innerWidth<640){setTimeout(function(){var b=d.querySelector("
+           "'[data-testid=\"stSidebarCollapseButton\"] button');"
+           "if(b){b.click();}},400);}" if changed else "")
+        + "})();</script>")
+    if hasattr(st, "iframe"):                       # components.v1.html is deprecated (removed after 2026-06-01)
+        st.iframe(html_src, height=1)
+    else:
+        import streamlit.components.v1 as components
+        components.html(html_src, height=0)
+
+
 _theme_css()
+_client_fixes()
 
 
 def go(page: str, project: str | None = None, doc: str | None = None) -> None:
@@ -230,7 +255,7 @@ def folder_browser(key: str) -> None:
     b1.button(f"⬆️ {T('fb_up')}", key=f"{key}_fb_up", on_click=_fb_go, args=(key, fb.parent(cur)),
               disabled=not cur, width="stretch")
     b2.button(f"💽 {T('fb_drives')}", key=f"{key}_fb_drives", on_click=_fb_go, args=(key, ""),
-              width="stretch")
+              disabled=not cur, width="stretch")
     b3.button(f"✅ {T('fb_select')}", key=f"{key}_fb_ok", on_click=_fb_pick, args=(key, cur),
               disabled=not cur, type="primary", width="stretch")
     b4.button(f"✖️ {T('cancel')}", key=f"{key}_fb_close", on_click=ss.pop, args=(f"{key}_fb", None),
@@ -403,7 +428,9 @@ def update_box() -> None:
         return
     info = ss.get("update_info")
     if info and updater.update_available(info):
-        st.warning(f"{T('update_available')}  \n{info.date} - {info.message}")
+        # the commit title is English and raw ("Merge pull request #22 ..."): Hebrew shows date + short sha only
+        what = f"{info.date} - {info.message}" if L == "en" else f"{info.date} - {isolate(info.sha[:7])}"
+        st.warning(f"{T('update_available')}  \n{what}")
         if os.name == "nt":
             st.button(f"⬇️ {T('update_now')}", on_click=start_update, width="stretch", type="primary")
         else:

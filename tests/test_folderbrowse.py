@@ -95,7 +95,7 @@ def test_browse_button_picks_a_folder_without_a_native_dialog(tmp_path, monkeypa
     assert not at.exception and not any((b.key or "").startswith("np_parent_fb_") for b in at.button)
 
 
-def test_hebrew_label_is_the_word_rotem_uses():
+def test_hebrew_browse_label():
     from sketch2cad.i18n import t
 
     assert t("browse", "he") == "עיון" and t("browse", "en") == "Browse"
