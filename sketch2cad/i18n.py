@@ -43,7 +43,7 @@ STRINGS: dict[str, dict[str, str]] = {
                             "he": "לא ניתן לבדוק עדכונים."},
     "update_manual": {"en": "To update, close the program and run update.bat.",
                       "he": "לעדכון, סגרו את התוכנה והפעילו את update.bat."},
-    "browse": {"en": "Browse", "he": "בחר"},
+    "browse": {"en": "Browse", "he": "עיון"},
     "fb_up": {"en": "Up", "he": "למעלה"},
     "fb_drives": {"en": "Drives", "he": "כוננים"},
     "fb_select": {"en": "Use this folder", "he": "בחר בתיקייה הזו"},

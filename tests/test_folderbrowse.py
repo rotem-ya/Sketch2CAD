@@ -93,3 +93,27 @@ def test_browse_button_picks_a_folder_without_a_native_dialog(tmp_path, monkeypa
     assert any(b.label == f"📁 {fb.drives()[0]}" for b in at.button)
     next(b for b in at.button if b.label == f"✖️ {t('cancel', 'en')}").click().run()
     assert not at.exception and not any((b.key or "").startswith("np_parent_fb_") for b in at.button)
+
+
+def test_hebrew_label_is_the_word_rotem_uses():
+    from sketch2cad.i18n import t
+
+    assert t("browse", "he") == "עיון" and t("browse", "en") == "Browse"
+
+
+def test_subfolders_on_a_file_returns_an_error_not_a_crash(tmp_path):
+    f = tmp_path / "plain.txt"
+    f.write_text("x")
+    names, more, err = fb.subfolders(str(f))
+    assert names == [] and not more and err
+
+
+def test_normalize_trims_quotes_and_blank(tmp_path):
+    assert fb.normalize("") == "" and fb.normalize('  ""  ') == ""
+    assert fb.normalize(f'"{tmp_path}"') == str(tmp_path)
+
+
+def test_normalize_bare_drive_letter_means_its_root(monkeypatch):
+    monkeypatch.setattr(fb.os, "name", "nt")
+    monkeypatch.setattr(fb.os.path, "abspath", lambda p: p)
+    assert fb.normalize("D:") == "D:\\"
