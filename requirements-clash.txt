@@ -1,0 +1,5 @@
+# Optional clash checks. install.bat does not install this file.
+# IfcClash is LGPL-3.0. Sketch2CAD imports it and does not vendor it.
+# https://docs.ifcopenshell.org/ifcclash.html
+# BCF writing does not use the PyPI package bcf-client (GPL-3.0).
+ifcclash>=0.8.4

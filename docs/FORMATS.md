@@ -211,6 +211,7 @@ project_name_he, client, date, scale, drawn, checked + anything in `sheet.fields
 | `sketch2cad.io.ifc2dxf` | `ifc_to_dxf(ifc, out, cut_height=1.2, mode="plan")` | path |
 | `sketch2cad.io.spec2ifc` | `spec_to_ifc(spec, out, *, project_name=None, warnings=None)`, `validate_ifc(path)` | path / counts. IFC4 via IfcOpenShell (LGPL-3.0). Length unit follows `units`; areas and volumes are m² and m³. A `ceiling` is an `IfcCovering` `CEILING` |
 | `sketch2cad.io.pascal_bim` | `scene_from_spec`, `spec_from_scene`, `write_package`, `scan_url_allowed` | Pascal Editor scene (MIT) beside the IFC. See `docs/PASCAL.md`. No network and no secrets |
+| `sketch2cad.io.clash` | `check_model(ifc, out, *, other=None, tolerance=0.002, clashes=True)`, `find_defects`, `find_clashes`, `read_bcf`, `clash_available` | Optional. Not called by `render`. IfcClash (LGPL-3.0) writes clashes; defects are missing body, missing quantities, a non-positive quantity, or an opening that voids nothing. Output is BCF 2.1. See `docs/CLASH.md` |
 | `sketch2cad.compare` | `compare(a, b, out_png)` (PDF/DXF/PNG) | path + change ratio |
 | `sketch2cad.checks` | `run_checks(spec, catalog, project=None) -> list[Finding]` | includes drawing QA |
 | `sketch2cad.qa` | `review(spec, catalog, project)`, `write_overlay(spec, path, catalog, project)` | paper-space QA and `qa_overlay.png`; defaults in `QA_DEFAULTS`, overridden by `project.qa` |
