@@ -159,3 +159,12 @@ def test_last_chosen_folder_is_the_next_start(tmp_path):
     next(w for w in at.text_input if w.key == "np_parent").set_value("").run()
     next(b for b in at.button if b.key == "np_parent_browse").click().run()
     assert at.session_state["np_parent_fb"] == str(tmp_path / "A")
+
+
+def test_every_ui_string_has_both_languages_and_matching_placeholders():
+    import re
+    from sketch2cad.i18n import STRINGS
+    for key, v in STRINGS.items():
+        assert v.get("en", "").strip() and v.get("he", "").strip(), key
+        assert sorted(re.findall(r"\{\w+\}", v["en"])) == sorted(re.findall(r"\{\w+\}", v["he"])), key
+    assert any("֐" <= c <= "׿" for c in STRINGS["browse"]["he"])
